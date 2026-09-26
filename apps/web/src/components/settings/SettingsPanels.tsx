@@ -24,7 +24,6 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
   type DiffLayout,
-  type InterfaceLanguage,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_CODE_FONT_SIZE,
@@ -1230,9 +1229,11 @@ export function AppearanceSettingsPanel() {
           control={
             <Select
               value={settings.language}
-              onValueChange={(value) =>
-                void updateClientSettings({ language: value as InterfaceLanguage })
-              }
+              onValueChange={(value) => {
+                if (value === "en" || value === "zh-CN") {
+                  void updateClientSettings({ language: value });
+                }
+              }}
             >
               <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={t("Language")}>
                 <SelectValue>

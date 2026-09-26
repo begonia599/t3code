@@ -127,8 +127,8 @@ function RootRouteNotFoundView() {
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
         <h1 className="text-lg font-medium text-foreground">{t("Page not found")}</h1>
         <p className="text-sm text-muted-foreground">
-          This link doesn't point to a page in {APP_DISPLAY_NAME}. Go home to choose a project or
-          start a thread.
+          {t("This link doesn't point to a page in")} {APP_DISPLAY_NAME}.{" "}
+          {t("Go home to choose a project or start a thread.")}
         </p>
         <Button render={<Link to="/" replace />}>{t("Go home")}</Button>
       </div>
