@@ -1598,6 +1598,147 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect("refreshes a held Claude skill list after a provider status refresh", () =>
+        Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("claudeAgent");
+          const instanceId = ProviderInstanceId.make("claudeAgent");
+          const machineProvider = {
+            instanceId,
+            driver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-09-26T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const refreshedProvider = {
+            ...machineProvider,
+            checkedAt: "2026-09-26T00:01:00.000Z",
+          } satisfies ServerProvider;
+          const oldSkill = {
+            name: "old",
+            path: "/home/user/.claude/skills/old/SKILL.md",
+            enabled: true,
+          } as const;
+          const newSkill = {
+            name: "new",
+            path: "/home/user/.claude/skills/new/SKILL.md",
+            enabled: true,
+          } as const;
+          const laterSkill = {
+            name: "later",
+            path: "/home/user/.claude/skills/later/SKILL.md",
+            enabled: true,
+          } as const;
+          const availableSkills = yield* Ref.make<ServerProvider["skills"]>([oldSkill]);
+          const snapshotCalls = yield* Ref.make(0);
+          const machineSnapshot = yield* Ref.make<ServerProvider>(machineProvider);
+          const statusChanges = yield* PubSub.unbounded<ServerProvider>();
+          const instance: ProviderInstance = {
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: {
+              driverKind: driver,
+              continuationKey: "claudeAgent:instance:claudeAgent",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Ref.get(machineSnapshot),
+              refresh: Effect.succeed(refreshedProvider),
+              streamChanges: Stream.fromPubSub(statusChanges),
+              applyUsageLimits: () => Effect.void,
+            },
+            snapshotForCwd: () =>
+              Effect.gen(function* () {
+                yield* Ref.update(snapshotCalls, (count) => count + 1);
+                return {
+                  ...(yield* Ref.get(machineSnapshot)),
+                  skills: yield* Ref.get(availableSkills),
+                };
+              }),
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          };
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (requestedId) =>
+                Effect.succeed(requestedId === instanceId ? instance : undefined),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-claude-skill-refresh-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.[0]?.skills,
+              [oldSkill],
+            );
+
+            yield* Ref.set(availableSkills, [oldSkill, newSkill]);
+            const refreshed = yield* registry.refreshInstance(instanceId);
+            assert.deepStrictEqual(refreshed[0]?.workspaceSnapshots?.[0]?.skills, [
+              oldSkill,
+              newSkill,
+            ]);
+            assert.strictEqual(yield* Ref.get(snapshotCalls), 2);
+
+            // The periodic health probe arrives through the driver's stream.
+            const backgroundProvider = {
+              ...machineProvider,
+              checkedAt: "2026-09-26T00:02:00.000Z",
+            } satisfies ServerProvider;
+            yield* Ref.set(machineSnapshot, backgroundProvider);
+            yield* Ref.set(availableSkills, [oldSkill, newSkill, laterSkill]);
+            const workspaceUpdate = yield* registry.streamChanges.pipe(
+              Stream.filter((providers) =>
+                Boolean(
+                  providers[0]?.workspaceSnapshots?.[0]?.skills.some(
+                    (skill) => skill.name === laterSkill.name,
+                  ),
+                ),
+              ),
+              Stream.runHead,
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
+            yield* PubSub.publish(statusChanges, backgroundProvider);
+            const observed = yield* Fiber.join(workspaceUpdate);
+            assert.strictEqual(observed._tag, "Some");
+            assert.strictEqual(yield* Ref.get(snapshotCalls), 3);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       it.effect("refreshes OpenCode catalogs and preserves other providers", () =>
         Effect.gen(function* () {
           const codexDriver = ProviderDriverKind.make("codex");
