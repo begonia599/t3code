@@ -2,12 +2,14 @@ import type { ReactNode } from "react";
 import { Platform, View } from "react-native";
 
 import { AppText as Text } from "../../../components/AppText";
+import { useMobileT } from "../../../i18n";
 
 export function SettingsSection(props: {
   readonly title?: string;
   readonly trailing?: ReactNode;
   readonly children: ReactNode;
 }) {
+  const t = useMobileT();
   return (
     <View className="gap-2">
       {props.title ? (
@@ -19,7 +21,7 @@ export function SettingsSection(props: {
                 : "px-2 text-sm font-t3-medium text-foreground-muted"
             }
           >
-            {props.title}
+            {t(props.title)}
           </Text>
           {props.trailing}
         </View>

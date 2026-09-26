@@ -19,6 +19,7 @@ import {
   usePrimarySettingsAvailable,
 } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { useT } from "../../i18n";
 import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -186,6 +187,7 @@ export function SettingsSection({
   children: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
+  const t = useT();
 
   return (
     <section
@@ -195,7 +197,7 @@ export function SettingsSection({
       className={cn(!hideTitle && "space-y-2.5", className)}
     >
       {hideTitle ? (
-        <h2 className="sr-only">{title}</h2>
+        <h2 className="sr-only">{t(title)}</h2>
       ) : (
         <div
           data-settings-scroll-target
@@ -204,7 +206,7 @@ export function SettingsSection({
           <div className="min-w-0">
             <h2 className="flex min-h-7 items-center gap-2 text-sm font-normal text-foreground/70">
               {icon}
-              {title}
+              {t(title)}
             </h2>
           </div>
           <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
@@ -278,6 +280,7 @@ export function SettingsRow({
   mixed?: boolean;
   children?: ReactNode;
 }) {
+  const t = useT();
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
@@ -435,7 +438,9 @@ export function SettingsRow({
       <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
-            <h3 className="text-sm font-medium text-foreground">{title}</h3>
+            <h3 className="text-sm font-medium text-foreground">
+              {typeof title === "string" ? t(title) : title}
+            </h3>
             {renderedInheritance ? (
               <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
                 {renderedInheritance}
@@ -447,7 +452,7 @@ export function SettingsRow({
           </div>
           {description ? (
             <p className="max-w-xl text-xs leading-normal text-muted-foreground/80">
-              {description}
+              {typeof description === "string" ? t(description) : description}
             </p>
           ) : null}
           {renderedStatus ? (

@@ -5,6 +5,12 @@ appearance or stay in light or dark mode. To use different themes for light and 
 the corresponding preview within each theme. Appearance preferences are saved separately on each
 device or browser.
 
+## Interface language
+
+Choose **Settings → Appearance → Language** on web or desktop, or **Settings → Language** on
+mobile, to switch between English and Simplified Chinese. The choice is saved on each device and
+applies immediately. Agent replies, terminal output, and project content keep their original text.
+
 On web and desktop, use **Change theme** in the command palette to select a theme without leaving chat.
 Press **Cmd+Option+A** on macOS or **Ctrl+Alt+A** on Windows/Linux to open the theme picker directly.
 Use **Change appearance** in the command palette to choose System, Light, or Dark independently of

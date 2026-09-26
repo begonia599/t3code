@@ -130,6 +130,12 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "language",
+    title: "Language",
+    to: "/settings/appearance",
+    searchTerms: ["locale", "中文", "简体中文", "语言"],
+  },
+  {
     id: "storage-worktrees",
     title: "Worktree cleanup",
     to: "/settings/storage",

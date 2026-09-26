@@ -15,6 +15,11 @@ import {
   CommandShortcut,
 } from "./ui/command";
 import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
+import { useT } from "../i18n";
+
+function isInterfaceResult(value: string): boolean {
+  return value.startsWith("action:") || value.startsWith("setting:");
+}
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
@@ -26,13 +31,16 @@ interface CommandPaletteResultsProps {
 }
 
 export function CommandPaletteResults(props: CommandPaletteResultsProps) {
+  const t = useT();
   if (props.groups.length === 0) {
     return (
       <div className="py-10 text-center text-sm text-muted-foreground">
-        {props.emptyStateMessage ??
-          (props.isActionsOnly
-            ? "No matching actions."
-            : "No matching commands, projects, or threads.")}
+        {t(
+          props.emptyStateMessage ??
+            (props.isActionsOnly
+              ? "No matching actions."
+              : "No matching commands, projects, or threads."),
+        )}
       </div>
     );
   }
@@ -41,7 +49,7 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
     <CommandList>
       {props.groups.map((group) => (
         <CommandGroup items={group.items} key={group.value}>
-          <CommandGroupLabel>{group.label}</CommandGroupLabel>
+          <CommandGroupLabel>{t(group.label)}</CommandGroupLabel>
           <CommandCollection>
             {(item) =>
               item.disabled ? (
@@ -66,28 +74,34 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
 function DisabledCommandPaletteResultRow(props: {
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
 }) {
+  const t = useT();
+  const translateItem = isInterfaceResult(props.item.value);
+  const title =
+    translateItem && typeof props.item.title === "string" ? t(props.item.title) : props.item.title;
+  const description =
+    translateItem && typeof props.item.description === "string"
+      ? t(props.item.description)
+      : props.item.description;
   return (
     <div className="flex min-h-8 select-none items-center gap-2 rounded-sm px-2 py-1.5 text-base opacity-64 sm:min-h-7 sm:text-sm">
       {props.item.icon}
-      {props.item.description || props.item.threadContentMatch ? (
+      {description || props.item.threadContentMatch ? (
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
             {props.item.titleLeadingContent}
-            <span className="truncate">{props.item.title}</span>
+            <span className="truncate">{title}</span>
           </span>
           {props.item.threadContentMatch ? (
             <ThreadSearchMatchExcerpt match={props.item.threadContentMatch} />
           ) : null}
-          {props.item.description ? (
-            <span className="min-w-0 text-muted-foreground/70 text-xs">
-              {props.item.description}
-            </span>
+          {description ? (
+            <span className="min-w-0 text-muted-foreground/70 text-xs">{description}</span>
           ) : null}
         </span>
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm text-foreground">
           {props.item.titleLeadingContent}
-          <span className="truncate">{props.item.title}</span>
+          <span className="truncate">{title}</span>
         </span>
       )}
       {props.item.titleTrailingContent}
@@ -101,6 +115,14 @@ function CommandPaletteResultRow(props: {
   keybindings: ResolvedKeybindingsConfig;
   onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
 }) {
+  const t = useT();
+  const translateItem = isInterfaceResult(props.item.value);
+  const title =
+    translateItem && typeof props.item.title === "string" ? t(props.item.title) : props.item.title;
+  const description =
+    translateItem && typeof props.item.description === "string"
+      ? t(props.item.description)
+      : props.item.description;
   const shortcutLabel = props.item.shortcutCommand
     ? shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand)
     : null;
@@ -117,25 +139,23 @@ function CommandPaletteResultRow(props: {
       }}
     >
       {props.item.icon}
-      {props.item.description || props.item.threadContentMatch ? (
+      {description || props.item.threadContentMatch ? (
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
             {props.item.titleLeadingContent}
-            <span className="truncate">{props.item.title}</span>
+            <span className="truncate">{title}</span>
           </span>
           {props.item.threadContentMatch ? (
             <ThreadSearchMatchExcerpt match={props.item.threadContentMatch} />
           ) : null}
-          {props.item.description ? (
-            <span className="min-w-0 text-muted-foreground/70 text-xs">
-              {props.item.description}
-            </span>
+          {description ? (
+            <span className="min-w-0 text-muted-foreground/70 text-xs">{description}</span>
           ) : null}
         </span>
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm text-foreground">
           {props.item.titleLeadingContent}
-          <span className="truncate">{props.item.title}</span>
+          <span className="truncate">{title}</span>
         </span>
       )}
       {props.item.titleTrailingContent}
