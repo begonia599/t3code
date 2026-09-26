@@ -1629,6 +1629,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             path: "/home/user/.claude/skills/new/SKILL.md",
             enabled: true,
           } as const;
+          const menuSkill = {
+            name: "menu",
+            path: "/home/user/.claude/skills/menu/SKILL.md",
+            enabled: true,
+          } as const;
           const laterSkill = {
             name: "later",
             path: "/home/user/.claude/skills/later/SKILL.md",
@@ -1712,13 +1717,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             ]);
             assert.strictEqual(yield* Ref.get(snapshotCalls), 2);
 
+            yield* Ref.set(availableSkills, [oldSkill, newSkill, menuSkill]);
+            const menuRefresh = yield* registry.refreshWorkspaceSnapshot({
+              instanceId,
+              cwd: "/workspace",
+              force: true,
+            });
+            assert.deepStrictEqual(menuRefresh[0]?.workspaceSnapshots?.[0]?.skills, [
+              oldSkill,
+              newSkill,
+              menuSkill,
+            ]);
+            assert.strictEqual(yield* Ref.get(snapshotCalls), 3);
+
             // The periodic health probe arrives through the driver's stream.
             const backgroundProvider = {
               ...machineProvider,
               checkedAt: "2026-09-26T00:02:00.000Z",
             } satisfies ServerProvider;
             yield* Ref.set(machineSnapshot, backgroundProvider);
-            yield* Ref.set(availableSkills, [oldSkill, newSkill, laterSkill]);
+            yield* Ref.set(availableSkills, [oldSkill, newSkill, menuSkill, laterSkill]);
             const workspaceUpdate = yield* registry.streamChanges.pipe(
               Stream.filter((providers) =>
                 Boolean(
@@ -1734,7 +1752,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             yield* PubSub.publish(statusChanges, backgroundProvider);
             const observed = yield* Fiber.join(workspaceUpdate);
             assert.strictEqual(observed._tag, "Some");
-            assert.strictEqual(yield* Ref.get(snapshotCalls), 3);
+            assert.strictEqual(yield* Ref.get(snapshotCalls), 4);
           }).pipe(Effect.provide(runtimeServices));
         }),
       );

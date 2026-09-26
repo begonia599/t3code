@@ -2251,6 +2251,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Derived: composer trigger / menu
   // ------------------------------------------------------------------
   const composerTriggerKind = composerTrigger?.kind ?? null;
+  const claudeSkillMenuRefreshKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (composerTriggerKind !== "skill" && composerTriggerKind !== "slash-command") {
+      claudeSkillMenuRefreshKeyRef.current = null;
+      return;
+    }
+    if (
+      !gitCwd ||
+      selectedProviderStatus?.driver !== "claudeAgent" ||
+      !selectedProviderStatus.workspaceSnapshots?.some((snapshot) => snapshot.cwd === gitCwd)
+    ) {
+      return;
+    }
+    const key = `${environmentId}:${selectedProviderStatus.instanceId}:${gitCwd}:${composerTriggerKind}`;
+    if (claudeSkillMenuRefreshKeyRef.current === key) return;
+    claudeSkillMenuRefreshKeyRef.current = key;
+    void refreshProviders({
+      environmentId,
+      input: {
+        instanceId: selectedProviderStatus.instanceId,
+        cwd: gitCwd,
+        forceWorkspaceRefresh: true,
+      },
+    });
+  }, [composerTriggerKind, environmentId, gitCwd, refreshProviders, selectedProviderStatus]);
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const pullRequestTriggerQuery =
     composerTrigger?.kind === "pull-request" ? composerTrigger.query : "";

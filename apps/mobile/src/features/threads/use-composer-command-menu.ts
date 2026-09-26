@@ -296,6 +296,40 @@ export function useComposerCommandMenu({
     }
     return detectComposerTrigger(draftMessage, selection.end);
   }, [draftMessage, enabled, selection]);
+  const claudeSkillMenuRefreshKeyRef = useRef<string | null>(null);
+  const triggerKind = trigger?.kind ?? null;
+  useEffect(() => {
+    if (triggerKind !== "skill" && triggerKind !== "slash-command") {
+      claudeSkillMenuRefreshKeyRef.current = null;
+      return;
+    }
+    if (
+      !environmentId ||
+      !projectCwd ||
+      !hasWorkspaceSnapshot ||
+      selectedProviderStatus?.driver !== "claudeAgent"
+    ) {
+      return;
+    }
+    const key = `${environmentId}:${selectedProviderStatus.instanceId}:${projectCwd}:${triggerKind}`;
+    if (claudeSkillMenuRefreshKeyRef.current === key) return;
+    claudeSkillMenuRefreshKeyRef.current = key;
+    void refreshProviders({
+      environmentId,
+      input: {
+        instanceId: selectedProviderStatus.instanceId,
+        cwd: projectCwd,
+        forceWorkspaceRefresh: true,
+      },
+    });
+  }, [
+    environmentId,
+    hasWorkspaceSnapshot,
+    projectCwd,
+    refreshProviders,
+    selectedProviderStatus,
+    triggerKind,
+  ]);
   const pathSearch = useComposerPathSearch({
     environmentId,
     cwd: trigger?.kind === "path" ? projectCwd : null,
