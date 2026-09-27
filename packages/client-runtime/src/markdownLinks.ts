@@ -194,6 +194,24 @@ export function normalizeMarkdownLinkDestination(value: string): string {
   return trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1) : trimmed;
 }
 
+/** Agent download links are relative so every client can use its own route to the environment. */
+export function isEnvironmentAssetLink(href: string): boolean {
+  return /^\/api\/assets\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\/[^/?#]+$/u.test(
+    normalizeMarkdownLinkDestination(href),
+  );
+}
+
+export function resolveEnvironmentAssetLink(httpBaseUrl: string, href: string): string | null {
+  if (!isEnvironmentAssetLink(href)) return null;
+  try {
+    const base = new URL(httpBaseUrl);
+    if (base.protocol !== "http:" && base.protocol !== "https:") return null;
+    return new URL(normalizeMarkdownLinkDestination(href), base).toString();
+  } catch {
+    return null;
+  }
+}
+
 /** Browser URL parsers write `C:/foo` as `/C:/foo` for file URLs. */
 export function stripSlashPrefixedWindowsDrive(path: string): string {
   return SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN.test(path) ? path.slice(1) : path;

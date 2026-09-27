@@ -90,6 +90,7 @@ export function assetResponseHeaders(
   filePath: string,
   options?: {
     readonly download?: boolean;
+    readonly cacheControl?: string;
     readonly fileName?: string;
     readonly mimeType?: string;
   },
@@ -97,7 +98,7 @@ export function assetResponseHeaders(
   const lowerPath = filePath.toLowerCase();
   const inlineMimeType = options?.mimeType?.split(";", 1)[0]?.trim();
   return {
-    "Cache-Control": "private, max-age=3600",
+    "Cache-Control": options?.cacheControl ?? "private, max-age=3600",
     "X-Content-Type-Options": "nosniff",
     ...(options?.download
       ? {
@@ -159,6 +160,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   asset: {
     readonly path: string;
     readonly download?: boolean;
+    readonly cacheControl?: string;
     readonly fileName?: string;
     readonly mimeType?: string;
     readonly file?: OpenMediaFile;

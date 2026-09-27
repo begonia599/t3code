@@ -2,6 +2,7 @@ import {
   fileBasename,
   formatFilePathPosition,
   inlineCodeFilePathCandidate,
+  isEnvironmentAssetLink,
   normalizeMarkdownLinkDestination,
   parseMarkdownFileLink,
 } from "@t3tools/client-runtime/markdown-links";
@@ -265,6 +266,9 @@ export function resolveMarkdownFileIcon(value: string): MarkdownFileIcon {
 
 export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPresentation {
   const normalized = normalizeMarkdownLinkDestination(href);
+  if (isEnvironmentAssetLink(normalized)) {
+    return { kind: "link", href: normalized };
+  }
   try {
     const parsed = new URL(normalizeNativeMarkdownUrl(normalized));
     if (parsed.protocol === "http:" || parsed.protocol === "https:") {

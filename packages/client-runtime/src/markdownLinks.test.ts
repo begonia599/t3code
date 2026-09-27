@@ -3,11 +3,34 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   fileBasename,
   inlineCodeFilePathCandidate,
+  isEnvironmentAssetLink,
   parseFileUrlHref,
   parseMarkdownFileLink,
+  resolveEnvironmentAssetLink,
   splitFilePathPosition,
   workspaceRelativeFilePath,
 } from "./markdownLinks.ts";
+
+describe("environment asset links", () => {
+  const link = "/api/assets/eyJwYXRoIjoiL2ZpbGUifQ.signature/preview.apk";
+
+  it("resolves signed links against the selected environment", () => {
+    expect(isEnvironmentAssetLink(link)).toBe(true);
+    expect(resolveEnvironmentAssetLink("https://remote.example/", link)).toBe(
+      `https://remote.example${link}`,
+    );
+  });
+
+  it.each([
+    "https://other.example/api/assets/token.signature/file.apk",
+    "//other.example/api/assets/token.signature/file.apk",
+    "/api/assets/token.signature/../file.apk",
+    "/api/assets/token.signature/file.apk?redirect=https://other.example",
+  ])("does not rebase other links: %s", (href) => {
+    expect(isEnvironmentAssetLink(href)).toBe(false);
+    expect(resolveEnvironmentAssetLink("https://remote.example/", href)).toBeNull();
+  });
+});
 
 describe("inlineCodeFilePathCandidate", () => {
   it.each([

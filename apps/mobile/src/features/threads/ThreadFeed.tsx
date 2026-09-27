@@ -30,6 +30,10 @@ import {
   type CodexArtifactTemplate,
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import {
+  isEnvironmentAssetLink,
+  resolveEnvironmentAssetLink,
+} from "@t3tools/client-runtime/markdown-links";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -1121,7 +1125,7 @@ function useMarkdownStyles(
               onPress={
                 linkHref
                   ? () => {
-                      void tryOpenExternalUrl(linkHref, "markdown-link");
+                      onLinkPress(linkHref);
                     }
                   : undefined
               }
@@ -1949,6 +1953,10 @@ function ThreadFeedPlaceholder(props: {
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const navigation = useNavigation();
+  const preparedConnection = usePreparedConnection(props.environmentId);
+  const environmentHttpBaseUrl = Option.isSome(preparedConnection)
+    ? preparedConnection.value.httpBaseUrl
+    : null;
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
@@ -2076,6 +2084,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const userBubbleColor = theme["--color-user-bubble"];
   const onMarkdownLinkPress = useCallback(
     (href: string) => {
+      if (isEnvironmentAssetLink(href)) {
+        const downloadUrl =
+          environmentHttpBaseUrl === null
+            ? null
+            : resolveEnvironmentAssetLink(environmentHttpBaseUrl, href);
+        if (downloadUrl) void tryOpenExternalUrl(downloadUrl, "markdown-link");
+        return;
+      }
       const presentation = resolveMarkdownLinkPresentation(href);
       if (presentation.kind === "file") {
         const relativePath = resolveWorkspaceRelativeFilePath(
@@ -2164,7 +2180,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         void tryOpenExternalUrl(presentation.href, "markdown-link");
       }
     },
-    [props.environmentId, props.threadId, props.workspaceRoot, navigation],
+    [environmentHttpBaseUrl, props.environmentId, props.threadId, props.workspaceRoot, navigation],
   );
   const markdownLinkHandlers = useMemo<MarkdownLinkHandlers>(
     () => ({
