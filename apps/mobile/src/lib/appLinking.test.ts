@@ -18,10 +18,11 @@ describe("shouldHandleAppLink", () => {
     expect(shouldHandleAppLink(url)).toBe(true);
   });
 
-  it.each(["t3code://expo-development-client/?url=x", "t3code://expo-sharing/anything"])(
-    "ignores lifecycle URL %s",
-    (url) => {
-      expect(shouldHandleAppLink(url)).toBe(false);
-    },
-  );
+  it.each([
+    "t3code://expo-development-client/?url=x",
+    "t3code://expo-sharing/anything",
+    "t3code-preview://github-auth?token=temporary",
+  ])("ignores lifecycle URL %s", (url) => {
+    expect(shouldHandleAppLink(url)).toBe(false);
+  });
 });

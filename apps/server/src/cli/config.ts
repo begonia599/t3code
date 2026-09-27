@@ -138,6 +138,22 @@ const EnvServerConfig = Config.all({
         .filter((entry) => entry.length > 0),
     ),
   ),
+  githubClientId: Config.String("T3CODE_GITHUB_CLIENT_ID").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  githubClientSecret: Config.Redacted("T3CODE_GITHUB_CLIENT_SECRET").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  githubOrigin: Config.String("T3CODE_GITHUB_ORIGIN").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  githubAllowedUserIds: Config.String("T3CODE_GITHUB_ALLOWED_USER_IDS").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   noBrowser: Config.Boolean("T3CODE_NO_BROWSER").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -313,6 +329,46 @@ export const resolveServerConfig = (
     );
     const devAuthToken =
       mode === "web" && devUrl !== undefined ? yield* DevAuthTokenConfig : undefined;
+    const githubFields = [
+      env.githubClientId,
+      env.githubClientSecret,
+      env.githubOrigin,
+      env.githubAllowedUserIds,
+    ];
+    let githubOAuth: ServerConfig.GitHubOAuthConfig | undefined;
+    if (githubFields.some((value) => value !== undefined)) {
+      const origin = env.githubOrigin ? URL.parse(env.githubOrigin) : null;
+      const ids = env.githubAllowedUserIds?.split(",").map((value) => Number(value.trim()));
+      if (
+        !env.githubClientId?.trim() ||
+        !env.githubClientSecret ||
+        !Redacted.value(env.githubClientSecret).trim() ||
+        !origin ||
+        origin.href !== `${origin.origin}/` ||
+        (origin.protocol !== "https:" &&
+          !(origin.protocol === "http:" && ["localhost", "127.0.0.1"].includes(origin.hostname))) ||
+        !ids?.length ||
+        ids.some((id) => !Number.isSafeInteger(id) || id <= 0)
+      ) {
+        return yield* Effect.fail(
+          new Config.ConfigError(
+            new Schema.SchemaError(
+              new SchemaIssue.InvalidValue({
+                message:
+                  "GitHub sign-in requires T3CODE_GITHUB_CLIENT_ID, T3CODE_GITHUB_CLIENT_SECRET, " +
+                  "T3CODE_GITHUB_ORIGIN (HTTPS origin), and T3CODE_GITHUB_ALLOWED_USER_IDS (numeric IDs).",
+              }),
+            ),
+          ),
+        );
+      }
+      githubOAuth = {
+        clientId: env.githubClientId.trim(),
+        clientSecret: env.githubClientSecret,
+        origin,
+        allowedUserIds: new Set(ids),
+      };
+    }
     const explicitBaseDir = resolveOptionPrecedence(
       normalizedFlags.baseDir,
       Option.fromUndefinedOr(env.t3Home),
@@ -447,6 +503,7 @@ export const resolveServerConfig = (
       staticDir,
       devUrl,
       ...(devAuthToken === undefined ? {} : { devAuthToken }),
+      ...(githubOAuth === undefined ? {} : { githubOAuth }),
       devAllowedOrigins: env.devAllowedOrigins,
       noBrowser,
       startupPresentation,

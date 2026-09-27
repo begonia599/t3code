@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -115,6 +116,27 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
         makeEnvironmentAuthPolicyLayer({
           mode: "web",
           host: "0.0.0.0",
+        }),
+      ),
+    ),
+  );
+
+  it.effect("advertises GitHub alongside pairing only when configured", () =>
+    Effect.gen(function* () {
+      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+      const descriptor = yield* policy.getDescriptor();
+      expect(descriptor.bootstrapMethods).toEqual(["one-time-token", "github-oauth"]);
+    }).pipe(
+      Effect.provide(
+        makeEnvironmentAuthPolicyLayer({
+          mode: "web",
+          host: "0.0.0.0",
+          githubOAuth: {
+            clientId: "test-client",
+            clientSecret: Redacted.make("test-secret"),
+            origin: new URL("https://code.example.test"),
+            allowedUserIds: new Set([42]),
+          },
         }),
       ),
     ),

@@ -51,8 +51,13 @@ export type ServerAuthPolicy = typeof ServerAuthPolicy.Type;
  *   shell can pair the renderer without a login screen
  * - `one-time-token`: a short-lived pairing token, suitable for manual pairing
  *   flows such as `/pair?token=...`
+ * - `github-oauth`: an allowed GitHub account establishes a T3 session
  */
-export const ServerAuthBootstrapMethod = Schema.Literals(["desktop-bootstrap", "one-time-token"]);
+export const ServerAuthBootstrapMethod = Schema.Literals([
+  "desktop-bootstrap",
+  "one-time-token",
+  "github-oauth",
+]);
 export type ServerAuthBootstrapMethod = typeof ServerAuthBootstrapMethod.Type;
 
 /**

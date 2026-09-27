@@ -1,5 +1,8 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as ExpoCrypto from "expo-crypto";
+import * as ExpoLinking from "expo-linking";
+import * as WebBrowser from "expo-web-browser";
 import {
   StackActions,
   useNavigation,
@@ -18,6 +21,7 @@ import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionSheetButton } from "./ConnectionSheetButton";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import { randomHex } from "../../lib/uuid";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -48,6 +52,7 @@ export function ConnectionsNewRouteScreen({
   const [hostInput, setHostInput] = useState("");
   const [codeInput, setCodeInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [githubError, setGithubError] = useState("");
   const [showScanner, setShowScanner] = useState(params.mode === "scan_qr");
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [scannerLocked, setScannerLocked] = useState(false);
@@ -177,6 +182,69 @@ export function ConnectionsNewRouteScreen({
     await connectAndClose(buildPairingUrl(hostInput, codeInput), false);
   }, [codeInput, connectAndClose, hostInput]);
 
+  const handleGitHubSignIn = useCallback(async () => {
+    setIsSubmitting(true);
+    setGithubError("");
+    try {
+      const host = parsePairingUrl(buildPairingUrl(hostInput, "")).host;
+      const origin = new URL(host).origin;
+      const response = await fetch(`${origin}/api/auth/session`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error("Could not reach this environment.");
+      const descriptor = (await response.json()) as {
+        auth?: { bootstrapMethods?: string[] };
+      };
+      if (!descriptor.auth?.bootstrapMethods?.includes("github-oauth")) {
+        throw new Error("GitHub sign-in is not enabled for this environment.");
+      }
+
+      const nonce = randomHex(32);
+      const verifier = randomHex(32);
+      const challenge = await ExpoCrypto.digestStringAsync(
+        ExpoCrypto.CryptoDigestAlgorithm.SHA256,
+        verifier,
+      );
+      const mobileRedirect = ExpoLinking.createURL("github-auth");
+      const signInUrl = new URL("/api/auth/github/start", origin);
+      signInUrl.searchParams.set("mobile_redirect", mobileRedirect);
+      signInUrl.searchParams.set("mobile_nonce", nonce);
+      signInUrl.searchParams.set("mobile_challenge", challenge);
+      const result = await WebBrowser.openAuthSessionAsync(signInUrl.toString(), mobileRedirect);
+      if (result.type !== "success") return;
+
+      const callback = new URL(result.url);
+      const expected = new URL(mobileRedirect);
+      if (
+        callback.protocol !== expected.protocol ||
+        callback.host !== expected.host ||
+        callback.pathname !== expected.pathname ||
+        callback.searchParams.get("nonce") !== nonce ||
+        callback.searchParams.get("host") !== origin
+      ) {
+        throw new Error("GitHub sign-in response could not be verified.");
+      }
+      const flow = callback.searchParams.get("flow");
+      if (!flow) throw new Error("GitHub sign-in did not return a completed flow.");
+      const finish = await fetch(`${origin}/api/auth/github/mobile/finish`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ flow, verifier }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!finish.ok) throw new Error("GitHub sign-in could not establish a T3 session.");
+      const completed = (await finish.json()) as { credential?: unknown };
+      if (typeof completed.credential !== "string" || !completed.credential) {
+        throw new Error("GitHub sign-in did not return a session credential.");
+      }
+      await connectAndClose(buildPairingUrl(origin, completed.credential), false);
+    } catch (error) {
+      setGithubError(error instanceof Error ? error.message : "GitHub sign-in failed.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [connectAndClose, hostInput]);
+
   useEffect(() => {
     if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {
       return;
@@ -263,6 +331,18 @@ export function ConnectionsNewRouteScreen({
               />
 
               {pairingConnectionError ? <ErrorBanner message={pairingConnectionError} /> : null}
+
+              {githubError ? <ErrorBanner message={githubError} /> : null}
+
+              <ConnectionSheetButton
+                icon="person.crop.circle"
+                label="Continue with GitHub"
+                disabled={connectDisabled}
+                tone="secondary"
+                onPress={() => {
+                  void handleGitHubSignIn();
+                }}
+              />
 
               <View className="android:flex-row android:justify-end">
                 <ConnectionSheetButton

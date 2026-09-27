@@ -110,6 +110,13 @@ export const zhCN: Readonly<Record<string, string>> = {
     "选择此设备上菜单和设置使用的语言。",
   English: "English",
   "Simplified Chinese": "简体中文",
+  "Continue with GitHub": "使用 GitHub 登录",
+  "Sign in with an allowed GitHub account or use a pairing token.":
+    "使用已获准的 GitHub 账号登录，或输入配对码。",
+  "Sign in with an allowed GitHub account to connect.": "使用已获准的 GitHub 账号登录。",
+  "GitHub sign-in and one-time pairing tokens are available for this environment.":
+    "此环境支持 GitHub 登录和一次性配对码。",
+  "GitHub sign-in is available for this environment.": "此环境支持 GitHub 登录。",
 
   // Settings sections and rows
   Organization: "组织方式",

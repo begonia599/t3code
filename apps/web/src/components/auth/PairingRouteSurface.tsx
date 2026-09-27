@@ -3,11 +3,13 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import React, { startTransition, useEffect, useRef, useState, useCallback } from "react";
 
 import { APP_DISPLAY_NAME } from "../../branding";
+import { useT } from "../../i18n";
 import { connectPairing } from "../../connection/onboarding";
 import {
   peekPairingTokenFromUrl,
   stripPairingTokenFromUrl,
   submitServerAuthCredential,
+  resolvePrimaryEnvironmentHttpUrl,
 } from "../../environments/primary";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import { Button } from "../ui/button";
@@ -36,6 +38,7 @@ export function PairingRouteSurface({
   initialErrorMessage?: string;
   onAuthenticated: () => void;
 }) {
+  const t = useT();
   const autoPairTokenRef = useRef<string | null>(peekPairingTokenFromUrl());
   const [credential, setCredential] = useState(() => autoPairTokenRef.current ?? "");
   const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
@@ -90,8 +93,22 @@ export function PairingRouteSurface({
       <StandalonePageHeader
         eyebrow={APP_DISPLAY_NAME}
         title="Pair with this environment"
-        description={describeAuthGate(auth.bootstrapMethods)}
+        description={t(describeAuthGate(auth.bootstrapMethods))}
       />
+
+      {auth.bootstrapMethods.includes("github-oauth") ? (
+        <div className="mt-6">
+          <Button
+            onClick={() => {
+              window.location.assign(resolvePrimaryEnvironmentHttpUrl("/api/auth/github/start"));
+            }}
+            size="sm"
+            type="button"
+          >
+            {t("Continue with GitHub")}
+          </Button>
+        </div>
+      ) : null}
 
       <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
         <div className="space-y-2">
@@ -134,7 +151,7 @@ export function PairingRouteSurface({
       </form>
 
       <div className="mt-6 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
-        {describeSupportedMethods(auth.bootstrapMethods)}
+        {t(describeSupportedMethods(auth.bootstrapMethods))}
       </div>
     </StandalonePage>
   );
@@ -269,6 +286,11 @@ function errorMessageFromUnknown(error: unknown): string {
 }
 
 function describeAuthGate(bootstrapMethods: ReadonlyArray<string>): string {
+  if (bootstrapMethods.includes("github-oauth")) {
+    return bootstrapMethods.includes("one-time-token")
+      ? "Sign in with an allowed GitHub account or use a pairing token."
+      : "Sign in with an allowed GitHub account to connect.";
+  }
   if (bootstrapMethods.includes("desktop-bootstrap")) {
     return "This environment expects a trusted pairing credential before the app can connect.";
   }
@@ -277,6 +299,11 @@ function describeAuthGate(bootstrapMethods: ReadonlyArray<string>): string {
 }
 
 function describeSupportedMethods(bootstrapMethods: ReadonlyArray<string>): string {
+  if (bootstrapMethods.includes("github-oauth")) {
+    return bootstrapMethods.includes("one-time-token")
+      ? "GitHub sign-in and one-time pairing tokens are available for this environment."
+      : "GitHub sign-in is available for this environment.";
+  }
   if (
     bootstrapMethods.includes("desktop-bootstrap") &&
     bootstrapMethods.includes("one-time-token")

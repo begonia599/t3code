@@ -58,6 +58,13 @@ export interface DeriveServerPathsOptions {
   readonly baseDirIsExplicit?: boolean;
 }
 
+export interface GitHubOAuthConfig {
+  readonly clientId: string;
+  readonly clientSecret: Redacted.Redacted<string>;
+  readonly origin: URL;
+  readonly allowedUserIds: ReadonlySet<number>;
+}
+
 /**
  * ServerConfig - Service tag for server runtime configuration.
  */
@@ -90,6 +97,7 @@ export class ServerConfig extends Context.Service<
     readonly staticDir: string | undefined;
     readonly devUrl: URL | undefined;
     readonly devAuthToken?: Redacted.Redacted<string> | undefined;
+    readonly githubOAuth?: GitHubOAuthConfig | undefined;
     readonly devAllowedOrigins: ReadonlyArray<string>;
     readonly noBrowser: boolean;
     readonly startupPresentation: StartupPresentation;

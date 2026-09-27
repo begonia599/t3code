@@ -167,6 +167,60 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  it.effect("enables GitHub sign-in only with an HTTPS origin and an explicit account list", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-github-config-" })),
+      );
+      const flags = {
+        mode: Option.some("web" as const),
+        port: Option.some(8788),
+        host: Option.some("0.0.0.0"),
+        baseDir: Option.some(baseDir),
+        cwd: Option.none<string>(),
+        devUrl: Option.none<URL>(),
+        noBrowser: Option.none<boolean>(),
+        bootstrapFd: Option.none<number>(),
+        autoBootstrapProjectFromCwd: Option.none<boolean>(),
+        logWebSocketEvents: Option.none<boolean>(),
+        tailscaleServeEnabled: Option.none<boolean>(),
+        tailscaleServePort: Option.none<number>(),
+      };
+      const complete = ConfigProvider.layer(
+        ConfigProvider.fromEnv({
+          env: {
+            T3CODE_GITHUB_CLIENT_ID: "client-id",
+            T3CODE_GITHUB_CLIENT_SECRET: "client-secret",
+            T3CODE_GITHUB_ORIGIN: "https://code.example.test",
+            T3CODE_GITHUB_ALLOWED_USER_IDS: "42, 99",
+          },
+        }),
+      );
+      const config = yield* resolveServerConfig(flags, Option.none()).pipe(
+        Effect.provide(Layer.mergeAll(complete, NetService.layer)),
+      );
+      expect(config.githubOAuth?.origin.origin).toBe("https://code.example.test");
+      expect([...config.githubOAuth!.allowedUserIds]).toEqual([42, 99]);
+
+      const insecure = ConfigProvider.layer(
+        ConfigProvider.fromEnv({
+          env: {
+            T3CODE_GITHUB_CLIENT_ID: "client-id",
+            T3CODE_GITHUB_CLIENT_SECRET: "client-secret",
+            T3CODE_GITHUB_ORIGIN: "http://public.example.test",
+            T3CODE_GITHUB_ALLOWED_USER_IDS: "42",
+          },
+        }),
+      );
+      const error = yield* resolveServerConfig(flags, Option.none()).pipe(
+        Effect.provide(Layer.mergeAll(insecure, NetService.layer)),
+        Effect.flip,
+      );
+      expect(String(error)).toContain("T3CODE_GITHUB_ORIGIN");
+      expect(String(error)).not.toContain("client-secret");
+    }),
+  );
+
   it.effect("falls back to effect/config values when flags are omitted", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;

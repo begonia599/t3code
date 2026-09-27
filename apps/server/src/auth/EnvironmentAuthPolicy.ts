@@ -29,12 +29,16 @@ export const make = Effect.gen(function* () {
         ? "remote-reachable"
         : "loopback-browser";
 
-  const bootstrapMethods: ServerAuthDescriptor["bootstrapMethods"] =
+  const baseBootstrapMethods: ServerAuthDescriptor["bootstrapMethods"] =
     policy === "desktop-managed-local"
       ? ["desktop-bootstrap"]
       : config.mode === "desktop" && policy === "remote-reachable"
         ? ["desktop-bootstrap", "one-time-token"]
         : ["one-time-token"];
+
+  const bootstrapMethods: ServerAuthDescriptor["bootstrapMethods"] = config.githubOAuth
+    ? [...baseBootstrapMethods, "github-oauth"]
+    : baseBootstrapMethods;
 
   const descriptor: ServerAuthDescriptor = {
     policy,

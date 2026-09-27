@@ -62,6 +62,32 @@ created in Settings can only be copied from the client that created them while
 its Connections page stays open. If you leave or reload that page, create
 another link to share.
 
+### Sign in with GitHub
+
+An environment can also accept GitHub sign-in from selected accounts. Register a
+GitHub OAuth App with callback URL
+`https://your-host.example/api/auth/github/callback` and configure the server:
+
+```bash
+T3CODE_GITHUB_CLIENT_ID=<client-id>
+T3CODE_GITHUB_CLIENT_SECRET=<client-secret>
+T3CODE_GITHUB_ORIGIN=https://your-host.example
+T3CODE_GITHUB_ALLOWED_USER_IDS=<numeric-github-user-id>
+```
+
+Separate multiple allowed user IDs with commas. The server verifies the signed-in
+account's numeric GitHub ID before issuing a T3 Code session; a GitHub account
+outside the list cannot connect. This sign-in asks for no repository permissions.
+The credentials stay on the host server. The configured origin must be HTTPS,
+except for local development on `localhost` or `127.0.0.1`.
+Removing an ID prevents new sign-ins; revoke that account's existing T3 Code
+sessions separately if you need to remove access immediately.
+
+In a browser or desktop client, open the environment's pairing page and choose
+**Continue with GitHub**. On mobile, enter its host under **Add Environment** and
+choose the same option. One-time pairing links continue to work when GitHub
+sign-in is enabled.
+
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in
