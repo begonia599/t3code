@@ -166,6 +166,17 @@ export const AuthBrowserSessionResult = Schema.Struct({
 });
 export type AuthBrowserSessionResult = typeof AuthBrowserSessionResult.Type;
 
+export const AuthGitHubMobileFinishRequest = Schema.Struct({
+  flow: TrimmedNonEmptyString,
+  verifier: TrimmedNonEmptyString,
+});
+export type AuthGitHubMobileFinishRequest = typeof AuthGitHubMobileFinishRequest.Type;
+
+export const AuthGitHubMobileFinishResult = Schema.Struct({
+  credential: TrimmedNonEmptyString,
+});
+export type AuthGitHubMobileFinishResult = typeof AuthGitHubMobileFinishResult.Type;
+
 export const AuthClientMetadataDeviceType = Schema.Literals([
   "desktop",
   "mobile",

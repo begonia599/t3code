@@ -1,7 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 
-import { AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  AuthGitHubMobileFinishRequest,
+  type AuthGitHubMobileFinishResult,
+  AuthStandardClientScopes,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -43,11 +47,6 @@ interface CompletedMobileFlow {
   readonly subject: string;
   readonly label: string;
 }
-
-const MobileFinishRequest = Schema.Struct({
-  flow: Schema.String,
-  verifier: Schema.String,
-});
 
 function randomUrlSafe(bytes = 32): string {
   return NodeCrypto.randomBytes(bytes).toString("base64url");
@@ -269,7 +268,7 @@ export const githubOAuthRouteLayer = Layer.unwrap(
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const input = yield* request.json.pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(MobileFinishRequest)),
+          Effect.flatMap(Schema.decodeUnknownEffect(AuthGitHubMobileFinishRequest)),
           Effect.orElseSucceed(() => null),
         );
         if (
@@ -298,7 +297,7 @@ export const githubOAuthRouteLayer = Layer.unwrap(
           ttl: Duration.minutes(2),
         });
         return HttpServerResponse.jsonUnsafe(
-          { credential: issued.credential },
+          { credential: issued.credential } satisfies AuthGitHubMobileFinishResult,
           { headers: responseHeaders() },
         );
       }),

@@ -10,6 +10,8 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
+import * as Schema from "effect/Schema";
+import { AuthGitHubMobileFinishResult, AuthSessionState } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Linking, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -192,10 +194,8 @@ export function ConnectionsNewRouteScreen({
         signal: AbortSignal.timeout(10_000),
       });
       if (!response.ok) throw new Error("Could not reach this environment.");
-      const descriptor = (await response.json()) as {
-        auth?: { bootstrapMethods?: string[] };
-      };
-      if (!descriptor.auth?.bootstrapMethods?.includes("github-oauth")) {
+      const session = Schema.decodeUnknownSync(AuthSessionState)(await response.json());
+      if (!session.auth.bootstrapMethods.includes("github-oauth")) {
         throw new Error("GitHub sign-in is not enabled for this environment.");
       }
 
@@ -233,10 +233,7 @@ export function ConnectionsNewRouteScreen({
         signal: AbortSignal.timeout(10_000),
       });
       if (!finish.ok) throw new Error("GitHub sign-in could not establish a T3 session.");
-      const completed = (await finish.json()) as { credential?: unknown };
-      if (typeof completed.credential !== "string" || !completed.credential) {
-        throw new Error("GitHub sign-in did not return a session credential.");
-      }
+      const completed = Schema.decodeUnknownSync(AuthGitHubMobileFinishResult)(await finish.json());
       await connectAndClose(buildPairingUrl(origin, completed.credential), false);
     } catch (error) {
       setGithubError(error instanceof Error ? error.message : "GitHub sign-in failed.");
