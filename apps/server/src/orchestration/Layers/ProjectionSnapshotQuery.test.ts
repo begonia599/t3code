@@ -2280,6 +2280,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             '2026-05-01T00:00:11.000Z'
           ),
           (
+            'message-skill',
+            'thread-active',
+            NULL,
+            'user',
+            '新装的 skill 需要刷新缓存才会出现在菜单',
+            0,
+            '2026-05-01T00:00:11.500Z',
+            '2026-05-01T00:00:11.500Z'
+          ),
+          (
             'message-percent-decoy',
             'thread-percent-decoy',
             NULL,
@@ -2365,6 +2375,20 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const user = yield* snapshotQuery.searchThreads({ query: "user needle" });
       assert.equal(user.matches[0]?.source, "user");
       assert.match(user.matches[0]?.snippet ?? "", /USER needle/);
+
+      const reversed = yield* snapshotQuery.searchThreads({ query: "needle USER" });
+      assert.deepStrictEqual(
+        reversed.matches.map((match) => match.threadId),
+        [ThreadId.make("thread-active")],
+      );
+      assert.deepStrictEqual(
+        (yield* snapshotQuery.searchThreads({ query: "USER final" })).matches,
+        [],
+      );
+
+      const chinese = yield* snapshotQuery.searchThreads({ query: "skill 缓存" });
+      assert.match(chinese.matches[0]?.snippet ?? "", /skill 需要刷新缓存/);
+      assert.deepStrictEqual((yield* snapshotQuery.searchThreads({ query: "   " })).matches, []);
 
       const assistant = yield* snapshotQuery.searchThreads({ query: "FINAL NEEDLE" });
       assert.equal(assistant.matches[0]?.source, "assistant");
