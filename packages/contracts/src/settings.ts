@@ -894,6 +894,28 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+export const DeepSeekHarnessSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("dsh").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the DeepSeek Harness CLI.",
+        providerSettingsForm: { placeholder: "dsh", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["binaryPath"] },
+);
+export type DeepSeekHarnessSettings = typeof DeepSeekHarnessSettings.Type;
+
 /**
  * A read-only quota source outside this environment's provider CLIs. The
  * only kind today is a CLIProxyAPI hub, whose management API reports the

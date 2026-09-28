@@ -1,5 +1,5 @@
 import { Image } from "expo-image";
-import { Path, Svg } from "react-native-svg";
+import { Path, Rect, Svg } from "react-native-svg";
 import { View } from "react-native";
 import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
@@ -15,6 +15,15 @@ export function ProviderIcon(props: ProviderIconProps) {
   const isDarkMode = themeAppearance === "dark";
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
+
+  if (props.provider === "deepseekHarness") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Rect x="1" y="1" width="22" height="22" rx="6" fill="#315EC8" />
+        <Path d="M8 5v14h4a7 7 0 0 0 0-14H8Z" stroke="white" strokeWidth="2" />
+      </Svg>
+    );
+  }
 
   if (props.provider?.trim().toLowerCase() === "antigravity") {
     return (

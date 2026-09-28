@@ -3,6 +3,7 @@ import {
   AntigravityIcon,
   ClaudeAI,
   CursorIcon,
+  DeepSeekHarnessIcon,
   GrokIcon,
   Icon,
   OpenAI,
@@ -16,6 +17,7 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("cursor")]: CursorIcon,
   [ProviderDriverKind.make("grok")]: GrokIcon,
   [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
+  [ProviderDriverKind.make("deepseekHarness")]: DeepSeekHarnessIcon,
 };
 
 export type ModelEsque = {

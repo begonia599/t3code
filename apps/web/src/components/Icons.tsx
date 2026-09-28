@@ -2,6 +2,13 @@ import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
+export const DeepSeekHarnessIcon: Icon = (props) => (
+  <svg viewBox="0 0 24 24" fill="none" {...props}>
+    <rect x="1" y="1" width="22" height="22" rx="6" fill="#315EC8" />
+    <path d="M8 5v14h4a7 7 0 0 0 0-14H8Z" stroke="white" strokeWidth="2" />
+  </svg>
+);
+
 export const FinderIcon: Icon = (props) => (
   <svg viewBox="0 0 24 24" fill="none" {...props}>
     <rect x="2" y="2" width="20" height="20" rx="4" fill="#36A9F5" />
