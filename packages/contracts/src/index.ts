@@ -44,3 +44,8 @@ export * from "./resourceTelemetry.ts";
 export * from "./usage.ts";
 export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
+export * from "./credentialVault.ts";
+export * from "./hostedMcp.ts";
+export * from "./managedServices.ts";
+export * from "./applications.ts";
+export * from "./toolBindings.ts";

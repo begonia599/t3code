@@ -1,4 +1,5 @@
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
+import { ResourcesSettings } from "../settings/ResourcesSettings";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
@@ -984,6 +985,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onScrollToEnd={handleScrollToEnd}
               />
               <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+                <ResourcesSettings
+                  environmentId={props.environmentId}
+                  threadId={props.selectedThread.id}
+                  requestsOnly
+                />
                 {props.feedbackSubmissions.map((submission) => (
                   <ComposerFeedback
                     key={submission.id}

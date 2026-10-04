@@ -67,7 +67,6 @@ import {
   makeCodexSessionRuntime,
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
-  type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -90,6 +89,7 @@ const PROVIDER = ProviderDriverKind.make("codex");
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly mcpHost?: string | undefined;
   /** The provider's model list; supplies model display names for runtime info. */
   readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
   readonly makeRuntime?: (
@@ -2274,7 +2274,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           input.modelSelection?.instanceId === boundInstanceId
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
-        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        const mcpSession = McpProviderSession.readMcpProviderSession(
+          input.threadId,
+          options?.mcpHost,
+        );
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
@@ -2306,6 +2309,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
                   "-c",
                   'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                  "-c",
+                  "mcp_servers.t3-code.tool_timeout_sec=960",
+                  ...(mcpSession.hostedServers ?? []).flatMap((server) => [
+                    "-c",
+                    `mcp_servers.${server.name}.url=${JSON.stringify(server.endpoint)}`,
+                    "-c",
+                    `mcp_servers.${server.name}.bearer_token_env_var="T3_MCP_BEARER_TOKEN"`,
+                  ]),
                 ],
                 mcpCapabilities: mcpSession.capabilities,
               }

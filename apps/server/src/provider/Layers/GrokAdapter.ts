@@ -107,6 +107,7 @@ function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
 
 export interface GrokAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
+  readonly mcpHost?: string | undefined;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly instanceId?: ProviderInstanceId;
@@ -993,7 +994,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             threadId: input.threadId,
           });
 
-          const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+          const mcpSession = McpProviderSession.readMcpProviderSession(
+            input.threadId,
+            options?.mcpHost,
+          );
           const acp = yield* makeGrokAcpRuntime({
             grokSettings,
             ...(options?.environment || mcpSession?.agentDeviceEnvironment
@@ -1012,6 +1016,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             ...(mcpSession
               ? {
                   mcpServers: [
+                    ...(mcpSession.hostedServers ?? []).map((server) => ({
+                      type: "http" as const,
+                      name: server.name,
+                      url: server.endpoint,
+                      headers: [{ name: "Authorization", value: mcpSession.authorizationHeader }],
+                    })),
                     {
                       type: "http" as const,
                       name: "t3-code",

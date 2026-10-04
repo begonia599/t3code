@@ -1,4 +1,5 @@
 import { SettingsGroup } from "./SettingsGroup";
+import { ResourcesSettings } from "./ResourcesSettings";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
@@ -1126,6 +1127,7 @@ export function EnvironmentProviderSettings({
         readOnly={readOnly}
       />
 
+      <ResourcesSettings environmentId={environmentId} />
       <SettingsSection title="Advanced">
         <SettingsRow
           id={searchableSetting("provider-health-check-interval").id}

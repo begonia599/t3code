@@ -7,6 +7,15 @@ import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import {
+  CredentialWriteInput,
+  CredentialVaultAction,
+  CredentialVaultSnapshot,
+  CredentialVaultError,
+} from "./credentialVault.ts";
+import { HostedMcpConfig, HostedMcpAction } from "./hostedMcp.ts";
+import { GitHubToolBinding, ToolBindingAction } from "./toolBindings.ts";
+import { ApplicationHttpRequest, ApplicationResponse, ApplicationError } from "./applications.ts";
 
 import {
   AuthAccessTokenResult,
@@ -615,9 +624,105 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+class EnvironmentCredentialVaultHttpApi extends HttpApiGroup.make("credentialVault")
+  .add(
+    HttpApiEndpoint.post("writeTool", "/api/credential-vault/tool/write", {
+      headers: OptionalBearerHeaders,
+      payload: GitHubToolBinding,
+      success: Schema.Void,
+      error: [
+        CredentialVaultError,
+        EnvironmentScopeRequiredError,
+        ...EnvironmentAuthenticationErrors,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("actionTool", "/api/credential-vault/tool/action", {
+      headers: OptionalBearerHeaders,
+      payload: ToolBindingAction,
+      success: Schema.Void,
+      error: [
+        CredentialVaultError,
+        EnvironmentScopeRequiredError,
+        ...EnvironmentAuthenticationErrors,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("writeMcp", "/api/credential-vault/mcp/write", {
+      headers: OptionalBearerHeaders,
+      payload: HostedMcpConfig,
+      success: Schema.Void,
+      error: [
+        CredentialVaultError,
+        EnvironmentScopeRequiredError,
+        ...EnvironmentAuthenticationErrors,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("actionMcp", "/api/credential-vault/mcp/action", {
+      headers: OptionalBearerHeaders,
+      payload: HostedMcpAction,
+      success: Schema.Void,
+      error: [
+        CredentialVaultError,
+        EnvironmentScopeRequiredError,
+        ...EnvironmentAuthenticationErrors,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("snapshot", "/api/credential-vault", {
+      headers: OptionalBearerHeaders,
+      success: CredentialVaultSnapshot,
+      error: [
+        CredentialVaultError,
+        EnvironmentScopeRequiredError,
+        ...EnvironmentAuthenticationErrors,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("write", "/api/credential-vault/write", {
+      headers: OptionalBearerHeaders,
+      payload: CredentialWriteInput,
+      success: CredentialVaultSnapshot,
+      error: [
+        CredentialVaultError,
+        EnvironmentScopeRequiredError,
+        ...EnvironmentAuthenticationErrors,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("action", "/api/credential-vault/action", {
+      headers: OptionalBearerHeaders,
+      payload: CredentialVaultAction,
+      success: CredentialVaultSnapshot,
+      error: [
+        CredentialVaultError,
+        EnvironmentScopeRequiredError,
+        ...EnvironmentAuthenticationErrors,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
+class EnvironmentApplicationsHttpApi extends HttpApiGroup.make("applications").add(
+  HttpApiEndpoint.post("request", "/api/applications/request", {
+    headers: OptionalBearerHeaders,
+    payload: ApplicationHttpRequest,
+    success: ApplicationResponse,
+    error: [ApplicationError, EnvironmentScopeRequiredError, ...EnvironmentAuthenticationErrors],
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
-  .add(EnvironmentConnectHttpApi) {}
+  .add(EnvironmentConnectHttpApi)
+  .add(EnvironmentCredentialVaultHttpApi)
+  .add(EnvironmentApplicationsHttpApi) {}

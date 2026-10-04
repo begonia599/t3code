@@ -7,6 +7,7 @@ import * as NetAddress from "effect/unstable/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import { registerProviderFileRoots } from "./McpProviderSession.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
 const makeFakeHttpServer = (hostname: string, port = 43123) =>
@@ -32,6 +33,39 @@ const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
       Effect.provide(NodeServices.layer),
     );
 
+it.effect("invalidates a sandbox credential when its mounted view changes or closes", () =>
+  Effect.gen(function* () {
+    const id = ProviderInstanceId.make("sandbox-view-account");
+    const roots = ["/srv/project", "/srv/private/account"];
+    const closeOriginal = registerProviderFileRoots(id, roots);
+    let closeReplacement: (() => void) | undefined;
+    try {
+      const registry = yield* makeRegistry(() => 1_000);
+      const issued = yield* registry.issue({
+        threadId: ThreadId.make("sandbox-view-thread"),
+        providerInstanceId: id,
+        capabilities: new Set(),
+      });
+      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+      expect((yield* registry.resolve(token))?.allowedFileRoots).toBe(roots);
+      closeReplacement = registerProviderFileRoots(id, ["/srv/different-project"]);
+      closeOriginal();
+      expect(yield* registry.resolve(token)).toBeUndefined();
+      const next = yield* registry.issue({
+        threadId: ThreadId.make("sandbox-next-thread"),
+        providerInstanceId: id,
+        capabilities: new Set(),
+      });
+      const nextToken = next.config.authorizationHeader.replace(/^Bearer\s+/, "");
+      closeReplacement();
+      expect(yield* registry.resolve(nextToken)).toBeUndefined();
+    } finally {
+      closeOriginal();
+      closeReplacement?.();
+    }
+  }),
+);
+
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;
@@ -53,6 +87,53 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
     expect(yield* registry.resolve(token)).toBeUndefined();
 
     timestamp += 2_000;
+  }),
+);
+
+it.effect("separates shell and MCP authorization, restricts scripts and revokes children", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("script-thread"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(),
+    });
+    const native = issued.config.authorizationHeader.slice(7);
+    const shell = issued.config.credentialBridgeAuthorization!.slice(7);
+    expect(native).not.toBe(shell);
+    expect(yield* registry.resolve(shell)).toBeUndefined();
+    expect(yield* registry.resolveHosted(shell, "nai")).toBeUndefined();
+    expect(yield* registry.resolveCredential(native)).toBeUndefined();
+    const scope = (yield* registry.resolve(native))!;
+    expect((yield* registry.resolveCredential(shell))?.providerSessionId).toBe(
+      scope.providerSessionId,
+    );
+    const script = (yield* registry.issueScript({
+      scope,
+      serviceId: "nai",
+      tools: ["identity"],
+      ttlMs: 1_000,
+    }))!;
+    const token = script.authorization.slice(7);
+    expect(yield* registry.resolve(token)).toBeUndefined();
+    expect(yield* registry.resolveCredential(token)).toBeUndefined();
+    expect(yield* registry.resolveHosted(token, "other")).toBeUndefined();
+    expect((yield* registry.resolveHosted(token, "nai"))?.script?.tools.has("identity")).toBe(true);
+    const active = (yield* registry.issueScript({
+      scope,
+      serviceId: "nai",
+      tools: ["identity"],
+      ttlMs: 2_000,
+    }))!;
+    for (let index = 0; index < 10; index++) {
+      timestamp += 100;
+      yield* registry.touch(scope.threadId);
+    }
+    expect(yield* registry.resolveHosted(token, "nai")).toBeUndefined();
+    yield* registry.revokeProviderSession(scope.providerSessionId);
+    expect(yield* registry.resolveHosted(active.authorization.slice(7), "nai")).toBeUndefined();
+    expect(yield* registry.resolveCredential(shell)).toBeUndefined();
   }),
 );
 

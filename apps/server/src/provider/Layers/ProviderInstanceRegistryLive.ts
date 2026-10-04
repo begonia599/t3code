@@ -34,6 +34,7 @@
  */
 import {
   providerInstanceConfigEnabledFlag,
+  supportsProviderSandbox,
   ProviderInstanceId,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
@@ -142,6 +143,19 @@ const buildEntry = <R>(input: {
       };
     }
 
+    if (entry.execution && !supportsProviderSandbox(entry.driver)) {
+      return {
+        kind: "unavailable" as const,
+        snapshot: yield* buildUnavailableProviderSnapshot({
+          driverKind: entry.driver,
+          instanceId,
+          displayName: entry.displayName,
+          accentColor: entry.accentColor,
+          reason: "Linux sandbox execution currently supports Claude, Codex and Grok.",
+        }),
+      };
+    }
+
     const decoder = Schema.decodeUnknownEffect(driver.configSchema);
     const decodeResult = yield* decoder(entry.config ?? driver.defaultConfig()).pipe(Effect.result);
     if (decodeResult._tag === "Failure") {
@@ -179,6 +193,7 @@ const buildEntry = <R>(input: {
         displayName: entry.displayName,
         accentColor: entry.accentColor,
         environment: entry.environment ?? [],
+        execution: entry.execution,
         enabled: resolveEntryEnabled(entry, typedConfig),
         config: typedConfig,
       })

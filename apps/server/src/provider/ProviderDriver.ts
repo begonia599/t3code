@@ -25,6 +25,7 @@ import type {
   ProviderConsumeResetCreditOutcome,
   ProviderDriverKind,
   ProviderInstanceEnvironment,
+  ProviderInstanceExecution,
   ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
@@ -116,6 +117,7 @@ export interface ProviderDriverCreateInput<Config> {
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
   readonly environment: ProviderInstanceEnvironment;
+  readonly execution?: ProviderInstanceExecution | undefined;
   readonly enabled: boolean;
   readonly config: Config;
 }

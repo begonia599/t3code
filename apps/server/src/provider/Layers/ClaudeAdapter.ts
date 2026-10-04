@@ -466,6 +466,8 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly mcpHost?: string | undefined;
+  readonly spawnClaudeCodeProcess?: ClaudeQueryOptions["spawnClaudeCodeProcess"] | undefined;
   readonly createQuery?: (input: {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
@@ -4889,7 +4891,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
         extraArgs["thinking-display"] = "summarized";
       }
-      const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      const mcpSession = McpProviderSession.readMcpProviderSession(
+        input.threadId,
+        options?.mcpHost,
+      );
       // The attachments dir grant lets the agent Read/copy pasted images at
       // the paths ProviderService injects into the turn text, without an
       // approval prompt. It is a leaf directory holding only attachment
@@ -4899,6 +4904,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         serverConfig.attachmentsDir,
       ];
       const queryOptions: ClaudeQueryOptions = {
+        ...(options?.spawnClaudeCodeProcess
+          ? { spawnClaudeCodeProcess: options.spawnClaudeCodeProcess }
+          : {}),
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
@@ -4935,12 +4943,25 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
-        env: McpProviderSession.withAgentDeviceEnvironment(claudeEnvironment, mcpSession),
+        env: McpProviderSession.withAgentDeviceEnvironment(
+          mcpSession ? { MCP_TOOL_TIMEOUT: "960000", ...claudeEnvironment } : claudeEnvironment,
+          mcpSession,
+        ),
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpSession
           ? {
               mcpServers: {
+                ...Object.fromEntries(
+                  (mcpSession.hostedServers ?? []).map((server) => [
+                    server.name,
+                    {
+                      type: "http" as const,
+                      url: server.endpoint,
+                      headers: { Authorization: mcpSession.authorizationHeader },
+                    },
+                  ]),
+                ),
                 "t3-code": {
                   type: "http",
                   url: mcpSession.endpoint,

@@ -7,6 +7,7 @@ import {
   ProviderInstanceConfigMap,
   ProviderInstanceId,
   ProviderInstanceRef,
+  supportsProviderSandbox,
 } from "./providerInstance.ts";
 
 const decodeProviderDriverKind = Schema.decodeUnknownSync(ProviderDriverKind);
@@ -86,6 +87,30 @@ describe("ProviderInstanceRef", () => {
 });
 
 describe("ProviderInstanceConfig", () => {
+  it("preserves an optional sandbox profile and rejects unsafe profile paths", () => {
+    expect(decodeProviderInstanceConfig({ driver: "codex" }).execution).toBeUndefined();
+    expect(
+      decodeProviderInstanceConfig({
+        driver: "codex",
+        execution: { mode: "linux-sandbox", profile: "codex-work" },
+      }).execution,
+    ).toEqual({ mode: "linux-sandbox", profile: "codex-work" });
+    for (const profile of ["", "../codex", "/etc/profile", "has spaces"])
+      expect(() =>
+        decodeProviderInstanceConfig({
+          driver: "codex",
+          execution: { mode: "linux-sandbox", profile },
+        }),
+      ).toThrow();
+  });
+
+  it("supports sandbox execution only for the initial three native adapters", () => {
+    for (const driver of ["claudeAgent", "codex", "grok"])
+      expect(supportsProviderSandbox(ProviderDriverKind.make(driver))).toBe(true);
+    for (const driver of ["cursor", "opencode", "antigravity", "unknown"])
+      expect(supportsProviderSandbox(ProviderDriverKind.make(driver))).toBe(false);
+  });
+
   it("accepts a minimal config envelope for a driver", () => {
     const decoded = decodeProviderInstanceConfig({ driver: "codex" });
     expect(decoded.driver).toBe("codex");

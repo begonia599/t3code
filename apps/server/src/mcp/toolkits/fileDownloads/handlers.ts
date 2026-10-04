@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import { issueAgentDownloadUrl } from "../../../assets/AssetAccess.ts";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { isProviderPathVisible } from "../../../provider/ProviderFileAccess.ts";
 import {
   FileDownloadsToolkit,
   FileShareFailedError,
@@ -34,6 +35,11 @@ const make = Effect.gen(function* () {
           thread.value.worktreePath ?? project.value.workspaceRoot,
           input.path,
         );
+        const visible = yield* isProviderPathVisible(
+          invocation.allowedFileRoots,
+          requestedPath,
+        ).pipe(Effect.orElseSucceed(() => false));
+        if (!visible) return yield* new FileShareFileNotFoundError({ path: input.path });
         const issued = yield* issueAgentDownloadUrl(requestedPath).pipe(
           Effect.mapError((cause) => new FileShareFailedError({ cause })),
         );

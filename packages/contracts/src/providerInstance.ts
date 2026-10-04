@@ -112,6 +112,16 @@ export type ProviderInstanceEnvironmentVariable = typeof ProviderInstanceEnviron
 export const ProviderInstanceEnvironment = Schema.Array(ProviderInstanceEnvironmentVariable);
 export type ProviderInstanceEnvironment = typeof ProviderInstanceEnvironment.Type;
 
+/** The profile is provisioned by the host, rather than supplied as an OCI spec. */
+export const ProviderInstanceExecution = Schema.Struct({
+  mode: Schema.Literal("linux-sandbox"),
+  profile: slugSchema,
+});
+export type ProviderInstanceExecution = typeof ProviderInstanceExecution.Type;
+
+export const supportsProviderSandbox = (driver: ProviderDriverKind): boolean =>
+  driver === "claudeAgent" || driver === "codex" || driver === "grok";
+
 /**
  * Envelope shape for a provider instance configuration in `ServerSettings`.
  *
@@ -126,6 +136,7 @@ export const ProviderInstanceConfig = Schema.Struct({
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
+  execution: Schema.optionalKey(ProviderInstanceExecution),
   enabled: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),
 });

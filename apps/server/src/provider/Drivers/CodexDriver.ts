@@ -50,13 +50,13 @@ import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { makeProviderExecution } from "../ProviderExecution.ts";
+import { makeProviderTemporaryFileSystem } from "../ProviderFileAccess.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
   normalizeCommandPath,
-  resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -68,6 +68,7 @@ import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
+import { resolveProviderExecutionMaintenance } from "../providerExecutionMaintenance.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -121,9 +122,15 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   },
   configSchema: CodexSettings,
   defaultConfig: (): CodexSettings => decodeCodexSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, environment, execution, enabled, config }) =>
     Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const runtime = yield* makeProviderExecution({
+        instanceId,
+        driver: DRIVER_KIND,
+        execution,
+        environment,
+      });
+      const spawner = runtime.spawner;
       const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
@@ -131,8 +138,18 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
-      const homeLayout = yield* resolveCodexHomeLayout(config);
+      const processEnv = runtime.environment;
+      if (runtime.description && config.shadowHomePath.trim()) {
+        return yield* new ProviderDriverError({
+          driver: DRIVER_KIND,
+          instanceId,
+          detail: "Sandbox instances use their private Codex home. Clear shadowHomePath first.",
+        });
+      }
+      const homeLayout = yield* resolveCodexHomeLayout({
+        ...config,
+        ...(runtime.description ? { homePath: runtime.description.providerHome } : {}),
+      });
       const continuationIdentity = codexContinuationIdentity(homeLayout);
       const stampIdentity = withInstanceIdentity({
         instanceId,
@@ -159,13 +176,13 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        resolveProviderMaintenanceCapabilitiesEffect(
-          makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
-          {
-            binaryPath: effectiveConfig.binaryPath,
-            env: processEnv,
-          },
-        ).pipe(
+        resolveProviderExecutionMaintenance(runtime, {
+          provider: DRIVER_KIND,
+          packageName: "@openai/codex",
+          resolver: makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
+          binaryPath: effectiveConfig.binaryPath,
+          environment: processEnv,
+        }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, pathService),
@@ -236,10 +253,21 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const adapter = yield* makeCodexAdapter(effectiveConfig, {
         instanceId,
         environment: processEnv,
+        mcpHost: runtime.description?.mcpHost,
         models,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
-      const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv, models);
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      const textGeneration = yield* makeCodexTextGeneration(
+        effectiveConfig,
+        processEnv,
+        models,
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          yield* makeProviderTemporaryFileSystem(runtime.description?.providerHome),
+        ),
+      );
       const snapshotForCwd = (cwd: string) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot

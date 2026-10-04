@@ -11,12 +11,17 @@ import * as Effect from "effect/Effect";
 export type McpCapability = "preview" | "device" | "pull-requests";
 
 export interface McpInvocationScope {
+  readonly script?: {
+    readonly serviceId: string;
+    readonly tools: ReadonlySet<string>;
+  };
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly capabilities: ReadonlySet<McpCapability>;
   readonly issuedAt: number;
+  readonly allowedFileRoots?: ReadonlyArray<string> | undefined;
 }
 
 export class McpInvocationContext extends Context.Service<

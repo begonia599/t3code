@@ -19,6 +19,7 @@
 - [Remote access](./user/remote-access.md)
 - [Running in the background](./user/background-service.md)
 - [Updating T3 Code](./user/updating.md)
+- [Fork: Harness 沙箱](./user/harness-sandbox.md)
 - Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md)
 
 ---
@@ -36,6 +37,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Glossary](./internals/glossary.md)
 - [Connection runtime](./internals/connection-runtime.md)
 - [Providers](./internals/providers.md)
+- [Fork: Harness 沙箱与 T3 资源管理](./internals/harness-resource-architecture.md)
 - [Pull request file revisions](./internals/pull-request-file-revisions.md)
 - [Model classification](./internals/model-manifest.md)
 - [Remote environments](./internals/remote.md)

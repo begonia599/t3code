@@ -73,6 +73,15 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
+import * as CredentialVault from "./credentials/CredentialVault.ts";
+import * as ToolBindings from "./credentials/ToolBindings.ts";
+import * as Applications from "./services/Applications.ts";
+import * as HostedMcp from "./mcp/HostedMcp.ts";
+import * as McpScriptAccess from "./mcp/McpScriptAccess.ts";
+import { hostedMcpRouteLayer } from "./mcp/hostedHttp.ts";
+import * as CredentialShellBroker from "./credentials/CredentialShellBroker.ts";
+import { credentialVaultHttpApiLayer } from "./credentials/http.ts";
+import { applicationsHttpApiLayer } from "./services/http.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
@@ -533,6 +542,15 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // with explicit `providerInstances` entries on boot.
   Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
 ).pipe(
+  // Drivers capture their construction context, so the bridge must also be
+  // provided to instance hydration, before sandboxed providers are created.
+  Layer.provideMerge(McpScriptAccess.layer),
+  Layer.provideMerge(HostedMcp.layer),
+  Layer.provideMerge(CredentialShellBroker.layer),
+  Layer.provideMerge(ToolBindings.layer),
+  Layer.provideMerge(Applications.layer),
+  Layer.provideMerge(McpSessionRegistry.layer),
+  Layer.provideMerge(CredentialVault.layer),
   Layer.provideMerge(AntigravityInstallation.layer),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
@@ -597,6 +615,8 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
+      Layer.provide(credentialVaultHttpApiLayer),
+      Layer.provide(applicationsHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,
@@ -608,6 +628,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     websocketRpcRouteLayer,
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
+  hostedMcpRouteLayer.pipe(Layer.provide(McpSessionRegistry.layer)),
   // Last, so no route layer can replace the server's one TracerDisabledWhen.
   untracedRequestsLayer,
 ).pipe(

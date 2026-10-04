@@ -362,6 +362,44 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect(
+    "runs instance-owned updates through their captured boundary instead of the host",
+    () => {
+      const seen: Array<string> = [];
+      const instance = ChildProcessSpawner.make((command) => {
+        if (command._tag !== "StandardCommand") return Effect.die("Unexpected pipeline");
+        seen.push(command.command);
+        return Effect.succeed(mockHandle({ stdout: "instance-updated" }));
+      });
+      return Effect.gen(function* () {
+        const { registry } = yield* makeRegistry(baseProvider);
+        const updater = yield* makeTestRunner({
+          ...registry,
+          getProviderMaintenanceCapabilitiesForInstance: (_id, provider) => {
+            const capabilities = lifecycleFor(provider);
+            return Effect.succeed({
+              ...capabilities,
+              update: capabilities.update ? { ...capabilities.update, spawner: instance } : null,
+            });
+          },
+        });
+        const result = yield* updater.updateProvider(CODEX_DRIVER);
+        assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+        assert.deepStrictEqual(seen, ["npm"]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NonWindowsPlatform,
+            latestVersionHttpClient("0.0.0"),
+            mockSpawnerLayer(() => {
+              throw new Error("Host execution must not be used");
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("re-resolves ownership before running and executes the fresh command", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     const fresh: Array<boolean> = [];

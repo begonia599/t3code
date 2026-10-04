@@ -44,6 +44,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
+import { ProviderExecutionSettings } from "./ProviderExecutionSettings";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
@@ -934,6 +935,13 @@ export function ProviderInstanceCard({
           />
         )}
       </SettingsSection>
+
+      <ProviderExecutionSettings
+        instanceId={instanceId}
+        instance={instance}
+        readOnly={readOnly}
+        onUpdate={onUpdate}
+      />
 
       <SettingsSection
         title="Environment"

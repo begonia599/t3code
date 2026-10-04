@@ -1,5 +1,6 @@
 import { Connection } from "@t3tools/client-runtime/connection";
 import { shellSnapshotLoaderLayer } from "@t3tools/client-runtime/state/shell";
+import { resourceClientLayer } from "@t3tools/client-runtime/state/resources";
 import { threadSnapshotLoaderLayer } from "@t3tools/client-runtime/state/threads";
 import { pullRequestDiffLoaderLayer } from "@t3tools/client-runtime/state/pull-requests";
 import * as Layer from "effect/Layer";
@@ -17,6 +18,7 @@ const providedConnectionPlatformLayer = connectionPlatformLayer.pipe(
 );
 
 const snapshotLoaderLayer = Layer.mergeAll(
+  resourceClientLayer,
   threadSnapshotLoaderLayer,
   shellSnapshotLoaderLayer,
   pullRequestDiffLoaderLayer,

@@ -18,6 +18,8 @@ import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { ProviderExecutionSettings } from "./ProviderExecutionSettings";
+import { ResourcesSettings } from "./ResourcesSettings";
 import {
   canMaintainEnvironment,
   canUpdateEnvironmentProvider,
@@ -184,6 +186,12 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
               <Text selectable className="px-2 text-sm text-danger-foreground">
                 {error}
               </Text>
+            ) : null}
+            {connected ? (
+              <View>
+                <ProviderExecutionSettings environmentId={environmentId} disabled={!allowed} />
+                <ResourcesSettings environmentId={environmentId} />
+              </View>
             ) : null}
             {notice ? <Text className="px-2 text-sm text-foreground-muted">{notice}</Text> : null}
             {config ? (

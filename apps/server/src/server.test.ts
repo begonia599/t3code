@@ -2,6 +2,12 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
+import * as CredentialVault from "./credentials/CredentialVault.ts";
+import * as ToolBindings from "./credentials/ToolBindings.ts";
+import * as Applications from "./services/Applications.ts";
+import * as HostedMcp from "./mcp/HostedMcp.ts";
+import * as McpScriptAccess from "./mcp/McpScriptAccess.ts";
+import { McpSessionRegistry } from "./mcp/McpSessionRegistry.ts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
@@ -1234,7 +1240,16 @@ const buildAppUnderTest = (options?: {
         };
       }),
       Layer.provideMerge(makeAuthTestLayer()),
-      Layer.provideMerge(ServerSecretStore.layer),
+      Layer.provideMerge(
+        McpScriptAccess.layer.pipe(
+          Layer.provideMerge(Applications.layer),
+          Layer.provideMerge(ToolBindings.layer),
+          Layer.provideMerge(HostedMcp.layer),
+          Layer.provide(Layer.mock(McpSessionRegistry)({})),
+          Layer.provideMerge(CredentialVault.layer),
+          Layer.provideMerge(ServerSecretStore.layer),
+        ),
+      ),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(
         options?.layers?.httpClient === undefined

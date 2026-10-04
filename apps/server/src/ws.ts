@@ -3,6 +3,10 @@ import {
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
 import * as Cause from "effect/Cause";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import { CredentialVault } from "./credentials/CredentialVault.ts";
+import { ToolBindings } from "./credentials/ToolBindings.ts";
+import { HostedMcp } from "./mcp/HostedMcp.ts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -21,6 +25,7 @@ import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
+  AuthAccessWriteScope,
   type AuthEnvironmentScope,
   AuthSessionId,
   ClientConnectionMethod,
@@ -575,6 +580,9 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const vault = yield* CredentialVault;
+      const toolBindings = yield* ToolBindings;
+      const hostedMcp = yield* HostedMcp;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -2344,6 +2352,44 @@ const makeWsRpcLayer = (
               );
             }),
             { "rpc.aggregate": "orchestration" },
+          ),
+        [WS_METHODS.resourcesSubscribe]: (input) =>
+          Stream.zipLatestWith(
+            Stream.zipLatestWith(
+              SubscriptionRef.changes(vault.revision),
+              SubscriptionRef.changes(toolBindings.revision),
+              () => 0,
+            ),
+            SubscriptionRef.changes(hostedMcp.revision),
+            () => 0,
+          ).pipe(
+            Stream.mapEffect(() =>
+              Effect.gen(function* () {
+                const snapshot = {
+                  vault: yield* vault.snapshot,
+                  mcp: yield* hostedMcp.snapshot,
+                  tools: yield* toolBindings.snapshot,
+                };
+                if (currentSession.scopes.includes(AuthAccessWriteScope)) return snapshot;
+
+                // Standard clients only need to answer an input request from
+                // their active thread. Keep credentials, grants, MCP config,
+                // and tool bindings out of this response entirely.
+                return {
+                  vault: {
+                    credentials: [],
+                    requests: input.threadId
+                      ? snapshot.vault.requests.filter(
+                          (request) => request.threadId === input.threadId,
+                        )
+                      : [],
+                    grants: [],
+                  },
+                  mcp: [],
+                  tools: [],
+                };
+              }),
+            ),
           ),
         [WS_METHODS.serverProbe]: (_input) =>
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {

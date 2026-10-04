@@ -34,6 +34,15 @@ import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handler
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import { FileDownloadsToolkitHandlersLive } from "./toolkits/fileDownloads/handlers.ts";
 import { FileDownloadsToolkit } from "./toolkits/fileDownloads/tools.ts";
+import { CredentialsToolkit } from "./toolkits/credentials/tools.ts";
+import { CredentialsToolkitHandlersLive } from "./toolkits/credentials/handlers.ts";
+import { ResourcesToolkit } from "./toolkits/resources/tools.ts";
+import { ResourcesToolkitHandlersLive } from "./toolkits/resources/handlers.ts";
+import { ServicesToolkit } from "./toolkits/services/tools.ts";
+import { ServicesToolkitHandlersLive } from "./toolkits/services/handlers.ts";
+import { ServiceNetwork } from "../services/ServiceNetwork.ts";
+import { ApplicationsToolkit } from "./toolkits/applications/tools.ts";
+import { ApplicationsToolkitHandlersLive } from "./toolkits/applications/handlers.ts";
 import {
   DeviceScreenshotToolkitHandlersLive,
   DeviceStandardToolkitHandlersLive,
@@ -673,7 +682,15 @@ const McpTransportLive = McpServer.layerHttp({
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
+export const ServicesToolkitRegistrationLive = McpServer.toolkit(ServicesToolkit).pipe(
+  Layer.provide(ServicesToolkitHandlersLive),
+);
+
 export const layer = Layer.mergeAll(
+  McpServer.toolkit(ResourcesToolkit).pipe(Layer.provide(ResourcesToolkitHandlersLive)),
+  McpServer.toolkit(CredentialsToolkit).pipe(Layer.provide(CredentialsToolkitHandlersLive)),
+  ServicesToolkitRegistrationLive.pipe(Layer.provide(ServiceNetwork.layer)),
+  McpServer.toolkit(ApplicationsToolkit).pipe(Layer.provide(ApplicationsToolkitHandlersLive)),
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   FileDownloadsToolkitRegistrationLive,

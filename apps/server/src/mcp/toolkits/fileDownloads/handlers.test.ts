@@ -37,6 +37,9 @@ it.effect("shares a worktree artifact through a thread-bound relative download l
     yield* fs.makeDirectory(worktree);
     const artifact = path.join(worktree, "preview.apk");
     yield* fs.writeFileString(artifact, "apk bytes");
+    const privateFile = path.join(projectRoot, "other-account-secret");
+    yield* fs.writeFileString(privateFile, "private fixture");
+    yield* fs.symlink(privateFile, path.join(worktree, "escape.txt"));
     const config = yield* ServerConfig.ServerConfig;
     yield* fs.makeDirectory(config.secretsDir, { recursive: true });
     const projectionLayer = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
@@ -71,6 +74,7 @@ it.effect("shares a worktree artifact through a thread-bound relative download l
         providerInstanceId: ProviderInstanceId.make("codex"),
         capabilities: new Set<McpInvocationContext.McpCapability>(),
         issuedAt: 1,
+        allowedFileRoots: [worktree],
       }),
       Effect.provide(toolkitDependencies),
     );
@@ -78,5 +82,23 @@ it.effect("shares a worktree artifact through a thread-bound relative download l
       fileName: "preview.apk",
       markdownLink: expect.stringMatching(/^\[preview\.apk\]\(<\/api\/assets\/[^>]+>\)$/),
     });
+    for (const requested of [privateFile, "escape.txt"]) {
+      const denied = yield* toolkit.handle("share_file", { path: requested }).pipe(
+        Stream.unwrap,
+        Stream.runCollect,
+        Effect.provideService(McpInvocationContext.McpInvocationContext, {
+          environmentId: EnvironmentId.make("environment-download-test"),
+          threadId,
+          providerSessionId: "provider-session-download-test",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: new Set<McpInvocationContext.McpCapability>(),
+          issuedAt: 1,
+          allowedFileRoots: [worktree],
+        }),
+        Effect.provide(toolkitDependencies),
+        Effect.result,
+      );
+      expect(denied._tag).toBe("Failure");
+    }
   }).pipe(Effect.provide(configLayer.pipe(Layer.provideMerge(NodeServices.layer))), Effect.scoped),
 );

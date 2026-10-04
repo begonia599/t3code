@@ -1,5 +1,34 @@
 import { describe, expect, it } from "vite-plus/test";
-import { withAgentDeviceEnvironment } from "./McpProviderSession.ts";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  clearMcpProviderSession,
+  readMcpProviderSession,
+  setMcpProviderSession,
+  withAgentDeviceEnvironment,
+} from "./McpProviderSession.ts";
+
+it("routes a sandbox MCP endpoint without changing its credential or another session's URL", () => {
+  const threadId = ThreadId.make("sandbox-mcp-test");
+  const config = {
+    threadId,
+    environmentId: EnvironmentId.make("test-environment"),
+    providerInstanceId: ProviderInstanceId.make("claude-personal"),
+    providerSessionId: "session-fixture",
+    endpoint: "http://127.0.0.1:3000/mcp",
+    authorizationHeader: "Bearer scoped-fixture",
+    capabilities: new Set(["preview"]),
+  };
+  setMcpProviderSession(config);
+  try {
+    expect(readMcpProviderSession(threadId, "10.231.1.1")).toMatchObject({
+      endpoint: "http://10.231.1.1:3000/mcp",
+      authorizationHeader: config.authorizationHeader,
+    });
+    expect(readMcpProviderSession(threadId)).toBe(config);
+  } finally {
+    clearMcpProviderSession(threadId);
+  }
+});
 
 describe("device CLI environment", () => {
   it("preserves provider credentials and commands while routing devices to the owned daemon", () => {

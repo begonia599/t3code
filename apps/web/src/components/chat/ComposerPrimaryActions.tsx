@@ -31,6 +31,8 @@ interface ComposerPrimaryActionsProps {
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
+  /** Private input submits through its own HTTP action rather than the chat form. */
+  onSubmitPendingAction?: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
 }
@@ -76,6 +78,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   hasSendableContent,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
+  onSubmitPendingAction,
   onInterrupt,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
@@ -139,7 +142,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           )
         ) : null}
         <button
-          type="submit"
+          type={onSubmitPendingAction ? "button" : "submit"}
+          onClick={onSubmitPendingAction}
           className={cn(messageActionPillClassName, "h-8 sm:h-7", compact ? "px-3" : "px-4")}
           {...pointerFocusProps}
           disabled={

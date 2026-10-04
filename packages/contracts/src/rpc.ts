@@ -1,7 +1,8 @@
 import * as Schema from "effect/Schema";
+import { ResourceSnapshot } from "./hostedMcp.ts";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -362,6 +363,7 @@ export const WS_METHODS = {
 
   // Server meta
   serverProbe: "server.probe",
+  resourcesSubscribe: "resources.subscribe",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
@@ -460,6 +462,15 @@ const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybinding, 
 const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
   payload: Schema.Struct({}),
   success: Schema.Struct({}),
+  error: EnvironmentAuthorizationError,
+});
+const WsResourcesSubscribeRpc = Rpc.make(WS_METHODS.resourcesSubscribe, {
+  payload: Schema.Struct({
+    /** Limit non-admin clients to the thread whose input they can answer. */
+    threadId: Schema.optional(ThreadId),
+  }),
+  success: ResourceSnapshot,
+  stream: true,
   error: EnvironmentAuthorizationError,
 });
 
@@ -1394,6 +1405,7 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
 });
 
 export const WsRpcGroup = RpcGroup.make(
+  WsResourcesSubscribeRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

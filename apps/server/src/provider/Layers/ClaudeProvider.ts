@@ -333,6 +333,7 @@ const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
+  spawnClaudeCodeProcess?: ClaudeQueryOptions["spawnClaudeCodeProcess"],
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
@@ -349,12 +350,15 @@ const probeClaudeCapabilities = (
         prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
           await waitForAbortSignal(abort.signal);
         })(),
-        options: buildClaudeCapabilitiesProbeQueryOptions({
-          executablePath,
-          abortController: abort,
-          environment: claudeEnvironment,
-          cwd,
-        }),
+        options: {
+          ...buildClaudeCapabilitiesProbeQueryOptions({
+            executablePath,
+            abortController: abort,
+            environment: claudeEnvironment,
+            cwd,
+          }),
+          ...(spawnClaudeCodeProcess ? { spawnClaudeCodeProcess } : {}),
+        },
       });
       const init = await q.initializationResult();
       return { q, init };

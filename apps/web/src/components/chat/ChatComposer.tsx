@@ -253,6 +253,7 @@ import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
+import { ComposerPendingCredentialInputPanel } from "./ComposerPendingCredentialInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import {
   ComposerControl,
@@ -6139,7 +6140,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (isInsideCollapsedComposerControls(target)) return;
         if (!(target instanceof Element)) return;
         const isInteractive = Boolean(
-          target.closest('button, a, input, select, [role="button"], [role="menuitem"]'),
+          target.closest('button, a, input, textarea, select, [role="button"], [role="menuitem"]'),
         );
         if (isInteractive) return;
 
@@ -6214,6 +6215,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : null}
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
+          {routeKind === "server" ? (
+            <ComposerPendingCredentialInputPanel
+              key={`${routeThreadRef.environmentId}:${routeThreadRef.threadId}`}
+              environmentId={routeThreadRef.environmentId}
+              threadId={routeThreadRef.threadId}
+            />
+          ) : null}
           <ComposerBannerStack
             key={activeThreadId}
             className="relative z-0"

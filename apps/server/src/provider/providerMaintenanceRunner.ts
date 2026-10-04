@@ -225,7 +225,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const versionCache = yield* ProviderVersionCache;
   const runMaintenanceCommand = (update: ProviderMaintenanceCommandAction) =>
     runProviderMaintenanceCommandWithSpawner({
-      spawner,
+      spawner: update.spawner ?? spawner,
       command: update.executable,
       args: update.args,
       ...(update.env ? { env: update.env } : {}),

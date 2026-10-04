@@ -27,14 +27,13 @@ import {
   type ProviderInstance,
 } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { makeProviderExecution } from "../ProviderExecution.ts";
 import { discoverGrokSkills } from "./GrokSkills.ts";
 import {
   makeCachedProviderMaintenanceResolution,
-  makeManualOnlyProviderMaintenanceCapabilities,
+  makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
-  resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -44,30 +43,35 @@ import {
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("grok");
+import { resolveProviderExecutionMaintenance } from "../providerExecutionMaintenance.ts";
 // npm's `latest` tracks Grok's stable channel, the one `grok update` installs
 // by default, so the registry stays the source for "latest".
 const GROK_NPM_PACKAGE = "@xai-official/grok";
+const packageMaintenance = makePackageManagedProviderMaintenanceResolver({
+  provider: DRIVER_KIND,
+  npmPackageName: GROK_NPM_PACKAGE,
+  nativeUpdate: null,
+});
 // `grok update` finds the installer that owns the binary itself, so the
 // resolved executable is its own updater. It installs under `GROK_HOME`, so it
 // runs with the instance's environment. No executable means nothing to update,
 // not "whatever is on PATH".
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
   resolve: (context) =>
-    Effect.succeed(
-      context
-        ? makeProviderMaintenanceCapabilities({
-            provider: DRIVER_KIND,
-            packageName: GROK_NPM_PACKAGE,
-            updateExecutable: context.resolvedCommandPath,
-            updateArgs: ["update"],
-            updateLockKey: "grok",
-            platform: context.platform,
-            env: context.env,
-          })
-        : makeManualOnlyProviderMaintenanceCapabilities({
-            provider: DRIVER_KIND,
-            packageName: GROK_NPM_PACKAGE,
-          }),
+    packageMaintenance.resolve(context).pipe(
+      Effect.map((capabilities) =>
+        context && !capabilities.update
+          ? makeProviderMaintenanceCapabilities({
+              provider: DRIVER_KIND,
+              packageName: GROK_NPM_PACKAGE,
+              updateExecutable: context.resolvedCommandPath,
+              updateArgs: ["update"],
+              updateLockKey: "grok",
+              platform: context.platform,
+              env: context.env,
+            })
+          : capabilities,
+      ),
     ),
 };
 
@@ -90,17 +94,24 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
   },
   configSchema: GrokSettings,
   defaultConfig: (): GrokSettings => decodeGrokSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, environment, execution, enabled, config }) =>
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const runtime = yield* makeProviderExecution({
+        instanceId,
+        driver: DRIVER_KIND,
+        execution,
+        environment,
+      });
+      const spawner = runtime.spawner;
       const httpClient = yield* HttpClient.HttpClient;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettingsService;
-      const { cwd } = yield* ServerConfig;
+      const { cwd: serverCwd } = yield* ServerConfig;
+      const cwd = runtime.description?.defaultCwd ?? serverCwd;
       const eventLoggers = yield* ProviderEventLoggers;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = runtime.environment;
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -114,9 +125,12 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       });
       const effectiveConfig = { ...config, enabled } satisfies GrokSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+        resolveProviderExecutionMaintenance(runtime, {
+          provider: DRIVER_KIND,
+          packageName: GROK_NPM_PACKAGE,
+          resolver: UPDATE,
           binaryPath: effectiveConfig.binaryPath,
-          env: processEnv,
+          environment: processEnv,
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -125,14 +139,18 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       );
       const adapter = yield* makeGrokAdapter(effectiveConfig, {
         environment: processEnv,
+        mcpHost: runtime.description?.mcpHost,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
-      });
-      const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
 
       const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, cwd).pipe(
         Effect.filterOrElse(
           (snapshot) =>
+            runtime.description !== undefined ||
             !(
               effectiveConfig.enabled &&
               snapshot.installed &&

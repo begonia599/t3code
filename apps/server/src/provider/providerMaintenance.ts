@@ -79,6 +79,8 @@ export interface ProviderMaintenanceCommandAction {
    * must update that home and not the default one.
    */
   readonly env?: NodeJS.ProcessEnv;
+  /** Instance execution boundary; updates must use the same user and network as the provider. */
+  readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
 }
 
 /** Where the provider executable was found; every path is absolute. */
