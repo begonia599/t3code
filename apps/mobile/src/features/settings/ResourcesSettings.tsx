@@ -295,7 +295,7 @@ function ResourceContent(props: {
           <Text className="text-lg text-foreground">{t("Native gh tool bindings")}</Text>
           <Text className="text-foreground-muted">
             {t(
-              "Authorize native gh per instance using T3's existing GitHub CLI login. It keeps that login's GitHub permissions. A GitHub App can restrict access to selected repositories.",
+              "Managed instances automatically use T3's current GitHub CLI login. You can revoke an instance or override its authorization. GitHub App bindings can limit repository access.",
             )}
           </Text>
           <Action
@@ -339,12 +339,29 @@ function ResourceContent(props: {
                   }
                 />
                 <Action
-                  label="Revoke"
+                  label={state.binding.enabled ? "Revoke" : "Enable"}
+                  disabled={busy}
+                  onPress={() =>
+                    void mutate(
+                      state.binding.enabled
+                        ? {
+                            type: "actionTool",
+                            payload: { instanceId: state.binding.instanceId, action: "delete" },
+                          }
+                        : {
+                            type: "writeTool",
+                            payload: { ...state.binding, enabled: true },
+                          },
+                    )
+                  }
+                />
+                <Action
+                  label="Use T3 GitHub login"
                   disabled={busy}
                   onPress={() =>
                     void mutate({
                       type: "actionTool",
-                      payload: { instanceId: state.binding.instanceId, action: "delete" },
+                      payload: { instanceId: state.binding.instanceId, action: "reset" },
                     })
                   }
                 />

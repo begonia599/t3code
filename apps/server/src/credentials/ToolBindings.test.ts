@@ -88,6 +88,7 @@ function fixture(options: { repositories?: ReadonlyArray<string>; hostToken?: st
       }),
   });
   return {
+    transport,
     requests,
     minted: () => minted,
     setHost: (token: string | undefined, account = "owner") => {
@@ -169,7 +170,9 @@ it.effect(
       test.setHost("gho_fixture_restored");
       yield* tools.write({ ...hostBinding, enabled: false });
       expect(yield* tools.gh(binding.instanceId)).toBeUndefined();
-      expect(yield* tools.gh(ProviderInstanceId.make("grok"))).toBeUndefined();
+      expect((yield* tools.gh(ProviderInstanceId.make("grok")))?.environment.GH_TOKEN).toBe(
+        "gho_fixture_restored",
+      );
     }).pipe(Effect.provide(test.layer));
   },
 );
@@ -180,6 +183,79 @@ it("keeps inherited host permissions distinct from installation repository restr
   );
   expect(decode({ ...binding, source: { type: "host-login" } })._tag).toBe("None");
   expect(decode({ ...binding, repositories: [] })._tag).toBe("None");
+});
+it.effect("new instances inherit T3's gh login without a saved binding or shell grant", () => {
+  const test = fixture();
+  return Effect.gen(function* () {
+    const tools = yield* ToolBindings;
+    const vault = yield* CredentialVault;
+    for (const id of ["claudeAgent", "codex", "grok", "codex_second"]) {
+      expect((yield* tools.gh(ProviderInstanceId.make(id)))?.environment.GH_TOKEN).toBe(
+        "gho_fixture_broad_host_token",
+      );
+    }
+    const snapshot = yield* tools.snapshot;
+    expect(snapshot.map((state) => state.binding.instanceId)).toEqual([
+      "claudeAgent",
+      "codex",
+      "grok",
+      "codex_second",
+    ]);
+    expect(snapshot.every((state) => state.status === "ready")).toBe(true);
+    expect(encode(snapshot)).not.toContain("gho_fixture_broad_host_token");
+    expect(yield* vault.shellEnvironment(scope)).toEqual({});
+
+    // Automatic authorization follows T3; it does not pin a newly launched
+    // instance to the account that happened to be logged in on first use.
+    test.setHost("gho_fixture_new_owner", "new-owner");
+    expect((yield* tools.gh(binding.instanceId))?.environment.GH_TOKEN).toBe(
+      "gho_fixture_new_owner",
+    );
+    expect(
+      (yield* tools.snapshot).find((state) => state.binding.instanceId === "codex")?.binding
+        .account,
+    ).toBe("new-owner");
+    test.setHost(undefined);
+    expect((yield* tools.gh(binding.instanceId).pipe(Effect.result))._tag).toBe("Failure");
+  }).pipe(Effect.provide(test.layer));
+});
+it.effect("revocation survives restart, remains local to one instance, and can be reset", () => {
+  const test = fixture();
+  return Effect.gen(function* () {
+    const tools = yield* ToolBindings;
+    yield* tools.gh(binding.instanceId);
+    yield* tools.action({ instanceId: binding.instanceId, action: "delete" });
+    expect(yield* tools.gh(binding.instanceId)).toBeUndefined();
+    const restored = yield* make.pipe(Effect.provide(test.transport));
+    expect(yield* restored.gh(binding.instanceId)).toBeUndefined();
+    expect(
+      (yield* restored.snapshot).find((state) => state.binding.instanceId === "codex")?.status,
+    ).toBe("disabled");
+    expect((yield* restored.gh(ProviderInstanceId.make("grok")))?.environment.GH_TOKEN).toBe(
+      "gho_fixture_broad_host_token",
+    );
+    yield* restored.action({ instanceId: binding.instanceId, action: "reset" });
+    expect((yield* restored.gh(binding.instanceId))?.environment.GH_TOKEN).toBe(
+      "gho_fixture_broad_host_token",
+    );
+  }).pipe(Effect.provide(test.layer));
+});
+it.effect("a failed explicit binding cannot fall back to inherited host authorization", () => {
+  const test = fixture();
+  return Effect.gen(function* () {
+    const tools = yield* ToolBindings;
+    yield* tools.write(binding);
+    // Its private-key credential has not been provisioned.
+    expect((yield* tools.gh(binding.instanceId).pipe(Effect.result))._tag).toBe("Failure");
+    expect(test.minted()).toBe(0);
+    expect((yield* tools.gh(ProviderInstanceId.make("grok")))?.environment.GH_TOKEN).toBe(
+      "gho_fixture_broad_host_token",
+    );
+    yield* tools.action({ instanceId: binding.instanceId, action: "reset" });
+    expect((yield* tools.gh(binding.instanceId))?.environment.GH_TOKEN).toBe(
+      "gho_fixture_broad_host_token",
+    );
+  }).pipe(Effect.provide(test.layer));
 });
 it.effect(
   "renews scoped native gh without a model credential grant and does not expose values in metadata",
@@ -219,7 +295,9 @@ it.effect(
       }
       yield* tools.action({ instanceId: binding.instanceId, action: "delete" });
       expect(yield* tools.gh(binding.instanceId)).toBeUndefined();
-      expect(yield* tools.gh(ProviderInstanceId.make("grok"))).toBeUndefined();
+      expect((yield* tools.gh(ProviderInstanceId.make("grok")))?.environment.GH_TOKEN).toBe(
+        "gho_fixture_broad_host_token",
+      );
     }).pipe(Effect.provide(test.layer));
   },
 );

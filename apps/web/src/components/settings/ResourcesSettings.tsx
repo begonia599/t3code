@@ -397,7 +397,7 @@ function ResourceContent(props: { environmentId: EnvironmentId }) {
           <div className="flex flex-col gap-3 p-4">
             <p className="text-sm text-muted-foreground">
               {t(
-                "Authorize native gh per instance using T3's existing GitHub CLI login. It keeps that login's GitHub permissions. A GitHub App can restrict access to selected repositories.",
+                "Managed instances automatically use T3's current GitHub CLI login. You can revoke an instance or override its authorization. GitHub App bindings can limit repository access.",
               )}
             </p>
             <div>
@@ -455,13 +455,33 @@ function ResourceContent(props: { environmentId: EnvironmentId }) {
                   variant="ghost"
                   disabled={busy}
                   onClick={() =>
+                    void mutate(
+                      state.binding.enabled
+                        ? {
+                            type: "actionTool",
+                            payload: { instanceId: state.binding.instanceId, action: "delete" },
+                          }
+                        : {
+                            type: "writeTool",
+                            payload: { ...state.binding, enabled: true },
+                          },
+                    )
+                  }
+                >
+                  {t(state.binding.enabled ? "Revoke" : "Enable")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
                     void mutate({
                       type: "actionTool",
-                      payload: { instanceId: state.binding.instanceId, action: "delete" },
+                      payload: { instanceId: state.binding.instanceId, action: "reset" },
                     })
                   }
                 >
-                  {t("Revoke")}
+                  {t("Use T3 GitHub login")}
                 </Button>
               </div>
             ))}

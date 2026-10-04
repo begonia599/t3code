@@ -49,6 +49,6 @@ export const ToolBindingState = Schema.Struct({
 export type ToolBindingState = typeof ToolBindingState.Type;
 export const ToolBindingAction = Schema.Struct({
   instanceId: ProviderInstanceId,
-  action: Schema.Literals(["delete", "check"]),
+  action: Schema.Literals(["delete", "check", "reset"]),
 });
 export type ToolBindingAction = typeof ToolBindingAction.Type;

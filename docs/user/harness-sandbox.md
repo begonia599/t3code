@@ -186,7 +186,9 @@ sudo python3 scripts/sandbox/install_service_network.py --config /root/t3-servic
 
 ## 常用工具授权与框架保护
 
-在资源设置中添加 **Native gh tool bindings**，选择实例和 T3 上已登录的 GitHub 账号。使用 `source: {"type":"host-login"}`，并将 `repositories` 留空，授权将沿用该账号已有的 GitHub 权限，不会额外限制仓库。验证通过后，Agent 直接运行 `gh pr list` 等原生命令，无需再次登录、申请或查看 Token。T3 不共享宿主认证文件；认证只在原生 gh 启动时提供，普通 shell 环境中没有该 Token。撤销绑定影响后续启动，已经运行的程序需结束后重新启动。
+T3 上的 GitHub CLI 已登录时，新启动的托管实例自动继承当前账号及其 GitHub 权限，无需逐个添加授权。Agent 直接运行 `gh pr list` 等原生命令，T3 在工具启动时提供认证，普通 shell 环境中没有该 Token，也不共享宿主认证文件。T3 退出 GitHub 登录后，继承授权随之失效。
+
+资源设置中的 **Native gh tool bindings** 可按实例撤销、重新启用或覆盖默认授权。撤销后不会自动恢复，重启和新会话也会保持撤销；选择“继承 T3 GitHub 授权”可清除覆盖并恢复默认行为。显式 `host-login` 覆盖会固定所填写的账号，`repositories` 应留空。撤销影响后续工具启动，已经运行的程序需结束后重新启动。
 
 同一绑定也用于 GitHub HTTPS 仓库的 `git clone/fetch/push`，系统自动配置认证助手，无需运行 `gh auth setup-git`。仅在 Git 需要认证时取得凭证，普通本地 Git 操作不领取 Token。直接运行 `gh auth token` 或 `git credential fill` 的秘密输出仍会被遮蔽。更新沙箱启动入口后需新建会话，已有会话保留原来的挂载与环境；SSH 地址与其他 Git 托管平台仍使用各自的认证配置。
 

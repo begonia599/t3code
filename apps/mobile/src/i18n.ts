@@ -10,11 +10,13 @@ const zhCN: Readonly<Record<string, string>> = {
   "Tool bindings only": "仅用于工具绑定",
   "Native gh tool bindings": "原生 gh 工具授权",
   "Add gh binding": "添加 gh 授权",
+  "Use T3 GitHub login": "继承 T3 GitHub 授权",
+  Enable: "启用",
   "Verify binding": "验证授权",
   "gh binding configuration": "gh 授权配置",
   "Invalid gh binding configuration.": "gh 授权配置格式不正确。",
-  "Authorize native gh per instance using T3's existing GitHub CLI login. It keeps that login's GitHub permissions. A GitHub App can restrict access to selected repositories.":
-    "按实例授权原生 gh，复用 T3 已有的 GitHub CLI 登录及其权限。也可选择 GitHub App 来限制仓库范围。",
+  "Managed instances automatically use T3's current GitHub CLI login. You can revoke an instance or override its authorization. GitHub App bindings can limit repository access.":
+    "托管实例自动使用 T3 当前的 GitHub CLI 登录。可按实例撤销或覆盖授权，也可通过 GitHub App 限制仓库范围。",
   "For host-login, enter the account already logged in on T3 and leave repositories empty. GitHub App bindings use a vault private-key reference with Tool bindings only.":
     "使用 host-login 时，填写 T3 上已经登录的账号，并将 repositories 留空。GitHub App 授权通过凭证名引用私钥，其用途设为“仅用于工具绑定”。",
   "Application publishing": "应用发布",

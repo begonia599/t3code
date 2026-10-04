@@ -191,8 +191,11 @@ export const make = Effect.gen(function* () {
   });
   const inspect = Effect.fn("ToolBindings.inspect")(function* (instanceId: ProviderInstanceId) {
     const binding = configs.get(instanceId);
-    if (!binding || !binding.enabled) return undefined;
-    if (binding.source.type === "host-login") {
+    if (binding && !binding.enabled) return undefined;
+    // A managed instance inherits the resource owner's gh login. Persisted
+    // entries are overrides, including explicit revocations; no per-instance
+    // setup is needed just because a Harness runs under a different UID.
+    if (!binding || binding.source.type === "host-login") {
       // Re-read on every native start: logout or switching the host account
       // must invalidate cached access even before the verification lease ends.
       const token = yield* transport.hostToken;
@@ -204,7 +207,7 @@ export const make = Effect.gen(function* () {
         Effect.flatMap(decodeAccount),
         Effect.mapError(() => fail("The host GitHub login could not be verified.")),
       );
-      if (account.login.toLowerCase() !== binding.account.toLowerCase())
+      if (binding && account.login.toLowerCase() !== binding.account.toLowerCase())
         return yield* fail(
           "The host GitHub account does not match this binding. Recheck the selected account.",
         );
@@ -215,10 +218,18 @@ export const make = Effect.gen(function* () {
       };
       cache.set(instanceId, { result, version });
       states.set(instanceId, {
-        binding,
+        binding: binding ?? {
+          instanceId,
+          enabled: true,
+          host: "github.com",
+          account: account.login,
+          repositories: [],
+          source: { type: "host-login" },
+        },
         status: "ready",
-        message:
-          "Native gh uses the resource owner's existing GitHub login with its existing permissions. Git HTTPS and SSH authentication are separate.",
+        message: binding
+          ? "Native gh uses the selected T3 GitHub login with its existing permissions. GitHub HTTPS uses the same authorization."
+          : "Native gh inherits T3's current GitHub CLI login with its existing permissions. GitHub HTTPS uses the same authorization.",
         checkedAt: Date.now(),
       });
       return result;
@@ -349,27 +360,39 @@ export const make = Effect.gen(function* () {
   });
   const gh = (instanceId: ProviderInstanceId) =>
     lock.withPermits(1)(
-      inspect(instanceId).pipe(
-        Effect.tapError((error) =>
-          Effect.sync(() => {
-            cache.delete(instanceId);
-            const binding = configs.get(instanceId);
-            if (binding)
-              states.set(instanceId, {
-                binding,
-                status: "not_allowed",
-                message: error.reason,
-                checkedAt: Date.now(),
-              });
-          }),
-        ),
-      ),
+      Effect.gen(function* () {
+        const previous = states.get(instanceId);
+        return yield* inspect(instanceId).pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              cache.delete(instanceId);
+              const binding = configs.get(instanceId) ?? states.get(instanceId)?.binding;
+              if (binding)
+                states.set(instanceId, {
+                  binding,
+                  status: "not_allowed",
+                  message: error.reason,
+                  checkedAt: Date.now(),
+                });
+            }),
+          ),
+          // Publish automatically discovered instances too. Cached tool starts
+          // keep the same state and do not cause resource UI updates.
+          Effect.ensuring(
+            Effect.suspend(() => (previous === states.get(instanceId) ? Effect.void : notify)),
+          ),
+        );
+      }),
     );
   return ToolBindings.of({
     revision,
     snapshot: lock.withPermits(1)(
-      Effect.sync(() =>
-        [...configs.values()].map((binding) =>
+      Effect.sync(() => {
+        const visible = new Map(
+          [...states.values()].map((state) => [state.binding.instanceId, state.binding]),
+        );
+        for (const [id, binding] of configs) visible.set(id, binding);
+        return [...visible.values()].map((binding) =>
           binding.enabled
             ? (states.get(binding.instanceId) ?? {
                 binding,
@@ -377,8 +400,8 @@ export const make = Effect.gen(function* () {
                 message: "Check this binding before use.",
               })
             : { binding, status: "disabled" as const, message: "The tool binding is disabled." },
-        ),
-      ),
+        );
+      }),
     ),
     gh,
     write: (binding) =>
@@ -412,11 +435,28 @@ export const make = Effect.gen(function* () {
             .withPermits(1)(
               Effect.gen(function* () {
                 const previous = configs.get(input.instanceId);
-                configs.delete(input.instanceId);
+                if (input.action === "delete") {
+                  // Keep revocation across restarts and future sessions. Removing
+                  // the override would otherwise restore inherited authorization.
+                  configs.set(input.instanceId, {
+                    ...(previous ??
+                      states.get(input.instanceId)?.binding ?? {
+                        instanceId: input.instanceId,
+                        host: "github.com" as const,
+                        account: "unconfigured",
+                        repositories: [],
+                        source: { type: "host-login" as const },
+                      }),
+                    enabled: false,
+                  });
+                } else {
+                  configs.delete(input.instanceId);
+                }
                 yield* save().pipe(
                   Effect.onError(() =>
                     Effect.sync(() => {
                       if (previous) configs.set(input.instanceId, previous);
+                      else configs.delete(input.instanceId);
                     }),
                   ),
                 );
