@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./codex-device-auth": {
+      "types": "./src/codexDeviceAuth.ts",
+      "default": "./src/codexDeviceAuth.ts"
+    },
     "./device/stream": {
       "types": "./src/device/stream.ts",
       "default": "./src/device/stream.ts"

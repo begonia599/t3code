@@ -19,6 +19,7 @@ import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { ProviderExecutionSettings } from "./ProviderExecutionSettings";
+import { CodexAuthSettings } from "./CodexAuthSettings";
 import { ResourcesSettings } from "./ResourcesSettings";
 import {
   canMaintainEnvironment,
@@ -190,6 +191,16 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
             {connected ? (
               <View>
                 <ProviderExecutionSettings environmentId={environmentId} disabled={!allowed} />
+                {config?.providers
+                  .filter((provider) => provider.driver === "codex")
+                  .map((provider) => (
+                    <CodexAuthSettings
+                      key={`${environmentId}:${provider.instanceId}`}
+                      environmentId={environmentId}
+                      provider={provider}
+                      disabled={!allowed}
+                    />
+                  ))}
                 <ResourcesSettings environmentId={environmentId} />
               </View>
             ) : null}

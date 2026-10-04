@@ -5,6 +5,58 @@ import { useMemo } from "react";
 import { mobilePreferencesAtom } from "./state/preferences";
 
 const zhCN: Readonly<Record<string, string>> = {
+  "Codex account": "Codex 账号",
+  "Authorize this instance in your browser without SSH.": "在浏览器中为此实例授权，无需 SSH。",
+  "Enable this Codex instance to sign in.": "启用此 Codex 实例后即可登录。",
+  "Update this environment to sign in to Codex.": "更新此环境后即可在这里登录 Codex。",
+  "Reading sign-in status.": "正在读取登录状态。",
+  "Waiting for Codex sign-in.": "正在等待 Codex 登录。",
+  "Signed in to Codex.": "已登录 Codex。",
+  "Sign in with your ChatGPT account.": "使用你的 ChatGPT 账号登录。",
+  "Sign in with ChatGPT": "使用 ChatGPT 登录",
+  "Retry sign-in": "重试登录",
+  "Cancel sign-in": "取消登录",
+  "Sign out": "退出登录",
+  "Sign out of Codex?": "退出此 Codex 账号？",
+  "This stops running threads using this sign-in. Thread history is kept.":
+    "这会停止使用此账号的运行中会话，会话历史将保留。",
+  "Open the authorization page and enter this one-time code.": "打开授权页面并输入此一次性验证码。",
+  "Open authorization page": "打开授权页面",
+  "Copy code": "复制验证码",
+  "Code copied": "验证码已复制",
+  "Expires at": "到期时间",
+  "Provider setup is read-only.": "当前连接只有查看权限。",
+  "Retry setup status": "重新读取登录状态",
+  "Starting sign-in.": "正在启动登录。",
+  "Complete sign-in to continue.": "完成授权后将自动继续。",
+  "Checking provider sign-in.": "正在核验登录结果。",
+  "Sign-in complete.": "登录完成。",
+  "Sign-in cancelled.": "已取消登录。",
+  "Sign-in expired. Start again.": "登录已过期，请重新发起。",
+  "Signed out.": "已退出登录。",
+  "Sign-in is in progress in another client.": "另一个客户端正在登录，请在该客户端完成或取消。",
+  "Could not update Codex sign-in. Try again.": "无法更新 Codex 登录状态，请重试。",
+  "Could not open the sign-in page. Open the displayed link in your browser.":
+    "无法打开授权页面，请在浏览器中打开显示的链接。",
+  "Could not copy the code. Enter the displayed code manually.":
+    "无法复制验证码，请手动输入显示的验证码。",
+  "Could not start Codex sign-in. Check the instance's CLI and network.":
+    "无法启动 Codex 登录，请检查此实例的 CLI 和网络。",
+  "Could not start device-code login. Update Codex, enable device-code login in ChatGPT, and check the instance's network.":
+    "无法启动设备码登录，请更新 Codex、在 ChatGPT 中启用设备码登录，并检查此实例的网络。",
+  "This Codex version did not return a device-code login. Update Codex and try again.":
+    "此 Codex 版本未返回设备码登录信息，请更新后重试。",
+  "Codex returned an invalid device-code login.": "Codex 返回的设备码登录信息无效。",
+  "Codex sign-in failed or expired. Start again.": "Codex 登录失败或已过期，请重试。",
+  "Could not verify the Codex account. Refresh provider status before retrying.":
+    "无法核验 Codex 账号，请刷新提供方状态后再重试。",
+  "Codex did not report a ChatGPT account. Check the instance's authentication settings.":
+    "Codex 未返回 ChatGPT 账号，请检查此实例的认证设置。",
+  "Codex exited before sign-in could be verified. Start again.":
+    "Codex 在完成登录核验前退出，请重试。",
+  "The Codex login process could not be monitored. Start again.":
+    "无法监测 Codex 登录进程，请重试。",
+  "Could not sign out of Codex. Try again.": "无法退出 Codex 登录，请重试。",
   "Credential use": "凭证用途",
   "Shell and tool bindings": "Shell 和工具绑定",
   "Tool bindings only": "仅用于工具绑定",

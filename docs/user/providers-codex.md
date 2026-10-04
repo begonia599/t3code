@@ -4,6 +4,27 @@ For one account, use the default Codex provider with your normal Codex login.
 [Provider setup](./install.md#providers) covers installation, Settings > Providers,
 and custom binaries or environment variables.
 
+## Sign in from T3 Code
+
+On web or desktop, open **Settings > Providers**, select the Codex instance, and
+choose **Sign in with ChatGPT**. On mobile, open **Settings > Environments**, select
+the environment, and find the instance's **Codex account** section. Open the
+authorization page on your computer or phone, sign in, and enter the displayed
+one-time code. T3 updates the instance's status when Codex completes authorization;
+no SSH connection or localhost callback is needed.
+
+Use a Codex CLI version that supports app-server device-code login, and enable
+device-code login in your ChatGPT security settings or workspace permissions.
+Cancel or retry an expired request from the same T3 client that started it.
+Signing in or out stops running threads using that login, including instances
+that share the same credential directory; conversation history is kept.
+
+Codex stores and refreshes its own credentials. Login uses the selected instance's
+Codex home and, when enabled, its sandbox identity and network. Existing logins
+remain in place until you explicitly sign out. To add another account, configure
+a separate instance and credential directory before signing in. Sandbox instances
+use their provisioned private directory and must leave **Shadow home path** empty.
+
 ## Use multiple accounts
 
 A shared Codex home with a shadow home lets work and personal accounts continue
