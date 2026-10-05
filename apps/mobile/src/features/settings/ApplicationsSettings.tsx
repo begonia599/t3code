@@ -1,3 +1,4 @@
+import { DeploymentAuthorizations } from "./DeploymentAuthorizations";
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
@@ -128,6 +129,12 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
           }),
         )}
       </View>
+      <DeploymentAuthorizations
+        key={`${environmentId}:${instanceId}`}
+        environmentId={environmentId}
+        instanceId={instanceId}
+        onProfiles={setProfiles}
+      />
       {action("Refresh applications", () => void request({ action: "list", input: {} }))}
       {apps.map((app) => (
         <View key={app.id}>
@@ -310,7 +317,7 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
           {profiles.length === 0 ? (
             <Text>
               {t(
-                "Refresh applications to load deployment profiles. The host administrator registers profiles for your project and instance.",
+                "Create a deployment authorization above, or ask your Harness to prepare one for review.",
               )}
             </Text>
           ) : null}

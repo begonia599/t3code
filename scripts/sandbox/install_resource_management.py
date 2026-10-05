@@ -8,8 +8,6 @@ from pathlib import Path
 import pwd
 import re
 import subprocess
-import tempfile
-import uuid
 
 spec = importlib.util.spec_from_file_location('installer', Path(__file__).with_name('install.py'))
 installer = importlib.util.module_from_spec(spec); spec.loader.exec_module(installer)
@@ -19,36 +17,10 @@ for module_name in ('t3code_resource_policy', 't3code_systemd'):
     globals()[module_name] = module
 
 
-def verify_native_host(owner):
-    """Run only during explicit administrator setup, never from a Harness request."""
-    version = subprocess.run(['/usr/bin/systemctl', '--version'], check=True, capture_output=True, text=True).stdout
-    match = re.match(r'systemd (\d+)', version)
-    if not match or int(match[1]) < 257: raise ValueError('Native application hosting requires systemd 257+ for private PID namespaces')
-    controllers_path = Path('/sys/fs/cgroup/cgroup.controllers')
-    if not controllers_path.exists() or not {'memory', 'cpu', 'pids'} <= set(controllers_path.read_text().split()):
-        raise ValueError('Native application hosting requires cgroup v2 memory, cpu and pids controllers')
-    # Some hosts accept unit settings but cannot enforce them. Check PID isolation
-    # and socket BPF enforcement before registering any root runtime grants.
-    probe = '''import errno, os, socket, sys
-assert os.stat('/proc/self/ns/pid').st_ino != int(sys.argv[1]), 'PrivatePIDs is not enforced'
-for family, address in [(socket.AF_INET, ('127.0.0.1', 45001)), (socket.AF_INET6, ('::1', 45001))]:
-    with socket.socket(family) as client:
-        try: client.bind(address)
-        except OSError as error:
-            assert error.errno == errno.EPERM, 'Socket bind policy could not be verified'
-        else: raise RuntimeError('SocketBindDeny is not enforced')
-'''
-    subprocess.run(['/usr/bin/systemd-run', '--quiet', '--wait', '--pipe', '--collect', '--unit=t3-app-preflight-'+uuid.uuid4().hex,
-                    '--property=User='+str(owner.pw_uid), '--property=Group='+str(owner.pw_gid),
-                    '--property=PrivatePIDs=yes', '--property=PrivateNetwork=yes', '--property=SocketBindDeny=any',
-                    '--property=MemoryMax=64M', '--property=MemorySwapMax=0', '--property=CPUQuota=25%',
-                    '--property=TasksMax=16', '--property=RuntimeMaxSec=15s', '--property=TimeoutStopSec=5s',
-                    '--expand-environment=no', '--', '/usr/bin/python3', '-I', '-c', probe,
-                    str(Path('/proc/self/ns/pid').stat().st_ino)], check=True, timeout=30)
+verify_native_host = t3code_systemd.verify_native_host
 
 
-
-def main():
+def configure():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--owner', required=True)
     parser.add_argument('--protect-read', action='append', default=[])
@@ -145,6 +117,11 @@ def main():
                 installer.install_file(caddy, old, 0o644)
                 raise
     print('Configured trusted T3 resource boundaries. Docker hosting: '+str(applications.get('enabled', False))+'. Native deployment profiles: '+str(len(profiles))+'.')
+
+
+def main():
+    with t3code_resource_policy.configuration_lock():
+        configure()
 
 
 if __name__ == '__main__': main()

@@ -1,13 +1,26 @@
 """Trusted host policy shared by sandbox mounts and the application broker."""
 import json
+import fcntl
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import stat
 
 CONFIG = Path('/etc/t3code/resources.json')
+CONFIG_LOCK = Path('/run/t3code-resource-policy.lock')
 DEFAULT_PROTECTED = ('/opt/t3code', '/etc/t3code', '/var/lib/t3code-applications',
                      '/var/lib/t3code-service-network', '/etc/systemd/system',
                      '/etc/caddy', '/usr/local/libexec', '/etc/sudoers.d')
+
+
+@contextmanager
+def configuration_lock():
+    fd = os.open(CONFIG_LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
 
 
 class PolicyError(ValueError):

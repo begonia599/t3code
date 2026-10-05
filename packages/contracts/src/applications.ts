@@ -33,8 +33,64 @@ const ApplicationBudget = Schema.Struct({
   tasks: Schema.Number,
   timeoutSeconds: Schema.Number,
 });
+const DeploymentBudget = Schema.Struct({
+  memoryMiB: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 64, maximum: 65536 })),
+  cpuPercent: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 800 })),
+  tasks: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 16, maximum: 4096 })),
+  timeoutSeconds: Schema.Number.check(
+    Schema.isInt(),
+    Schema.isBetween({ minimum: 1, maximum: 3600 }),
+  ),
+});
+export const DeploymentProposal = Schema.Struct({
+  profileId: ServiceName,
+  projectRoot: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
+  applicationName: ServiceName,
+  runtimeIdentity: Schema.Literals(["owner", "root"]),
+  network: Schema.Literals(["instance", "host"]),
+  listenPorts: Schema.Array(
+    Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 1024, maximum: 65535 })),
+  ).check(Schema.isMaxLength(32)),
+  build: DeploymentBudget,
+  runtime: DeploymentBudget,
+});
+export type DeploymentProposal = typeof DeploymentProposal.Type;
+export const DeploymentReview = Schema.Struct({
+  requestId: ServiceId,
+  revision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+});
+export const DeploymentAuthorizationRequest = Schema.Struct({
+  ...DeploymentReview.fields,
+  proposal: DeploymentProposal,
+  instanceId: ProviderInstanceId,
+  runtimeUser: Schema.String,
+  networkNamespace: Schema.String,
+  createdAt: Schema.String,
+  status: Schema.Literals(["pending", "approved", "rejected", "cancelled"]),
+});
+export type DeploymentAuthorizationRequest = typeof DeploymentAuthorizationRequest.Type;
+// Deliberately separate from ApplicationRequest: no Harness tool can approve a grant.
+export const DeploymentAdminRequest = Schema.Union([
+  Schema.Struct({
+    action: Schema.Literal("approve"),
+    input: Schema.Struct({ ...DeploymentReview.fields, confirmRoot: Schema.Boolean }),
+  }),
+  Schema.Struct({ action: Schema.Literal("reject"), input: DeploymentReview }),
+  Schema.Struct({
+    action: Schema.Literal("revoke"),
+    input: Schema.Struct({ profileId: ServiceName, revision: DeploymentReview.fields.revision }),
+  }),
+]);
+export type DeploymentAdminRequest = typeof DeploymentAdminRequest.Type;
+export const DeploymentAdminHttpRequest = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  request: DeploymentAdminRequest,
+});
+export type DeploymentAdminHttpRequest = typeof DeploymentAdminHttpRequest.Type;
 export const ApplicationDeploymentProfile = Schema.Struct({
   id: ServiceName,
+  revision: Schema.optionalKey(DeploymentReview.fields.revision),
+  instances: Schema.optionalKey(Schema.Array(ProviderInstanceId)),
   projectRoot: Schema.String,
   applicationName: ServiceName,
   runtimeUser: Schema.String,
@@ -194,6 +250,7 @@ export const ApplicationContainer = Schema.Struct({
   command: Schema.Array(Schema.String),
 });
 export const ApplicationResponse = Schema.Struct({
+  deploymentRequests: Schema.optionalKey(Schema.Array(DeploymentAuthorizationRequest)),
   applications: Schema.optionalKey(Schema.Array(Application)),
   application: Schema.optionalKey(Application),
   release: Schema.optionalKey(ApplicationRelease),
@@ -246,6 +303,9 @@ export const ApplicationResponse = Schema.Struct({
 });
 export type ApplicationResponse = typeof ApplicationResponse.Type;
 export const ApplicationRequest = Schema.Union([
+  Schema.Struct({ action: Schema.Literal("deployment-propose"), input: DeploymentProposal }),
+  Schema.Struct({ action: Schema.Literal("deployment-requests"), input: Schema.Struct({}) }),
+  Schema.Struct({ action: Schema.Literal("deployment-cancel"), input: DeploymentReview }),
   Schema.Struct({ action: Schema.Literal("list"), input: ApplicationListInput }),
   Schema.Struct({ action: Schema.Literal("publish"), input: ApplicationPublish }),
   Schema.Struct({ action: Schema.Literal("status"), input: ApplicationStatusInput }),

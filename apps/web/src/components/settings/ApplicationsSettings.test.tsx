@@ -63,12 +63,14 @@ async function choose(label: string, value: string) {
 }
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  fixture.execute.mockReset().mockResolvedValue(
-    AsyncResult.success({
-      applications: [],
-      backends: ["systemd"],
-      deploymentProfiles: [profile],
-    }),
+  fixture.execute.mockReset().mockImplementation(({ input }: { input: { instanceId: string } }) =>
+    Promise.resolve(
+      AsyncResult.success({
+        applications: [],
+        backends: input.instanceId === "codex" ? ["systemd"] : [],
+        deploymentProfiles: input.instanceId === "codex" ? [profile] : [],
+      }),
+    ),
   );
   container = document.createElement("div");
   document.body.append(container);

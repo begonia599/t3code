@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId, type ApplicationRequest } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -74,11 +74,17 @@ function fixture(backend: "docker-compose" | "systemd" = "docker-compose") {
       : prepared;
   if (backend === "systemd") Reflect.deleteProperty(response.release, "composeProject");
   let versions: Readonly<Record<string, number>> = {};
-  const calls: Array<{ scope: unknown; action: string; input: unknown; credentials: unknown }> = [];
+  const calls: Array<{
+    scope: unknown;
+    action: string;
+    input: unknown;
+    credentials: unknown;
+    administrator: boolean | undefined;
+  }> = [];
   const broker = Layer.succeed(ApplicationBroker, {
-    request: (caller, action, input, credentials) =>
+    request: (caller, action, input, credentials, administrator) =>
       Effect.sync(() => {
-        calls.push({ scope: caller, action, input, credentials });
+        calls.push({ scope: caller, action, input, credentials, administrator });
         return action === "inspect"
           ? { release: { ...prepared.release, status: "ready", credentialVersions: versions } }
           : action === "prepare"
@@ -234,5 +240,24 @@ it.effect("preserves native deployment identity and resolves the same scoped cre
     });
     expect(result.operation?.stage).toBe("queued");
     expect(result).toEqual({ operation: { ...prepared.operation, stage: "queued" } });
+  }).pipe(Effect.provide(test.layer));
+});
+
+it.effect("keeps administrator approvals out of the Harness application request path", () => {
+  const test = fixture();
+  return Effect.gen(function* () {
+    const apps = yield* Applications;
+    const review = {
+      action: "approve",
+      input: { requestId: "a".repeat(32), revision: "b".repeat(64), confirmRoot: true },
+    } as const;
+    const denied = yield* apps
+      .request(scope, review as unknown as ApplicationRequest)
+      .pipe(Effect.result);
+    expect(denied._tag).toBe("Failure");
+    expect(test.calls).toEqual([]);
+    yield* apps.deploymentAdmin(scope, review);
+    expect(test.calls).toMatchObject([{ action: "approve", administrator: true }]);
+    expect(test.calls[0]?.credentials).toBeUndefined();
   }).pipe(Effect.provide(test.layer));
 });

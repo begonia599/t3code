@@ -1,3 +1,4 @@
+import { DeploymentAuthorizations } from "./DeploymentAuthorizations";
 import { useState } from "react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
@@ -125,6 +126,12 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
             ))}
           </select>
         </label>
+        <DeploymentAuthorizations
+          key={`${environmentId}:${instanceId}`}
+          environmentId={environmentId}
+          instanceId={instanceId}
+          onProfiles={setProfiles}
+        />
         <div>
           <Button
             size="sm"
@@ -392,7 +399,7 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
             {profiles.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {t(
-                  "Refresh applications to load deployment profiles. The host administrator registers profiles for your project and instance.",
+                  "Create a deployment authorization above, or ask your Harness to prepare one for review.",
                 )}
               </p>
             ) : null}

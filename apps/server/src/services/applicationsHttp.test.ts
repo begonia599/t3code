@@ -37,7 +37,13 @@ it.effect(
   "only administrators can manage applications and roots come from the trusted instance profile",
   () => {
     const calls: Array<ApplicationScope> = [];
+    const approvals: Array<ApplicationScope> = [];
     const applications = Layer.succeed(Applications, {
+      deploymentAdmin: (scope) =>
+        Effect.sync(() => {
+          approvals.push(scope);
+          return { deploymentRequests: [] };
+        }),
       request: (scope) =>
         Effect.sync(() => {
           calls.push(scope);
@@ -76,6 +82,31 @@ it.effect(
           const allowed = await web.handler(post("Bearer fixture-admin"));
           expect(allowed.status).toBe(200);
           expect(calls).toEqual([
+            { providerInstanceId: "codex", allowedFileRoots: ["/projects/blog"] },
+          ]);
+          const review = (token: string, path: string) =>
+            new Request(`http://t3.test/api/applications/${path}`, {
+              method: "POST",
+              headers: { authorization: token, "content-type": "application/json" },
+              body: JSON.stringify({
+                instanceId: "codex",
+                roots: ["/"],
+                request: {
+                  action: "approve",
+                  input: { requestId: "a".repeat(32), revision: "b".repeat(64), confirmRoot: true },
+                },
+              }),
+            });
+          expect(
+            (await web.handler(review("Bearer fixture-regular-client", "deployment-admin"))).status,
+          ).toBe(403);
+          expect(approvals).toEqual([]);
+          expect((await web.handler(review("Bearer fixture-admin", "request"))).status).toBe(400);
+          expect(approvals).toEqual([]);
+          expect(
+            (await web.handler(review("Bearer fixture-admin", "deployment-admin"))).status,
+          ).toBe(200);
+          expect(approvals).toEqual([
             { providerInstanceId: "codex", allowedFileRoots: ["/projects/blog"] },
           ]);
         }),

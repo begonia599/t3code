@@ -9,6 +9,7 @@ import pwd
 import re
 import shutil
 import stat
+import subprocess
 import tempfile
 import time
 import uuid
@@ -20,6 +21,35 @@ ETC_PATHS = ('/etc/ssl', '/etc/ca-certificates', '/etc/ld.so.cache', '/etc/local
              '/etc/passwd', '/etc/group', '/etc/nsswitch.conf', '/etc/hosts')
 DEFAULT_BUILD = {'memoryMiB': 2048, 'cpuPercent': 100, 'tasks': 256, 'timeoutSeconds': 1200}
 DEFAULT_RUNTIME = {'memoryMiB': 512, 'cpuPercent': 100, 'tasks': 128, 'timeoutSeconds': 90}
+
+
+def verify_native_host(owner):
+    """Run only during explicit administrator setup or GUI approval, never from a Harness request."""
+    version = subprocess.run(['/usr/bin/systemctl', '--version'], check=True, capture_output=True, text=True).stdout
+    match = re.match(r'systemd (\d+)', version)
+    if not match or int(match[1]) < 257: raise ValueError('Native application hosting requires systemd 257+ for private PID namespaces')
+    controllers_path = Path('/sys/fs/cgroup/cgroup.controllers')
+    if not controllers_path.exists() or not {'memory', 'cpu', 'pids'} <= set(controllers_path.read_text().split()):
+        raise ValueError('Native application hosting requires cgroup v2 memory, cpu and pids controllers')
+    # Some hosts accept unit settings but cannot enforce them. Check PID isolation
+    # and socket BPF enforcement before registering any root runtime grants.
+    probe = '''import errno, os, socket, sys
+assert os.stat('/proc/self/ns/pid').st_ino != int(sys.argv[1]), 'PrivatePIDs is not enforced'
+for family, address in [(socket.AF_INET, ('127.0.0.1', 45001)), (socket.AF_INET6, ('::1', 45001))]:
+    with socket.socket(family) as client:
+        try: client.bind(address)
+        except OSError as error:
+            assert error.errno == errno.EPERM, 'Socket bind policy could not be verified'
+        else: raise RuntimeError('SocketBindDeny is not enforced')
+'''
+    subprocess.run(['/usr/bin/systemd-run', '--quiet', '--wait', '--pipe', '--collect', '--unit=t3-app-preflight-'+uuid.uuid4().hex,
+                    '--property=User='+str(owner.pw_uid), '--property=Group='+str(owner.pw_gid),
+                    '--property=PrivatePIDs=yes', '--property=PrivateNetwork=yes', '--property=SocketBindDeny=any',
+                    '--property=MemoryMax=64M', '--property=MemorySwapMax=0', '--property=CPUQuota=25%',
+                    '--property=TasksMax=16', '--property=RuntimeMaxSec=15s', '--property=TimeoutStopSec=5s',
+                    '--expand-environment=no', '--', '/usr/bin/python3', '-I', '-c', probe,
+                    str(Path('/proc/self/ns/pid').stat().st_ino)], check=True, timeout=30)
+
 
 
 def digest(value):
@@ -113,7 +143,7 @@ class Backend:
         for item in profiles(self.config, self.b.policy).values():
             if instance in item['instances'] and any(self.b.policy.inside(Path(item['projectRoot']), Path(root).resolve()) for root in roots):
                 visible.append({key: item[key] for key in ('id', 'projectRoot', 'applicationName', 'runtimeUser', 'build', 'runtime')} |
-                               {'networkNamespace': item['networkNamespacePath'] or 'host', 'rootFilesystem': 'private', 'listenPorts': item['listenPorts']})
+                               {'networkNamespace': item['networkNamespacePath'] or 'host', 'rootFilesystem': 'private', 'listenPorts': item['listenPorts'], 'revision': digest(item), 'instances': item['instances']})
         return visible
 
     def validate(self, declaration, source, app, identity, instance):

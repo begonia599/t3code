@@ -10,6 +10,10 @@ export const make = Effect.gen(function* () {
   const request = (input: ApplicationRequest) =>
     Effect.flatMap(McpInvocationContext, (scope) => apps.request(scope, input));
   return ApplicationsToolkit.of({
+    application_request_deployment: (input) => request({ action: "deployment-propose", input }),
+    application_deployment_requests: (input) => request({ action: "deployment-requests", input }),
+    application_cancel_deployment_request: (input) =>
+      request({ action: "deployment-cancel", input }),
     environment_info: () =>
       Effect.flatMap(McpInvocationContext, (scope) =>
         Effect.gen(function* () {

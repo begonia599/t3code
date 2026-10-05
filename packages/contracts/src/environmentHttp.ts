@@ -15,7 +15,12 @@ import {
 } from "./credentialVault.ts";
 import { HostedMcpConfig, HostedMcpAction } from "./hostedMcp.ts";
 import { GitHubToolBinding, ToolBindingAction } from "./toolBindings.ts";
-import { ApplicationHttpRequest, ApplicationResponse, ApplicationError } from "./applications.ts";
+import {
+  ApplicationHttpRequest,
+  ApplicationResponse,
+  ApplicationError,
+  DeploymentAdminHttpRequest,
+} from "./applications.ts";
 
 import {
   AuthAccessTokenResult,
@@ -710,6 +715,12 @@ class EnvironmentCredentialVaultHttpApi extends HttpApiGroup.make("credentialVau
   ) {}
 
 class EnvironmentApplicationsHttpApi extends HttpApiGroup.make("applications").add(
+  HttpApiEndpoint.post("deploymentAdmin", "/api/applications/deployment-admin", {
+    headers: OptionalBearerHeaders,
+    payload: DeploymentAdminHttpRequest,
+    success: ApplicationResponse,
+    error: [ApplicationError, EnvironmentScopeRequiredError, ...EnvironmentAuthenticationErrors],
+  }).middleware(EnvironmentAuthenticatedAuth),
   HttpApiEndpoint.post("request", "/api/applications/request", {
     headers: OptionalBearerHeaders,
     payload: ApplicationHttpRequest,

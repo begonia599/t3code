@@ -16,6 +16,7 @@ it.effect(
     const requests: Array<ApplicationScope> = [];
     const instance = ProviderInstanceId.make("codex");
     const apps = Layer.succeed(Applications, {
+      deploymentAdmin: () => Effect.die("unused"),
       request: (scope) =>
         Effect.sync(() => {
           requests.push(scope);
@@ -80,6 +81,30 @@ it.effect(
           roots: request.allowedFileRoots,
         })),
       ).toEqual([{ instanceId: instance, roots: ["/projects/blog"] }]);
+      const draft = yield* server.callTool({
+        name: "application_request_deployment",
+        arguments: {
+          profileId: "bot",
+          applicationName: "bot",
+          projectRoot: "/projects/blog",
+          runtimeIdentity: "root",
+          network: "instance",
+          listenPorts: [],
+          build: { memoryMiB: 1024, cpuPercent: 100, tasks: 128, timeoutSeconds: 900 },
+          runtime: { memoryMiB: 256, cpuPercent: 50, tasks: 64, timeoutSeconds: 60 },
+          providerInstanceId: "grok",
+          allowedFileRoots: ["/"],
+        },
+      });
+      expect(draft.isError).toBeFalsy();
+      expect(requests.at(-1)).toMatchObject({
+        providerInstanceId: instance,
+        allowedFileRoots: ["/projects/blog"],
+      });
+      const approval = yield* server
+        .callTool({ name: "application_approve_deployment", arguments: {} })
+        .pipe(Effect.result);
+      expect(approval._tag).toBe("Failure");
     }).pipe(
       Effect.provideService(McpInvocationContext, {
         environmentId: EnvironmentId.make("applications-test"),

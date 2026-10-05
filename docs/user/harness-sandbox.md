@@ -258,34 +258,15 @@ Docker 使用 `unless-stopped`，业务进程退出时按策略重启，主动�
 
 维护端需安装 systemd 257+、python3-yaml，并支持 cgroup v2 的 memory/cpu/pids 控制器、PID 命名空间及 socket bind BPF 策略。更新上述启动器以安装新的应用代理模块。资源安装器会运行一个短暂且受限的预检服务，实际确认 PID 隔离和端口策略可执行；不满足条件时拒绝登记配置。
 
-例如将下面文件保存为仅 root 可写的 `/etc/t3code/native-profiles.json`，其父目录也须仅 root 可写。业务项目目录必须已经存在；实例 ID 使用资源设置中的实际 ID：
+在 **设置 → 资源 → 应用发布 → 部署授权** 中选择实际 Harness 实例，创建授权并检查项目目录、应用名称、运行身份、网络、监听端口及构建/运行限额。业务项目目录必须已经存在。默认使用普通宿主用户，并沿用当前 Harness 的网络出口；需要 root 时选择 root，并在审核页明确确认。DNS 副本由 T3 自动准备，无需编辑 JSON 或通过 SSH 登记每个项目。
 
-```json
-{
-  "my-bot": {
-    "projectRoot": "/home/dev/workspaces/my-bot",
-    "applicationName": "my-bot",
-    "instances": ["codex-main"],
-    "runtimeUser": "root",
-    "allowRoot": true,
-    "resolvConf": "/etc/t3code/application-resolv.conf",
-    "build": { "memoryMiB": 1024, "cpuPercent": 100, "tasks": 128, "timeoutSeconds": 900 },
-    "runtime": { "memoryMiB": 256, "cpuPercent": 50, "tasks": 64, "timeoutSeconds": 60 }
-  }
-}
-```
+也可以直接让 Harness 为 Bot 准备部署申请。它通过 `application_request_deployment` 提交草稿，你在同一设置页面查看、调整、批准或拒绝；`application_deployment_requests` 可查看结果，`application_cancel_deployment_request` 可撤回待审核申请。只有管理员客户端能够批准。修改同名待审核草稿会撤回旧申请，旧页面不能继续批准旧版本。授权申请跨 T3 重启保留；批准只登记权限，不会立即发布应用。
 
-DNS 文件及其父目录必须由 root 所有且不可被其他用户写入。若 `/etc/resolv.conf` 指向 `systemd-resolved` 用户维护的文件，先由维护端复制一份；需要变更 DNS 时更新该副本。然后登记配置，并继续使用已有保护范围和实例映射：
+每份新授权绑定当前实例、一个确切项目及应用名称，不扩大为整个工作区的 root 权限。已有授权可在页面查看；停止应用后再撤销，保留发布历史及业务数据。替换同名授权须先撤销原授权，再创建、审核并重新发布。修改运行用户不会自动迁移已有 `/data` 内容的所有权，需维护端按业务需要处理。原有维护端登记的授权仍可使用。
 
-```bash
-sudo install -m 0644 /etc/resolv.conf /etc/t3code/application-resolv.conf
-sudo python3 scripts/sandbox/install_resource_management.py --owner dev \
-  --systemd-profiles /etc/t3code/native-profiles.json
-```
+应用网络不会改写 Harness 出口。选择沿用实例出口时会绑定当前已配置的命名空间；选择宿主网络则使用宿主出口。命名空间不可用时拒绝授权或发布，不回落到宿主网络。默认不允许监听端口；确需监听时在表单填写非保留的 TCP 端口，程序自行决定监听地址。原生服务不自动创建 Caddy 公网路由；需要托管 HTTP 发布时继续使用 Docker 后端。
 
-首次启用资源管理还需按前文登记受保护的框架路径、仓库和实例映射。`--systemd-profiles` 替换整组原生部署配置，未传此参数则保留原配置。修改配置后旧版授权不再可用于启动或回滚，也不会在机器重启后重新启用；已运行的服务不会立即被停止，撤销时需先停止应用。新增授权后应重新发布。修改运行用户不会自动迁移已有 `/data` 内容的所有权，需维护端按业务需要处理。
-
-应用网络是单独的管理员决策，不会改写 Harness 出口。默认使用宿主网络；需要固定出口时，在该配置中同时指定现有 `networkNamespacePath`（如 `/run/netns/业务出口名称`）及该出口的 `resolvConf` 路径。命名空间不可用时发布失败，不回落到宿主网络。默认不允许监听端口；确需监听时由管理员通过 `listenPorts: [8080]` 允许非保留的 TCP 端口，程序自行决定监听地址。本版原生服务不自动创建 Caddy 公网路由；需要托管 HTTP 发布时继续使用 Docker 后端。
+首次启用仍由维护端安装或更新启动器、应用代理及管理员授权入口，并登记框架保护范围、仓库和实例映射。T3 管理员批准原生授权时会执行受限的隔离预检；失败则不登记授权。日常授权创建、审核和撤销均在图形界面完成。
 
 项目提供 `application.yaml`，例如 Python Bot：
 

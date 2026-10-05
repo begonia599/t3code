@@ -5,6 +5,80 @@ import { useMemo } from "react";
 import { mobilePreferencesAtom } from "./state/preferences";
 
 const zhCN: Readonly<Record<string, string>> = {
+  "Granted authorizations": "当前已授予的权限",
+  "No active deployment authorizations.": "当前实例尚未获得部署授权。",
+  "Recent deployment requests": "最近的部署申请",
+  "Host isolation preflight failed. Ask the maintenance administrator to verify systemd 257+, cgroup v2 and namespace support.":
+    "宿主隔离预检未通过。请由维护端确认 systemd 257+、cgroup v2 和命名空间支持。",
+  "The selected network namespace is unavailable.": "所选网络命名空间不可用。",
+  "The instance network configuration is unavailable.": "当前实例的网络配置不可用。",
+  "The instance network namespace is unavailable.": "当前实例的网络命名空间不可用。",
+  "The selected DNS configuration is unavailable.": "所选出口的 DNS 配置不可用。",
+  "Runtime timeout limits readiness checks, not the service lifetime.":
+    "运行超时只限制就绪检查，服务本身可持续运行。",
+  "Deployment authorizations": "部署授权",
+  "Create an authorization here, or ask your Harness to prepare a request for you to review. Approval does not publish or start an application.":
+    "在此创建授权，或让 Harness 代填申请后由你审核。批准授权不会直接发布或启动应用。",
+  "Create a deployment authorization above, or ask your Harness to prepare one for review.":
+    "请在上方创建部署授权，或让 Harness 代填申请后由你审核。",
+  "Refresh authorizations": "刷新授权",
+  "New deployment authorization": "新建部署授权",
+  "No pending deployment requests.": "暂无待审核的部署申请。",
+  "Review request": "审核申请",
+  "Profile name": "授权名称",
+  "Runtime user": "运行用户",
+  "Normal T3 host user": "T3 宿主普通用户",
+  Network: "网络",
+  "Use this Harness network": "沿用当前 Harness 出口",
+  "Host network": "宿主网络",
+  "Allowed TCP ports": "允许监听的 TCP 端口",
+  "Leave empty for an outbound bot": "仅主动连接外网的 Bot 可留空",
+  "Memory (MiB)": "内存（MiB）",
+  "CPU (%)": "CPU（%）",
+  "Process limit": "进程数上限",
+  "Timeout (seconds)": "超时（秒）",
+  "Review authorization": "检查授权内容",
+  "Approve authorization": "确认并批准授权",
+  "Adjust request": "调整申请",
+  "Reject request": "拒绝申请",
+  "Revoke authorization": "撤销授权",
+  "Confirm revocation": "确认撤销",
+  "The application uses a private filesystem and PID namespace. Host administration and T3 resources remain protected.":
+    "应用仍使用私有文件系统和 PID 命名空间，宿主管理权限与 T3 资源继续受到保护。",
+  "I authorize this application to run as root inside its private filesystem.":
+    "我确认授权此应用在其私有文件系统内以 root 身份运行。",
+  "Stop the application before revoking. This removes this profile for all listed instances; release history and application data are retained.":
+    "请先停止应用再撤销。此操作会移除所列所有实例的这项授权，保留版本历史和应用数据。",
+  "Check the project directory, names, ports and resource limits.":
+    "请检查项目绝对路径、名称、端口和资源限额。名称需以小写字母开头，仅包含小写字母、数字、下划线或连字符。",
+  "Could not load deployment authorizations.": "无法加载部署授权。",
+  "Could not save deployment authorization.": "无法保存部署授权。",
+  approved: "已批准",
+  rejected: "已拒绝",
+  cancelled: "已撤回",
+  "This profile name is already registered. Revoke it before replacing it, or choose a new name.":
+    "此授权名称已登记。请先停止应用并撤销原授权，或选择其他名称。",
+  "The request changed or was already reviewed. Refresh and review it again.":
+    "此申请已变更或已审核，请刷新后重新检查。",
+  "The host or instance policy changed. Create a new request to review the current settings.":
+    "宿主或实例策略已变更，请重新提交申请以审核最新设置。",
+  "Stop or withdraw the application before revoking its deployment authorization.":
+    "请先停止或撤回应用，再撤销其部署授权。",
+  "Could not confirm that all releases are stopped. Stop the application first.":
+    "尚不能确认所有版本均已停止，请先停止应用。",
+  "The profile changed. Refresh and review it again.": "授权配置已变更，请刷新后重新检查。",
+  "A profile with this name is already registered.": "同名授权已被登记，请刷新查看。",
+  "Explicitly confirm the root runtime identity before approval.":
+    "批准前请明确确认 root 运行身份。",
+  "Native listenPorts must be non-reserved ports above 1023.":
+    "监听端口须大于 1023，且不能使用系统或 T3 保留端口。",
+  "Application resource policy exceeds supported bounds.": "资源限额超出支持范围。",
+  "Deployment project is unavailable.": "部署项目目录不可用，请确认目录已存在。",
+  "Project is outside this Harness workspace.": "项目不在当前 Harness 的授权工作区内。",
+  "The project overlaps a protected T3 management resource. Select a business project directory.":
+    "此目录包含或属于受保护的 T3 管理资源，请选择业务项目目录。",
+  "Review or dismiss pending deployment requests before adding more.":
+    "待审核申请已达上限，请先审核或撤回现有申请。",
   "Select a registered deployment profile.": "请选择已登记的部署授权配置。",
   "Deployment backend": "部署后端",
   "Deployment profile": "部署授权配置",

@@ -48,6 +48,7 @@ def main():
     install_file(Path("/usr/local/libexec/t3code-gh.py"), Path(__file__).with_name("t3code-gh.py").read_bytes(), 0o755)
     install_file(Path("/usr/local/libexec/t3code-applications"), Path(__file__).with_name("t3code-applications.py").read_bytes(), 0o755)
     install_file(Path("/usr/local/libexec/t3code_systemd.py"), Path(__file__).with_name("t3code_systemd.py").read_bytes(), 0o644)
+    install_file(Path("/usr/local/libexec/t3code_deployments.py"), Path(__file__).with_name("t3code_deployments.py").read_bytes(), 0o644)
     install_file(Path("/usr/local/libexec/t3code-shell-bridge.py"), Path(__file__).with_name("t3code-shell-bridge.py").read_bytes(), 0o755)
     install_file(Path("/usr/local/libexec/t3code-harness-init.py"), Path(__file__).with_name("t3code-harness-init.py").read_bytes(), 0o755)
     install_file(Path("/usr/local/bin/t3-resource"), Path(__file__).with_name("t3-resource.py").read_bytes(), 0o755)
@@ -60,7 +61,7 @@ def main():
         temporary.flush()
         subprocess.run(["/usr/sbin/visudo", "-cf", temporary.name], check=True, stdout=subprocess.DEVNULL)
     install_file(Path("/etc/sudoers.d/t3code-service-network"), service_rules, 0o440)
-    application_rules = f"{args.owner} ALL=(root) NOPASSWD: /usr/local/libexec/t3code-applications request *\n".encode()
+    application_rules = f"{args.owner} ALL=(root) NOPASSWD: /usr/local/libexec/t3code-applications request *, /usr/local/libexec/t3code-applications deployment-admin *\n".encode()
     with tempfile.NamedTemporaryFile() as temporary:
         temporary.write(application_rules)
         temporary.flush()

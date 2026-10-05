@@ -28,6 +28,9 @@ _spec.loader.exec_module(policy)
 _native_spec = importlib.util.spec_from_file_location('native_applications', Path(__file__).with_name('t3code_systemd.py'))
 native = importlib.util.module_from_spec(_native_spec)
 _native_spec.loader.exec_module(native)
+_deployment_spec = importlib.util.spec_from_file_location('deployments', Path(__file__).with_name('t3code_deployments.py'))
+deployments = importlib.util.module_from_spec(_deployment_spec)
+_deployment_spec.loader.exec_module(deployments)
 CONFIG = Path('/etc/t3code/resources.json')
 PROFILES = Path('/etc/t3code/sandboxes')
 STATE = Path('/var/lib/t3code-applications')
@@ -932,6 +935,8 @@ def get_logs(directory, app, payload, config=None):
 
 
 def request(instance_id, action, envelope, config):
+    if action.startswith('deployment-'):
+        return deployments.handle(BrokerApi(), instance_id, action, envelope)
     require(isinstance(envelope, dict) and set(envelope) <= {'roots', 'input', 'values', 'versions'}, 'invalid_manifest', 'Invalid broker request envelope.')
     profile = profile_for(config, instance_id)
     roots = scope_roots(profile, envelope.get('roots'))
@@ -1079,6 +1084,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='mode', required=True)
     rpc = sub.add_parser('request'); rpc.add_argument('instance'); rpc.add_argument('action')
+    admin = sub.add_parser('deployment-admin'); admin.add_argument('instance'); admin.add_argument('action')
     work = sub.add_parser('worker'); work.add_argument('application'); work.add_argument('operation')
     args = parser.parse_args()
     config = load_config(int(os.environ.get('SUDO_UID', '0')))
@@ -1088,7 +1094,8 @@ def main():
     else:
         data = sys.stdin.buffer.read(2*1024*1024+1)
         require(len(data) <= 2*1024*1024, 'invalid_manifest', 'Application broker request is too large.')
-        print(json.dumps(request(args.instance, args.action, json.loads(data), config), separators=(',', ':')))
+        result = deployments.handle(BrokerApi(), args.instance, args.action, json.loads(data), admin=True) if args.mode == 'deployment-admin' else request(args.instance, args.action, json.loads(data), config)
+        print(json.dumps(result, separators=(',', ':')))
 
 
 if __name__ == '__main__':

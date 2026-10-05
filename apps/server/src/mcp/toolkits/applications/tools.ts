@@ -13,6 +13,8 @@ import {
   ApplicationListInput,
   HarnessEnvironmentInfo,
   ToolBindingState,
+  DeploymentProposal,
+  DeploymentReview,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
@@ -20,6 +22,30 @@ import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import { Applications } from "../../../services/Applications.ts";
 const dependencies = [McpInvocationContext, Applications];
 export const ApplicationsToolkit = Toolkit.make(
+  Tool.make("application_request_deployment", {
+    dependencies,
+    parameters: DeploymentProposal,
+    success: ApplicationResponse,
+    failure: ApplicationError,
+    description:
+      "Prepare a durable systemd deployment authorization request for human review in Settings > Resources > Application publishing > Deployment authorizations. Does not grant access or publish anything. Select an exact authorized projectRoot, applicationName, unique profileId, runtimeIdentity owner or root, network instance (preserves this Harness egress) or host, listenPorts (usually [] for an outbound bot), and build/runtime budgets {memoryMiB,cpuPercent,tasks,timeoutSeconds}. Suggested build: 1024,100,128,900; runtime: 256,50,64,60. Root remains confined to the application private filesystem. Explain the proposed authority and ask the user to review in T3. Revising this instance's pending request for the same profileId cancels the earlier draft. Approval is only available in the authenticated administrator UI. After approval, use application_publish with backend systemd and deploymentProfile profileId. Do not ask the user to edit host JSON or perform SSH setup when the broker is installed.",
+  }).annotate(Tool.Readonly, false),
+  Tool.make("application_deployment_requests", {
+    dependencies,
+    parameters: Schema.Record(Schema.String, Schema.Never),
+    success: ApplicationResponse,
+    failure: ApplicationError,
+    description:
+      "Read this instance's scoped pending and recently reviewed deployment authorization requests, plus currently granted profiles. A pending request is not a grant; only publish after its profile appears. No host policy changes.",
+  }).annotate(Tool.Readonly, true),
+  Tool.make("application_cancel_deployment_request", {
+    dependencies,
+    parameters: DeploymentReview,
+    success: ApplicationResponse,
+    failure: ApplicationError,
+    description:
+      "Withdraw this instance's pending deployment request by requestId and revision. Does not revoke an approved profile or stop an application; an administrator can revoke a stopped application's authorization in T3 settings.",
+  }).annotate(Tool.Readonly, false),
   Tool.make("environment_info", {
     dependencies,
     parameters: Schema.Record(Schema.String, Schema.Never),

@@ -5,7 +5,8 @@ import {
   ApplicationErrorCode,
   ApplicationResponse,
   HarnessEnvironmentInfo,
-  type ApplicationRequest,
+  ApplicationRequest,
+  DeploymentAdminRequest,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -18,6 +19,8 @@ import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 const Failure = Schema.Struct({ code: ApplicationErrorCode, message: Schema.String });
 const decodeFailure = Schema.decodeUnknownOption(Schema.fromJsonString(Failure));
 const decodeUnknownJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const isApplicationRequest = Schema.is(ApplicationRequest);
+const isDeploymentAdminRequest = Schema.is(DeploymentAdminRequest);
 const decodeEnvironment = Schema.decodeUnknownEffect(
   Schema.Struct({ environment: HarnessEnvironmentInfo }),
 );
@@ -36,11 +39,12 @@ export class ApplicationBroker extends Context.Service<
         values: Readonly<Record<string, string>>;
         versions: Readonly<Record<string, number>>;
       },
+      administrator?: boolean,
     ) => Effect.Effect<unknown, ApplicationError>;
   }
 >()("t3/services/ApplicationBroker") {
   static readonly layer = Layer.succeed(ApplicationBroker, {
-    request: (scope, action, input, credentials) =>
+    request: (scope, action, input, credentials, administrator = false) =>
       Effect.callback((resume) => {
         const child = NodeChildProcess.execFile(
           "/usr/bin/sudo",
@@ -48,12 +52,15 @@ export class ApplicationBroker extends Context.Service<
             "-n",
             "--",
             "/usr/local/libexec/t3code-applications",
-            "request",
+            administrator ? "deployment-admin" : "request",
             scope.providerInstanceId,
             action,
           ],
           // Native diagnostics include a bounded service-stop grace period.
-          { timeout: action === "exec" ? 180_000 : 35_000, maxBuffer: 2 * 1024 * 1024 },
+          {
+            timeout: action === "exec" ? 180_000 : administrator ? 60_000 : 35_000,
+            maxBuffer: 2 * 1024 * 1024,
+          },
           (error, stdout, stderr) => {
             if (error) {
               const failure = decodeFailure(stderr.trim());
@@ -97,6 +104,10 @@ export class ApplicationBroker extends Context.Service<
 export class Applications extends Context.Service<
   Applications,
   {
+    readonly deploymentAdmin: (
+      scope: ApplicationScope,
+      request: DeploymentAdminRequest,
+    ) => Effect.Effect<ApplicationResponse, ApplicationError>;
     readonly request: (
       scope: ApplicationScope,
       request: ApplicationRequest,
@@ -111,7 +122,32 @@ export const make = Effect.gen(function* () {
   const vault = yield* CredentialVault;
   const parse = Schema.decodeUnknownEffect(ApplicationResponse);
   return Applications.of({
+    deploymentAdmin: Effect.fn("Applications.deploymentAdmin")(function* (scope, request) {
+      if (!scope.allowedFileRoots?.length || !isDeploymentAdminRequest(request))
+        return yield* new ApplicationError({
+          code: "not_allowed",
+          message: "Deployment approval requires an administrator and a configured workspace.",
+        });
+      return yield* broker.request(scope, request.action, request.input, undefined, true).pipe(
+        Effect.flatMap((response) =>
+          parse(response).pipe(
+            Effect.mapError(
+              () =>
+                new ApplicationError({
+                  code: "internal_error",
+                  message: "Invalid deployment review response.",
+                }),
+            ),
+          ),
+        ),
+      );
+    }),
     request: Effect.fn("Applications.request")(function* (scope, request) {
+      if (!isApplicationRequest(request))
+        return yield* new ApplicationError({
+          code: "not_allowed",
+          message: "This operation is not available to a Harness.",
+        });
       if (!scope.allowedFileRoots?.length)
         return yield* new ApplicationError({
           code: "not_allowed",

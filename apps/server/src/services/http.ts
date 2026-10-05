@@ -10,18 +10,32 @@ export const applicationsHttpApiLayer = HttpApiBuilder.group(
   "applications",
   Effect.fnUntraced(function* (handlers) {
     const applications = yield* Applications;
-    return handlers.handle("request", ({ payload }) =>
-      requireEnvironmentScope(AuthAccessWriteScope).pipe(
-        Effect.andThen(
-          applications.request(
-            {
-              providerInstanceId: payload.instanceId,
-              allowedFileRoots: readProviderFileRoots(payload.instanceId),
-            },
-            payload.request,
+    return handlers
+      .handle("deploymentAdmin", ({ payload }) =>
+        requireEnvironmentScope(AuthAccessWriteScope).pipe(
+          Effect.andThen(
+            applications.deploymentAdmin(
+              {
+                providerInstanceId: payload.instanceId,
+                allowedFileRoots: readProviderFileRoots(payload.instanceId),
+              },
+              payload.request,
+            ),
           ),
         ),
-      ),
-    );
+      )
+      .handle("request", ({ payload }) =>
+        requireEnvironmentScope(AuthAccessWriteScope).pipe(
+          Effect.andThen(
+            applications.request(
+              {
+                providerInstanceId: payload.instanceId,
+                allowedFileRoots: readProviderFileRoots(payload.instanceId),
+              },
+              payload.request,
+            ),
+          ),
+        ),
+      );
   }),
 );
