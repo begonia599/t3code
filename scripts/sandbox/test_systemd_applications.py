@@ -30,6 +30,17 @@ class NativeTests(unittest.TestCase):
                          'credentials': {'BOT_TOKEN': 'BOT_KEY'}}
         self.units = self.root/'units'; self.units.mkdir()
         self.patchers.append(patch.object(native, 'UNITS', self.units)); self.patchers[-1].start()
+        # Only resolver metadata is mocked: systemd-resolved may own the real DNS file.
+        resolver = Path('/etc/resolv.conf').resolve()
+        resolver_paths = {resolver, *resolver.parents}
+        original_lstat = Path.lstat
+        def resolver_lstat(path, *args, **kwargs):
+            info = original_lstat(path, *args, **kwargs)
+            if path in resolver_paths:
+                fields = list(info); fields[4] = 0; fields[0] &= ~0o022
+                return os.stat_result(fields)
+            return info
+        self.patchers.append(patch.object(Path, 'lstat', resolver_lstat)); self.patchers[-1].start()
         # Subprocesses are mocked globally for every native test, including exceptional cleanup.
         self.calls = []
         def fake_run(argv, **kwargs):
@@ -50,7 +61,7 @@ class NativeTests(unittest.TestCase):
         return self.backend.validate(manifest, self.project, {'projectRoot': str(self.project), 'name': 'blog'}, 'bot', 'codex')
 
     def settings(self, release, spec, **kwargs):
-        # DNS ownership checks use the real root-owned /etc/resolv.conf. No chown may touch the host.
+        # No chown may touch the host; the isolated DNS metadata is supplied by setup_native.
         with patch.object(native.os, 'chown'):
             return self.backend._settings(release, spec, **kwargs)
 
@@ -109,7 +120,7 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(settings['MemoryMax'], '512M'); self.assertEqual(settings['MemorySwapMax'], '0')
         self.assertEqual(settings['SocketBindDeny'], 'any')
         self.assertEqual(settings['SocketBindAllow'], ['ipv4:tcp:8080', 'ipv6:tcp:8080'])
-        self.assertIn('artifact:/app', settings['BindReadOnlyPaths']); self.assertIn('data/native:/data', settings['BindPaths'])
+        self.assertIn('artifact":"/app"', settings['BindReadOnlyPaths']); self.assertIn('data/native":"/data"', settings['BindPaths'])
         self.assertNotIn('/root', settings['BindReadOnlyPaths']); self.assertNotIn('/var/run', settings['BindPaths'])
         with patch.object(native.os, 'chown'):
             text = self.backend.unit_text(release, spec)
@@ -158,6 +169,28 @@ class NativeTests(unittest.TestCase):
         spec['environment'] = {'LITERAL': '$HOME %n "quoted" \\ tail'}
         self.backend.environment(release, spec)
         self.assertIn('LITERAL="$HOME %n \\"quoted\\" \\\\ tail"'.replace('\\\\"', '\\"'), (release/'native.env').read_text())
+
+    def test_bind_paths_preserve_quoted_paths_and_an_unquoted_separator(self):
+        self.assertEqual(native.bind_path('/source with spaces:literal', '/app'),
+                         '"/source with spaces:literal":"/app"')
+        self.assertEqual(native.bind_path('/source%name', '/data'), '"/source%%name":"/data"')
+
+    def test_dns_rejects_nonroot_ownership_and_writable_parent_directories(self):
+        self.setup_native()
+        _, release = self.prepare(); spec = broker.read(release/'native.json')
+        resolver = Path('/etc/resolv.conf').resolve()
+        trusted_lstat = Path.lstat
+        for offender, field, value in [(resolver, 4, 1), (resolver.parent, 4, 1),
+                                      (resolver, 0, 0o100666), (resolver.parent, 0, 0o40777)]:
+            def unsafe_lstat(path, *args, **kwargs):
+                info = trusted_lstat(path, *args, **kwargs)
+                if path == offender:
+                    fields = list(info); fields[field] = value
+                    return os.stat_result(fields)
+                return info
+            with self.subTest(path=str(offender), field=field), patch.object(Path, 'lstat', unsafe_lstat):
+                with self.assertRaises(broker.policy.PolicyError) as error: self.settings(release, spec)
+                self.assertEqual(error.exception.code, 'not_configured')
 
     def test_fixed_network_fails_closed_when_missing(self):
         self.setup_native(networkNamespacePath='/run/netns/t3-nonexistent-test', resolvConf='/etc/resolv.conf')

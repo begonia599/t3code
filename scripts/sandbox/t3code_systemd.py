@@ -91,6 +91,11 @@ def command_line(argv):
     return ' '.join(quote(item.replace('$', '$$')) for item in argv)
 
 
+def bind_path(source, target):
+    # systemd splits on unquoted colons; quoting the entire tuple hides its separator.
+    return quote(str(source))+':'+quote(target)
+
+
 class Backend:
     def __init__(self, broker, config):
         self.b = broker
@@ -178,10 +183,10 @@ class Backend:
             b.require(info.st_uid == 0 and not info.st_mode & 0o022, 'not_configured', 'The DNS file and parents must be owned and writable only by root.')
         if profile['networkNamespacePath']:
             b.require(Path(profile['networkNamespacePath']).exists(), 'not_configured', 'The configured network namespace is unavailable; no host-network fallback is allowed.')
-        ro = [p for p in (*OS_PATHS, *ETC_PATHS) if Path(p).exists()]
-        ro.append(str(resolver)+':/etc/resolv.conf')
-        if not build: ro.append(str(app)+':/app')
-        rw = [str(app)+':/app'] if build else [str(data)+':/data']
+        ro = [quote(p) for p in (*OS_PATHS, *ETC_PATHS) if Path(p).exists()]
+        ro.append(bind_path(resolver, '/etc/resolv.conf'))
+        if not build: ro.append(bind_path(app, '/app'))
+        rw = [bind_path(app, '/app')] if build else [bind_path(data, '/data')]
         caps = [] if build else profile['capabilities']
         properties = {
             'User': str(uid), 'Group': str(gid), 'SupplementaryGroups': '',
@@ -199,7 +204,7 @@ class Backend:
             'TimeoutStopSec': '15s', 'UMask': '0077', 'MemoryHigh': str(limits['memoryMiB']*3//4)+'M',
             'MemoryMax': str(limits['memoryMiB'])+'M', 'MemorySwapMax': '0',
             'CPUQuota': str(limits['cpuPercent'])+'%', 'TasksMax': str(limits['tasks']),
-            'BindReadOnlyPaths': ' '.join(quote(p) for p in ro), 'BindPaths': ' '.join(quote(p) for p in rw),
+            'BindReadOnlyPaths': ' '.join(ro), 'BindPaths': ' '.join(rw),
             'ReadWritePaths': '/app /tmp' if build else '/data /tmp',
             'InaccessiblePaths': ' '.join(quote('-'+p['path']) for p in self.config['protectedPaths']),
         }

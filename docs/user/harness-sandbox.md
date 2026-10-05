@@ -268,15 +268,17 @@ Docker 使用 `unless-stopped`，业务进程退出时按策略重启，主动�
     "instances": ["codex-main"],
     "runtimeUser": "root",
     "allowRoot": true,
+    "resolvConf": "/etc/t3code/application-resolv.conf",
     "build": { "memoryMiB": 1024, "cpuPercent": 100, "tasks": 128, "timeoutSeconds": 900 },
     "runtime": { "memoryMiB": 256, "cpuPercent": 50, "tasks": 64, "timeoutSeconds": 60 }
   }
 }
 ```
 
-由维护端登记，并继续使用已有保护范围和实例映射：
+DNS 文件及其父目录必须由 root 所有且不可被其他用户写入。若 `/etc/resolv.conf` 指向 `systemd-resolved` 用户维护的文件，先由维护端复制一份；需要变更 DNS 时更新该副本。然后登记配置，并继续使用已有保护范围和实例映射：
 
 ```bash
+sudo install -m 0644 /etc/resolv.conf /etc/t3code/application-resolv.conf
 sudo python3 scripts/sandbox/install_resource_management.py --owner dev \
   --systemd-profiles /etc/t3code/native-profiles.json
 ```
