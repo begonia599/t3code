@@ -16,6 +16,7 @@ const fixture = vi.hoisted(() => ({
   start: vi.fn(),
   cancel: vi.fn(),
   logout: vi.fn(),
+  respond: vi.fn(),
   confirm: vi.fn(),
   open: vi.fn(),
   copy: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("../../state/server", () => ({
     startProviderAuth: fixture.start,
     cancelProviderAuth: fixture.cancel,
     logoutProviderAuth: fixture.logout,
+    respondProviderAuth: fixture.respond,
   },
 }));
 vi.mock("../../state/query", () => ({ useEnvironmentQuery: fixture.query }));
@@ -48,7 +50,7 @@ vi.mock("../SidebarStageBackdrop", () => ({
   StageBackdropButtonArt: () => null,
 }));
 
-import { CodexAuthSection } from "./CodexAuthSection";
+import { ProviderLoginSection } from "./ProviderLoginSection";
 
 const environmentId = EnvironmentId.make("remote-environment");
 const instanceId = ProviderInstanceId.make("codex-personal");
@@ -96,12 +98,19 @@ async function render(currentProvider = provider, readOnly = false) {
   });
   await act(() =>
     root.render(
-      <CodexAuthSection
+      <ProviderLoginSection
         environmentId={environmentId}
         environmentLabel="Remote server"
         instanceId={instanceId}
         provider={currentProvider}
         readOnly={readOnly}
+        driver={
+          currentProvider.driver === "claudeAgent"
+            ? "claudeAgent"
+            : currentProvider.driver === "grok"
+              ? "grok"
+              : "codex"
+        }
       />,
     ),
   );
@@ -115,7 +124,7 @@ function button(label: string) {
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   for (const mock of Object.values(fixture)) mock.mockReset();
-  for (const command of [fixture.start, fixture.cancel, fixture.logout])
+  for (const command of [fixture.start, fixture.cancel, fixture.logout, fixture.respond])
     command.mockResolvedValue({ _tag: "Success", value: undefined });
   fixture.confirm.mockResolvedValue(false);
   state = idle;
@@ -130,7 +139,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-describe("Codex device login", () => {
+describe("Provider account login", () => {
   it("starts only on user request and targets the selected remote instance", async () => {
     expect(fixture.start).not.toHaveBeenCalled();
     await act(() => button("Sign in with ChatGPT").click());
@@ -196,5 +205,79 @@ describe("Codex device login", () => {
     });
     expect(fixture.start).toHaveBeenCalledOnce();
     await act(() => finish({ _tag: "Success", value: undefined }));
+  });
+  it("submits a Claude authorization code to the original flow and clears the input", async () => {
+    const claude = { ...provider, driver: ProviderDriverKind.make("claudeAgent") };
+    state = {
+      ...waiting,
+      interaction: {
+        type: "authorizationCode",
+        id: "claude-login",
+        url: "https://claude.ai/oauth/authorize?fixture",
+      },
+    };
+    await render(claude);
+    expect(container.textContent).toContain("paste the code it gives you below");
+    expect(button("Copy code")).toBeUndefined();
+    await act(() => button("Open authorization page").click());
+    expect(fixture.open).toHaveBeenCalledWith("https://claude.ai/oauth/authorize?fixture");
+    const input = container.querySelector<HTMLInputElement>("input")!;
+    expect(button("Submit authorization code").disabled).toBe(true);
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        input,
+        "fixture-code#state",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(() => button("Submit authorization code").click());
+    expect(fixture.respond).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        instanceId,
+        flowId: "flow-one",
+        interactionId: "claude-login",
+        response: { type: "authorizationCode", code: "fixture-code#state" },
+      },
+    });
+    expect(input.value).toBe("");
+    state = { ...state, phase: "verifying", interaction: null };
+    await render(claude);
+    expect(container.querySelector("input")).toBeNull();
+  });
+  it("clears an unfinished authorization code when a new flow replaces it", async () => {
+    state = {
+      ...waiting,
+      interaction: {
+        type: "authorizationCode",
+        id: "one",
+        url: "https://claude.ai/oauth/authorize?fixture",
+      },
+    };
+    await render({ ...provider, driver: ProviderDriverKind.make("claudeAgent") });
+    const input = container.querySelector<HTMLInputElement>("input")!;
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        input,
+        "old-code",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    state = {
+      ...state,
+      flowId: "new-flow",
+      interaction: {
+        type: "authorizationCode",
+        id: "new-flow",
+        url: "https://claude.ai/oauth/authorize?new",
+      },
+    };
+    await render({ ...provider, driver: ProviderDriverKind.make("claudeAgent") });
+    expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("");
+  });
+  it("offers Grok sign-in and preserves the same instance target", async () => {
+    await render({ ...provider, driver: ProviderDriverKind.make("grok") });
+    await act(() => button("Sign in with Grok").click());
+    expect(fixture.start).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
   });
 });

@@ -5,6 +5,39 @@ import { useMemo } from "react";
 import { mobilePreferencesAtom } from "./state/preferences";
 
 const zhCN: Readonly<Record<string, string>> = {
+  "Claude account": "Claude 账号",
+  "Grok account": "Grok 账号",
+  "Sign in with Claude": "使用 Claude 登录",
+  "Sign in with Grok": "使用 Grok 登录",
+  "Sign out of Claude?": "退出此 Claude 账号？",
+  "Sign out of Grok?": "退出此 Grok 账号？",
+  "Enable this instance to sign in.": "启用此实例后即可登录。",
+  "Browser sign-in is unavailable for this instance's authentication settings.":
+    "此实例的认证配置不支持浏览器登录，请检查实例配置或环境版本。",
+  "Waiting for sign-in.": "正在等待登录。",
+  "Signed in.": "已登录。",
+  "Sign in with your account.": "使用你的账号登录。",
+  "Could not update sign-in. Try again.": "无法更新登录状态，请重试。",
+  "Open the authorization page, then paste the code it gives you below.":
+    "打开授权页面，完成授权后将页面给出的授权码粘贴到下方。",
+  "Authorization code": "授权码",
+  "Submit authorization code": "提交授权码",
+  "Could not run the instance's login command. Check its CLI, execution environment, and network.":
+    "无法运行此实例的登录命令，请检查其 CLI、执行环境和网络。",
+  "The login command returned too much output. Check the CLI version and try again.":
+    "登录命令输出异常，请检查 CLI 版本后重试。",
+  "Enter the authorization code from the browser as a single line.":
+    "请填写浏览器给出的授权码，内容必须为单行。",
+  "Could not send the authorization code. Start sign-in again.": "无法提交授权码，请重新发起登录。",
+  "Sign-in did not complete. Update the CLI if needed and try again.":
+    "登录未完成，请检查或更新 CLI 后重试。",
+  "The CLI did not provide a supported sign-in link. Update it and try again.":
+    "CLI 未提供支持的登录链接，请更新后重试。",
+  "Could not verify the new account. Refresh provider status before retrying.":
+    "无法核验新账号，请刷新提供方状态后再重试。",
+  "The CLI did not confirm an account login. Check this instance's authentication settings.":
+    "CLI 未确认账号登录，请检查此实例的认证设置。",
+  "Could not sign out. Try again.": "无法退出登录，请重试。",
   "Codex account": "Codex 账号",
   "Authorize this instance in your browser without SSH.": "在浏览器中为此实例授权，无需 SSH。",
   "Enable this Codex instance to sign in.": "启用此 Codex 实例后即可登录。",

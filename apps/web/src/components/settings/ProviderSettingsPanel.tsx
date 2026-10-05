@@ -85,7 +85,8 @@ import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
-import { CodexAuthSection } from "./CodexAuthSection";
+import { ProviderLoginSection } from "./ProviderLoginSection";
+import { supportsProviderLogin } from "@t3tools/client-runtime/provider-login";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
 import {
@@ -950,14 +951,15 @@ export function EnvironmentProviderSettings({
               readOnly={readOnly}
               onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
             />
-          ) : mode === "editor" && row.driver === "codex" ? (
-            <CodexAuthSection
+          ) : mode === "editor" && supportsProviderLogin(row.driver) ? (
+            <ProviderLoginSection
               key={`${environmentId}:${row.instanceId}`}
               environmentId={environmentId}
               environmentLabel={environmentLabel}
               instanceId={row.instanceId}
               provider={liveProvider}
               readOnly={readOnly}
+              driver={row.driver}
             />
           ) : null
         }

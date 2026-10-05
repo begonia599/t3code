@@ -20,7 +20,7 @@
 - [Running in the background](./user/background-service.md)
 - [Updating T3 Code](./user/updating.md)
 - [Fork: Harness 沙箱](./user/harness-sandbox.md)
-- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md)
+- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [Grok](./user/providers-grok.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md)
 
 ---
 

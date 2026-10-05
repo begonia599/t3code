@@ -1,11 +1,15 @@
-import { codexDeviceAuthView } from "@t3tools/client-runtime/codex-device-auth";
+import {
+  providerLoginView,
+  providerLoginLabels,
+  type LoginProvider,
+} from "@t3tools/client-runtime/provider-login";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { useT } from "../../i18n";
@@ -14,25 +18,29 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { SettingsRow } from "./settingsLayout";
 
-export function CodexAuthSection(props: {
+export function ProviderLoginSection(props: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly instanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
   readonly readOnly: boolean;
+  readonly driver: LoginProvider;
 }) {
   const t = useT();
+  const labels = providerLoginLabels[props.driver];
   const target = { environmentId: props.environmentId, input: { instanceId: props.instanceId } };
   const available = !props.readOnly && props.provider?.setup?.canAuthenticate === true;
   const query = useEnvironmentQuery(available ? serverEnvironment.providerAuthState(target) : null);
   const state = query.data;
-  const view = codexDeviceAuthView(props.provider, state);
+  const view = providerLoginView(props.provider, state);
   const commandOptions = { reportFailure: false, reportDefect: false };
   const start = useAtomCommand(serverEnvironment.startProviderAuth, commandOptions);
   const cancel = useAtomCommand(serverEnvironment.cancelProviderAuth, commandOptions);
   const logout = useAtomCommand(serverEnvironment.logoutProviderAuth, commandOptions);
+  const respond = useAtomCommand(serverEnvironment.respondProviderAuth, commandOptions);
   const pendingRef = useRef(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,11 +57,11 @@ export function CodexAuthSection(props: {
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const failure = squashAtomCommandFailure(result);
         setError(
-          failure instanceof Error ? failure.message : "Could not update Codex sign-in. Try again.",
+          failure instanceof Error ? failure.message : "Could not update sign-in. Try again.",
         );
       }
     } catch {
-      setError("Could not update Codex sign-in. Try again.");
+      setError("Could not update sign-in. Try again.");
     } finally {
       pendingRef.current = false;
       setPending(false);
@@ -61,9 +69,9 @@ export function CodexAuthSection(props: {
   }
 
   async function openAuthorization() {
-    if (!view.deviceCode) return;
+    if (!view.authorizationUrl) return;
     try {
-      await ensureLocalApi().shell.openExternal(view.deviceCode.url);
+      await ensureLocalApi().shell.openExternal(view.authorizationUrl);
     } catch {
       setError("Could not open the sign-in page. Open the displayed link in your browser.");
     }
@@ -72,7 +80,7 @@ export function CodexAuthSection(props: {
   async function copyCode() {
     if (!view.deviceCode) return;
     try {
-      await writeTextToClipboard(view.deviceCode.userCode, "Codex sign-in code");
+      await writeTextToClipboard(view.deviceCode.userCode, `${labels.name} sign-in code`);
       setCopiedFlow(state?.flowId ?? null);
     } catch {
       setError("Could not copy the code. Enter the displayed code manually.");
@@ -81,14 +89,14 @@ export function CodexAuthSection(props: {
 
   async function signOut() {
     const confirmed = await ensureLocalApi().dialogs.confirm(
-      `${t("Sign out of Codex?")}\n${props.environmentLabel} · ${props.provider?.displayName ?? props.instanceId}\n${t("This stops running threads using this sign-in. Thread history is kept.")}`,
+      `${t(labels.signOut)}\n${props.environmentLabel} · ${props.provider?.displayName ?? props.instanceId}\n${t("This stops running threads using this sign-in. Thread history is kept.")}`,
     );
     if (confirmed) await run(() => logout(target));
   }
 
   return (
     <SettingsRow
-      title={t("Codex account")}
+      title={t(labels.account)}
       description={t("Authorize this instance in your browser without SSH.")}
     >
       <div className="grid gap-3 pb-3">
@@ -98,21 +106,48 @@ export function CodexAuthSection(props: {
         <p role="status" className="text-sm">
           {t(props.readOnly ? "Provider setup is read-only." : view.message)}
         </p>
-        {view.deviceCode && !props.readOnly ? (
+        {view.authorizationUrl && !props.readOnly ? (
           <div className="grid gap-2">
             <p className="text-sm text-muted-foreground">
-              {t("Open the authorization page and enter this one-time code.")}
+              {t(
+                view.authorizationCode
+                  ? "Open the authorization page, then paste the code it gives you below."
+                  : "Open the authorization page and enter this one-time code.",
+              )}
             </p>
-            <code className="select-all text-lg tracking-widest">{view.deviceCode.userCode}</code>
-            <p className="break-all text-xs text-muted-foreground">{view.deviceCode.url}</p>
+            {view.deviceCode ? (
+              <code className="select-all text-lg tracking-widest">{view.deviceCode.userCode}</code>
+            ) : null}
+            <p className="break-all text-xs text-muted-foreground">{view.authorizationUrl}</p>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" onClick={() => void openAuthorization()}>
                 {t("Open authorization page")}
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => void copyCode()}>
-                {t(copiedFlow === state?.flowId ? "Code copied" : "Copy code")}
-              </Button>
+              {view.deviceCode ? (
+                <Button size="sm" variant="ghost" onClick={() => void copyCode()}>
+                  {t(copiedFlow === state?.flowId ? "Code copied" : "Copy code")}
+                </Button>
+              ) : null}
             </div>
+            {view.authorizationCode && state?.flowId ? (
+              <AuthorizationCodeForm
+                key={state.flowId}
+                disabled={disabled}
+                onSubmit={(code) =>
+                  void run(() =>
+                    respond({
+                      ...target,
+                      input: {
+                        ...target.input,
+                        flowId: state.flowId!,
+                        interactionId: view.authorizationCode!.id,
+                        response: { type: "authorizationCode", code },
+                      },
+                    }),
+                  )
+                }
+              />
+            ) : null}
             {state?.expiresAt ? (
               <p className="text-xs text-muted-foreground">
                 {t("Expires at")}{" "}
@@ -134,7 +169,7 @@ export function CodexAuthSection(props: {
               {t(
                 state?.phase === "failed" || state?.phase === "cancelled"
                   ? "Retry sign-in"
-                  : "Sign in with ChatGPT",
+                  : labels.signIn,
               )}
             </Button>
           ) : null}
@@ -170,5 +205,44 @@ export function CodexAuthSection(props: {
         ) : null}
       </div>
     </SettingsRow>
+  );
+}
+
+function AuthorizationCodeForm(props: {
+  readonly disabled: boolean;
+  readonly onSubmit: (code: string) => void;
+}) {
+  const t = useT();
+  const id = useId();
+  const [code, setCode] = useState("");
+  return (
+    <form
+      className="grid gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (props.disabled || !code.trim()) return;
+        props.onSubmit(code.trim());
+        setCode("");
+      }}
+    >
+      <label htmlFor={id} className="text-sm">
+        {t("Authorization code")}
+      </label>
+      <Input
+        id={id}
+        type="password"
+        autoComplete="off"
+        spellCheck={false}
+        maxLength={4096}
+        value={code}
+        disabled={props.disabled}
+        onChange={(event) => setCode(event.target.value)}
+      />
+      <div>
+        <Button type="submit" size="sm" disabled={props.disabled || !code.trim()}>
+          {t("Submit authorization code")}
+        </Button>
+      </div>
+    </form>
   );
 }

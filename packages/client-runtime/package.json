@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./codex-device-auth": {
-      "types": "./src/codexDeviceAuth.ts",
-      "default": "./src/codexDeviceAuth.ts"
+    "./provider-login": {
+      "types": "./src/providerLogin.ts",
+      "default": "./src/providerLogin.ts"
     },
     "./device/stream": {
       "types": "./src/device/stream.ts",

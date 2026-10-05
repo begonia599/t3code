@@ -50,6 +50,8 @@ Web 和桌面：**Settings → Providers → 选择实例 → Execution environm
 
 Codex 可直接通过实例的 **Codex account → Sign in with ChatGPT** 发起设备码登录；移动端入口在所选环境的 **Codex account** 中。打开显示的授权链接并输入验证码即可，无需 SSH。登录与退出都使用该实例的私有配置和出口，凭证仍由官方 Codex 保存和刷新。详见 [Codex 登录指南](./providers-codex.md#sign-in-from-t3-code)。
 
+Claude 和 Grok 实例也可在相同位置登录：[Claude](./providers-claude.md#sign-in-from-t3-code) 打开授权链接后，将浏览器给出的授权码填回 T3；[Grok](./providers-grok.md#sign-in-from-t3-code) 在官方授权页面输入或确认设备码。两者的登录、退出都在实例既有的身份、私有目录和网络内执行，无需改变宿主保护配置。
+
 实例环境变量会被明确传入沙箱，进程仍能读取这些值；它们不等同于下述凭证库。服务器环境变量不会整体继承。
 
 沙箱实例的技能扫描和文件下载工具也受其已开放目录限制。修改或关闭沙箱配置会使旧 MCP 会话凭证失效，避免旧授权沿用新的文件范围。

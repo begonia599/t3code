@@ -49,6 +49,9 @@ import {
 } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { makeProviderExecution } from "../ProviderExecution.ts";
+import { makeCliProviderAuth } from "../CliProviderAuth.ts";
+import { makeProviderLoginSpawner } from "../ProviderLoginProcess.ts";
+import { supportsClaudeBrowserLogin } from "../cliProviderAuthSupport.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
@@ -63,6 +66,7 @@ import {
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
+  makeClaudeEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
@@ -169,12 +173,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ? configDir
           : undefined,
       );
-      const stampIdentity = withInstanceIdentity({
+      const canAuthenticate = enabled && supportsClaudeBrowserLogin(processEnv);
+      const identify = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
         displayName,
         accentColor,
         continuationGroupKey,
+      });
+      const stampIdentity: typeof identify = (provider) => ({
+        ...identify(provider),
+        setup: { canAuthenticate, canInstall: false },
       });
 
       // One per instance: the status probe writes the model-scoped bucket
@@ -302,6 +311,35 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               Effect.provideService(Path.Path, path),
             );
 
+      const loginEnvironment = yield* makeClaudeEnvironment(effectiveConfig, processEnv);
+      const loginUserHome = loginEnvironment.HOME || loginEnvironment.USERPROFILE;
+      const loginHome = path.resolve(
+        cwd,
+        loginEnvironment.CLAUDE_CONFIG_DIR ||
+          (loginUserHome ? path.join(loginUserHome, ".claude") : configDir),
+      );
+      const credentialHome = yield* fileSystem
+        .realPath(loginHome)
+        .pipe(Effect.orElseSucceed(() => loginHome));
+      const spawnLogin = yield* makeProviderLoginSpawner({
+        instanceId,
+        binaryPath: effectiveConfig.binaryPath || "claude",
+        cwd,
+        environment: loginEnvironment,
+        sandboxed: runtime.description !== undefined,
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      const auth = yield* makeCliProviderAuth({
+        instanceId,
+        provider: "claude",
+        credentialKey: `claude:${credentialHome}`,
+        enabled: canAuthenticate,
+        spawn: spawnLogin,
+        onChanged: Cache.invalidateAll(capabilitiesProbeCache).pipe(
+          Effect.andThen(snapshot.refresh),
+          Effect.asVoid,
+        ),
+      });
+
       // Same rules as Codex: serialised on the config directory that holds the
       // login, one request id kept until Claude answers (a cooldown or rate
       // limit is an answer), then a re-probe.
@@ -381,6 +419,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         adapter,
         textGeneration,
         consumeResetCredit,
+        auth,
       } satisfies ProviderInstance;
     }),
 };

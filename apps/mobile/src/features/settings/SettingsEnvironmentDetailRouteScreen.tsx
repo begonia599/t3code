@@ -19,7 +19,8 @@ import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { ProviderExecutionSettings } from "./ProviderExecutionSettings";
-import { CodexAuthSettings } from "./CodexAuthSettings";
+import { ProviderLoginSettings } from "./ProviderLoginSettings";
+import { supportsProviderLogin } from "@t3tools/client-runtime/provider-login";
 import { ResourcesSettings } from "./ResourcesSettings";
 import {
   canMaintainEnvironment,
@@ -191,16 +192,17 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
             {connected ? (
               <View>
                 <ProviderExecutionSettings environmentId={environmentId} disabled={!allowed} />
-                {config?.providers
-                  .filter((provider) => provider.driver === "codex")
-                  .map((provider) => (
-                    <CodexAuthSettings
+                {config?.providers.map((provider) =>
+                  supportsProviderLogin(provider.driver) ? (
+                    <ProviderLoginSettings
                       key={`${environmentId}:${provider.instanceId}`}
                       environmentId={environmentId}
                       provider={provider}
                       disabled={!allowed}
+                      driver={provider.driver}
                     />
-                  ))}
+                  ) : null,
+                )}
                 <ResourcesSettings environmentId={environmentId} />
               </View>
             ) : null}

@@ -4,13 +4,37 @@ T3 Code uses Claude Code's login and configuration. Start with the default provi
 for one account; [provider setup](./install.md#providers) covers installation and
 shared provider settings.
 
+## Sign in from T3 Code
+
+On web or desktop, open **Settings > Providers**, select the Claude instance, and
+choose **Sign in with Claude**. On mobile, open **Settings > Environments**, select
+the environment, and find the instance's **Claude account** section.
+
+Open the displayed authorization link in your browser. If the browser gives you
+an authorization code, paste it into T3's **Authorization code** field and submit
+it. Keep the original login request open: the code belongs to that request.
+T3 checks the saved login before reporting success. Cancel or retry from the
+client that started the request; no SSH connection is needed.
+
+This signs in with a Claude subscription through the instance's installed Claude
+Code CLI. Use a current CLI version that supports remote authorization-code
+entry. Claude stores and refreshes its own credentials. Login follows the same
+configuration directory, sandbox identity, and network as that instance.
+Instances configured with API keys, an OAuth-token environment variable, or cloud
+provider credentials continue to use those settings instead of this login flow.
+
+To change an existing account, explicitly **Sign out** first, or create a separate
+instance with its own configuration directory. Signing in or out stops active
+threads sharing that login; their history remains available.
+
 ## Separate accounts or configurations
 
 Use a separate Claude config directory for each account. This also works for named
 presets that need different Claude settings or a router connection.
 
-Keep your existing account in the default directory. On the environment's machine,
-create the second login:
+Keep your existing account in the default directory. Add a second instance with
+its own configuration directory and use **Sign in with Claude**. Alternatively,
+create the second login on the environment's machine:
 
 ```bash
 mkdir -p ~/.claude_personal

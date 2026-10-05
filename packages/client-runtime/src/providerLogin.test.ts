@@ -5,7 +5,7 @@ import {
   type ProviderAuthState,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { codexDeviceAuthView } from "./codexDeviceAuth.ts";
+import { providerLoginView } from "./providerLogin.ts";
 
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex-test"),
@@ -41,24 +41,24 @@ const waiting: ProviderAuthState = {
   },
 };
 
-describe("Codex login presentation across clients", () => {
+describe("Provider login presentation across clients", () => {
   it("offers login only after loading a capable, enabled instance", () => {
-    expect(codexDeviceAuthView(provider, null).canStart).toBe(false);
-    expect(codexDeviceAuthView({ ...provider, enabled: false }, idle).canStart).toBe(false);
-    expect(codexDeviceAuthView({ ...provider, setup: undefined }, idle).canStart).toBe(false);
-    expect(codexDeviceAuthView(provider, idle).canStart).toBe(true);
+    expect(providerLoginView(provider, null).canStart).toBe(false);
+    expect(providerLoginView({ ...provider, enabled: false }, idle).canStart).toBe(false);
+    expect(providerLoginView({ ...provider, setup: undefined }, idle).canStart).toBe(false);
+    expect(providerLoginView(provider, idle).canStart).toBe(true);
   });
   it("preserves an existing account and offers explicit logout", () => {
-    const view = codexDeviceAuthView({ ...provider, auth: { status: "authenticated" } }, idle);
+    const view = providerLoginView({ ...provider, auth: { status: "authenticated" } }, idle);
     expect(view.canStart).toBe(false);
     expect(view.canLogout).toBe(true);
   });
   it("shows the code only while this client owns the pending interaction", () => {
-    const view = codexDeviceAuthView(provider, waiting);
+    const view = providerLoginView(provider, waiting);
     expect(view.deviceCode?.userCode).toBe("ABCD-1234");
     expect(view.canStart).toBe(false);
     expect(view.canCancel).toBe(true);
-    const other = codexDeviceAuthView(provider, { ...waiting, flowId: null, interaction: null });
+    const other = providerLoginView(provider, { ...waiting, flowId: null, interaction: null });
     expect(other.deviceCode).toBeNull();
     expect(other.canStart).toBe(false);
     expect(other.canCancel).toBe(false);
@@ -66,10 +66,32 @@ describe("Codex login presentation across clients", () => {
   it.each(["verifying", "succeeded", "cancelled", "failed"] as const)(
     "removes a stale code in phase %s",
     (phase) => {
-      expect(codexDeviceAuthView(provider, { ...waiting, phase }).deviceCode).toBeNull();
+      expect(providerLoginView(provider, { ...waiting, phase }).deviceCode).toBeNull();
     },
   );
   it("removes codes if the instance loses login capability", () => {
-    expect(codexDeviceAuthView({ ...provider, enabled: false }, waiting).deviceCode).toBeNull();
+    expect(providerLoginView({ ...provider, enabled: false }, waiting).deviceCode).toBeNull();
+  });
+  it("shows Claude's code entry only for the active interaction", () => {
+    const state: ProviderAuthState = {
+      ...waiting,
+      interaction: {
+        type: "authorizationCode",
+        id: "one",
+        url: "https://claude.ai/oauth/authorize?fixture",
+      },
+    };
+    const view = providerLoginView(provider, state);
+    expect(view.authorizationUrl).toBe(
+      state.interaction!.type === "authorizationCode" ? state.interaction!.url : null,
+    );
+    expect(view.authorizationCode).toBe(state.interaction);
+    expect(view.deviceCode).toBeNull();
+    expect(
+      providerLoginView(provider, { ...state, phase: "verifying" }).authorizationCode,
+    ).toBeNull();
+    expect(
+      providerLoginView(provider, { ...state, interaction: null, flowId: null }).authorizationUrl,
+    ).toBeNull();
   });
 });
