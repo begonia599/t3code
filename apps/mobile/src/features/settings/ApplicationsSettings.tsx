@@ -8,6 +8,8 @@ import {
   ApplicationPublish,
   ProviderInstanceId,
   type Application,
+  type ApplicationBackend,
+  type ApplicationDeploymentProfile,
   type ApplicationResponse,
   type ApplicationRequest,
   type EnvironmentId,
@@ -34,6 +36,10 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
   const [error, setError] = useState("");
   const [projectRoot, setProjectRoot] = useState("");
   const [manifestPath, setManifestPath] = useState("compose.yaml");
+  const [backend, setBackend] = useState<ApplicationBackend>("docker-compose");
+  const [deploymentProfile, setDeploymentProfile] = useState("");
+  const [profiles, setProfiles] = useState<ReadonlyArray<ApplicationDeploymentProfile>>([]);
+  const activeProfile = profiles.find((item) => item.id === deploymentProfile);
   const [name, setName] = useState("");
   const [hostname, setHostname] = useState("");
   const execute = useAtomCommand(resources.applications, {
@@ -53,6 +59,8 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
       if (value) {
         setResult(value);
         if (value.applications) setApps(value.applications);
+        if (value.deploymentProfiles) setProfiles(value.deploymentProfiles);
+        if (value.release) setManifestPath(value.release.manifestPath);
         if (value.application) setSelected(value.application);
       }
     } catch (error) {
@@ -78,9 +86,17 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
     const input = {
       projectRoot,
       manifestPath,
+      backend,
+      ...(backend === "systemd"
+        ? { deploymentProfile: selected?.deploymentProfile ?? deploymentProfile }
+        : {}),
       ...(selected ? { applicationId: selected.id } : { name }),
-      hostname: hostname || null,
+      hostname: backend === "systemd" ? null : hostname || null,
     };
+    if (backend === "systemd" && !input.deploymentProfile) {
+      setError("Select a registered deployment profile.");
+      return;
+    }
     if (!isPublication(input)) {
       setError("Enter a project directory and a valid application name.");
       return;
@@ -92,13 +108,20 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
       <Text className="font-semibold">{t("Application publishing")}</Text>
       <Text className="text-foreground-muted">
         {t(
-          "Publish business projects with Docker Compose. Applications survive chat and T3 restarts. The controlling T3 framework is protected.",
+          "Publish with Docker Compose or a registered systemd deployment profile. Applications survive chat and T3 restarts.",
         )}
       </Text>
       <View className="flex-row flex-wrap">
         {[...new Set([instanceId, ...instances])].map((id) =>
           action(`${instanceId === id ? "✓ " : ""}${id}`, () => {
             setInstanceId(id);
+            setProfiles([]);
+            setProjectRoot("");
+            setName("");
+            setHostname("");
+            setDeploymentProfile("");
+            setBackend("docker-compose");
+            setManifestPath("compose.yaml");
             setApps([]);
             setSelected(null);
             setResult(null);
@@ -113,6 +136,9 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
           </Text>
           {action("Manage", () => {
             setSelected(app);
+            setBackend(app.backend ?? "docker-compose");
+            setDeploymentProfile(app.deploymentProfile ?? "");
+            setManifestPath(app.backend === "systemd" ? "application.yaml" : "compose.yaml");
             setProjectRoot(app.projectRoot);
             setName(app.name);
             setHostname(app.hostname ?? "");
@@ -181,6 +207,9 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
             {action("New application", () => {
               setSelected(null);
               setResult(null);
+              setBackend("docker-compose");
+              setDeploymentProfile("");
+              setManifestPath("compose.yaml");
               setName("");
               setHostname("");
             })}
@@ -235,11 +264,12 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
             : null}
         </View>
       ) : null}
-      {result?.containers || result?.configuration || result?.release ? (
+      {result?.containers || result?.units || result?.configuration || result?.release ? (
         <Text selectable>
           {JSON.stringify(
             {
               containers: result.containers,
+              units: result.units,
               runtimeAvailable: result.runtimeAvailable,
               release: result.release,
               configuration: result.configuration,
@@ -249,16 +279,65 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
           )}
         </Text>
       ) : null}
+      <Text>{t("Deployment backend")}</Text>
+      <View className="flex-row">
+        {(["docker-compose", "systemd"] as const).map((value) =>
+          action(
+            `${backend === value ? "✓ " : ""}${value}`,
+            () => {
+              setBackend(value);
+              setDeploymentProfile("");
+              setManifestPath(value === "systemd" ? "application.yaml" : "compose.yaml");
+            },
+            !!selected,
+          ),
+        )}
+      </View>
+      {backend === "systemd" ? (
+        <>
+          <Text>{t("Deployment profile")}</Text>
+          {profiles.map((profile) =>
+            action(
+              `${deploymentProfile === profile.id ? "✓ " : ""}${profile.id} · ${profile.runtimeUser}`,
+              () => {
+                setDeploymentProfile(profile.id);
+                setProjectRoot(profile.projectRoot);
+                setName(profile.applicationName);
+              },
+              !!selected,
+            ),
+          )}
+          {profiles.length === 0 ? (
+            <Text>
+              {t(
+                "Refresh applications to load deployment profiles. The host administrator registers profiles for your project and instance.",
+              )}
+            </Text>
+          ) : null}
+          {activeProfile ? (
+            <Text>
+              {t("Runtime budget")}: {activeProfile.runtime.memoryMiB} MiB · CPU{" "}
+              {activeProfile.runtime.cpuPercent}% · {t("Build budget")}:{" "}
+              {activeProfile.build.memoryMiB} MiB · CPU {activeProfile.build.cpuPercent}%
+            </Text>
+          ) : null}
+          <Text>
+            {t(
+              "Native services do not require a domain or HTTP port. Root runtime is confined to the application's private filesystem.",
+            )}
+          </Text>
+        </>
+      ) : null}
       <Text>{t("Project directory")}</Text>
       <TextInput
         value={projectRoot}
-        editable={!busy && !selected}
+        editable={!busy && !selected && backend !== "systemd"}
         onChangeText={setProjectRoot}
         autoCapitalize="none"
         autoCorrect={false}
         className="rounded border border-border bg-background px-3 py-2 text-foreground"
       />
-      <Text>{t("Compose file")}</Text>
+      <Text>{t(backend === "systemd" ? "Application manifest" : "Compose file")}</Text>
       <TextInput
         value={manifestPath}
         editable={!busy}
@@ -272,7 +351,7 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
           <Text>{t("Application name")}</Text>
           <TextInput
             value={name}
-            editable={!busy}
+            editable={!busy && backend !== "systemd"}
             onChangeText={setName}
             autoCapitalize="none"
             autoCorrect={false}
@@ -280,18 +359,22 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
           />
         </>
       ) : null}
-      <Text>{t("Public hostname (optional)")}</Text>
-      <TextInput
-        value={hostname}
-        editable={!busy}
-        onChangeText={setHostname}
-        autoCapitalize="none"
-        autoCorrect={false}
-        className="rounded border border-border bg-background px-3 py-2 text-foreground"
-      />
+      {backend === "docker-compose" ? (
+        <>
+          <Text>{t("Public hostname (optional)")}</Text>
+          <TextInput
+            value={hostname}
+            editable={!busy}
+            onChangeText={setHostname}
+            autoCapitalize="none"
+            autoCorrect={false}
+            className="rounded border border-border bg-background px-3 py-2 text-foreground"
+          />
+        </>
+      ) : null}
       <Text className="text-foreground-muted">
         {t(
-          "Declare healthchecks and container-only ports in Compose. Updates replace the running version; rollback preserves persistent data. An empty hostname publishes privately.",
+          "Updates replace the running version; rollback preserves persistent data. Native services use the registered runtime user, private filesystem and resource budget.",
         )}
       </Text>
       {action(selected ? "Publish new release" : "Publish application", publish)}

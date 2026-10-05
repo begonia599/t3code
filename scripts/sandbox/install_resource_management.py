@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -I
-"""Configure trusted resource boundaries and Docker application hosting as administrator."""
+"""Configure trusted resource boundaries and application hosting as administrator."""
 import argparse
 import importlib.util
 import json
@@ -9,9 +9,43 @@ import pwd
 import re
 import subprocess
 import tempfile
+import uuid
 
 spec = importlib.util.spec_from_file_location('installer', Path(__file__).with_name('install.py'))
 installer = importlib.util.module_from_spec(spec); spec.loader.exec_module(installer)
+for module_name in ('t3code_resource_policy', 't3code_systemd'):
+    module_spec = importlib.util.spec_from_file_location(module_name, Path(__file__).with_name(module_name+'.py'))
+    module = importlib.util.module_from_spec(module_spec); module_spec.loader.exec_module(module)
+    globals()[module_name] = module
+
+
+def verify_native_host(owner):
+    """Run only during explicit administrator setup, never from a Harness request."""
+    version = subprocess.run(['/usr/bin/systemctl', '--version'], check=True, capture_output=True, text=True).stdout
+    match = re.match(r'systemd (\d+)', version)
+    if not match or int(match[1]) < 257: raise ValueError('Native application hosting requires systemd 257+ for private PID namespaces')
+    controllers_path = Path('/sys/fs/cgroup/cgroup.controllers')
+    if not controllers_path.exists() or not {'memory', 'cpu', 'pids'} <= set(controllers_path.read_text().split()):
+        raise ValueError('Native application hosting requires cgroup v2 memory, cpu and pids controllers')
+    # Some hosts accept unit settings but cannot enforce them. Check PID isolation
+    # and socket BPF enforcement before registering any root runtime grants.
+    probe = '''import errno, os, socket, sys
+assert os.stat('/proc/self/ns/pid').st_ino != int(sys.argv[1]), 'PrivatePIDs is not enforced'
+for family, address in [(socket.AF_INET, ('127.0.0.1', 45001)), (socket.AF_INET6, ('::1', 45001))]:
+    with socket.socket(family) as client:
+        try: client.bind(address)
+        except OSError as error:
+            assert error.errno == errno.EPERM, 'Socket bind policy could not be verified'
+        else: raise RuntimeError('SocketBindDeny is not enforced')
+'''
+    subprocess.run(['/usr/bin/systemd-run', '--quiet', '--wait', '--pipe', '--collect', '--unit=t3-app-preflight-'+uuid.uuid4().hex,
+                    '--property=User='+str(owner.pw_uid), '--property=Group='+str(owner.pw_gid),
+                    '--property=PrivatePIDs=yes', '--property=PrivateNetwork=yes', '--property=SocketBindDeny=any',
+                    '--property=MemoryMax=64M', '--property=MemorySwapMax=0', '--property=CPUQuota=25%',
+                    '--property=TasksMax=16', '--property=RuntimeMaxSec=15s', '--property=TimeoutStopSec=5s',
+                    '--expand-environment=no', '--', '/usr/bin/python3', '-I', '-c', probe,
+                    str(Path('/proc/self/ns/pid').stat().st_ino)], check=True, timeout=30)
+
 
 
 def main():
@@ -24,6 +58,9 @@ def main():
     parser.add_argument('--reserved-host', action='append', default=[])
     parser.add_argument('--instance-profile', action='append', default=[])
     parser.add_argument('--enable-applications', action='store_true')
+    parser.add_argument('--systemd-profiles', help='Root-owned JSON object of native deployment profiles; replaces the registered profile set')
+    parser.add_argument('--build-memory-mib', type=int)
+    parser.add_argument('--build-cpu-percent', type=int)
     parser.add_argument('--configure-caddy', action='store_true')
     args = parser.parse_args()
     if os.geteuid() != 0: raise ValueError('Resource policy requires direct host administrator execution')
@@ -59,12 +96,41 @@ def main():
     applications['allowedDomainSuffixes'] = sorted(set([*applications.get('allowedDomainSuffixes', []), *args.domain_suffix]))
     for domain in [*config['reservedHosts'], *applications['allowedDomainSuffixes']]:
         if not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?', domain): raise ValueError('Invalid publication hostname policy')
+    if args.systemd_profiles:
+        applications['systemdProfiles'] = t3code_resource_policy.trusted_json(Path(args.systemd_profiles))
+    build = applications.get('build', {})
+    if args.build_memory_mib is not None: build['memoryMiB'] = args.build_memory_mib
+    if args.build_cpu_percent is not None: build['cpuPercent'] = args.build_cpu_percent
+    applications['build'] = t3code_systemd.budgets(build, t3code_systemd.DEFAULT_BUILD, t3code_resource_policy.require)
+    config['applications'] = applications
+    # Include the implicit framework paths during profile validation too.
+    validation = {**config, 'protectedPaths': [*config['protectedPaths'], *[{'path': value, 'visibility': 'hidden'} for value in t3code_resource_policy.DEFAULT_PROTECTED]]}
+    profiles = t3code_systemd.profiles(validation, t3code_resource_policy)
+    if profiles:
+        verify_native_host(owner)
+        for item in profiles.values():
+            if item['networkNamespacePath'] and not Path(item['networkNamespacePath']).exists(): raise ValueError('The configured service network namespace is unavailable')
+            resolver = Path(item['resolvConf']).resolve(strict=True)
+            for entry in (resolver, *resolver.parents):
+                info = entry.lstat()
+                if info.st_uid != 0 or info.st_mode & 0o022: raise ValueError('DNS file and parents must be owned and writable only by root')
     if args.enable_applications:
-        for command in [['/usr/bin/docker','version','--format','{{.Server.Version}}'],['/usr/bin/docker','compose','version'],['/usr/bin/python3','-I','-c','import yaml']]:
+        for command in [['/usr/bin/docker','version','--format','{{.Server.Version}}'],['/usr/bin/docker','compose','version'],['/usr/bin/docker','buildx','version'],['/usr/bin/python3','-I','-c','import yaml']]:
             subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
         applications['enabled'] = True
     config['applications'] = applications
+    # Unit conditions prevent revoked or changed profiles from starting again after reboot.
+    markers = t3code_systemd.POLICIES
+    markers.mkdir(mode=0o755, parents=True, exist_ok=True)
+    for entry in (markers, *markers.parents):
+        info = entry.lstat()
+        if entry.is_symlink() or info.st_uid != 0 or info.st_mode & 0o022:
+            raise ValueError('Application policy marker directories must be owned and writable only by root')
+    valid = {t3code_systemd.digest(item) for item in profiles.values()}
+    for marker in markers.iterdir():
+        if re.fullmatch(r'[a-f0-9]{64}', marker.name) and marker.name not in valid: marker.unlink()
     installer.install_file(path, (json.dumps(config, indent=2)+'\n').encode(), 0o644)
+    for value in valid: installer.install_file(markers/value, b'Granted native application policy\n', 0o644)
     if args.configure_caddy:
         fragment = Path('/etc/caddy/t3code-applications.caddy')
         if not fragment.exists(): installer.install_file(fragment, b'# T3 managed applications\n', 0o644)
@@ -78,7 +144,7 @@ def main():
             except Exception:
                 installer.install_file(caddy, old, 0o644)
                 raise
-    print('Configured trusted T3 resource boundaries'+(' and Docker application hosting.' if applications['enabled'] else '.'))
+    print('Configured trusted T3 resource boundaries. Docker hosting: '+str(applications.get('enabled', False))+'. Native deployment profiles: '+str(len(profiles))+'.')
 
 
 if __name__ == '__main__': main()

@@ -5,6 +5,24 @@ import { useMemo } from "react";
 import { mobilePreferencesAtom } from "./state/preferences";
 
 const zhCN: Readonly<Record<string, string>> = {
+  "Select a registered deployment profile.": "请选择已登记的部署授权配置。",
+  "Deployment backend": "部署后端",
+  "Deployment profile": "部署授权配置",
+  "Select a registered profile": "选择已登记的配置",
+  "Application manifest": "应用声明文件",
+  "Publish with Docker Compose or a registered systemd deployment profile. Applications survive chat and T3 restarts.":
+    "通过 Docker Compose 或已登记的 systemd 配置发布应用。应用独立运行，不随聊天结束或 T3 重启而停止。",
+  "Refresh applications to load deployment profiles. The host administrator registers profiles for your project and instance.":
+    "刷新应用以加载部署配置。宿主管理员需先为你的项目和实例登记授权。",
+  "Native services do not require a domain or HTTP port. Root runtime is confined to the application's private filesystem.":
+    "原生服务无需域名或 HTTP 端口。root 运行身份仍受应用私有文件系统的限制。",
+  "Updates replace the running version; rollback preserves persistent data. Native services use the registered runtime user, private filesystem and resource budget.":
+    "更新会替换运行版本，回滚保留持久数据。原生服务使用已登记的运行用户、私有文件系统和资源限额。",
+  "Runtime budget": "运行限额",
+  "Build budget": "构建限额",
+  "Application hosting is unavailable. The T3 host administrator must configure the Linux application broker.":
+    "应用托管不可用，请由 T3 宿主管理员配置 Linux 应用代理。",
+
   "Claude account": "Claude 账号",
   "Grok account": "Grok 账号",
   "Sign in with Claude": "使用 Claude 登录",

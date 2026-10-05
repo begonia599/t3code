@@ -52,7 +52,8 @@ export class ApplicationBroker extends Context.Service<
             scope.providerInstanceId,
             action,
           ],
-          { timeout: action === "exec" ? 135_000 : 35_000, maxBuffer: 2 * 1024 * 1024 },
+          // Native diagnostics include a bounded service-stop grace period.
+          { timeout: action === "exec" ? 180_000 : 35_000, maxBuffer: 2 * 1024 * 1024 },
           (error, stdout, stderr) => {
             if (error) {
               const failure = decodeFailure(stderr.trim());
@@ -64,7 +65,7 @@ export class ApplicationBroker extends Context.Service<
                       : {
                           code: "not_configured",
                           message:
-                            "Application hosting is unavailable. The T3 host administrator must configure the Linux Docker broker.",
+                            "Application hosting is unavailable. The T3 host administrator must configure the Linux application broker.",
                         },
                   ),
                 ),

@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -I
-"""Host application broker. Docker authority never crosses into a Harness."""
+"""Host application broker. Runtime authority never crosses into a Harness."""
 import argparse
 import copy
 import ctypes
@@ -25,6 +25,9 @@ import uuid
 _spec = importlib.util.spec_from_file_location('policy', Path(__file__).with_name('t3code_resource_policy.py'))
 policy = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(policy)
+_native_spec = importlib.util.spec_from_file_location('native_applications', Path(__file__).with_name('t3code_systemd.py'))
+native = importlib.util.module_from_spec(_native_spec)
+_native_spec.loader.exec_module(native)
 CONFIG = Path('/etc/t3code/resources.json')
 PROFILES = Path('/etc/t3code/sandboxes')
 STATE = Path('/var/lib/t3code-applications')
@@ -41,6 +44,19 @@ DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$')
 TERMINAL = {'succeeded', 'failed'}
 MAX_OUTPUT = 65536
 MAX_LOG = 4 * 1024 * 1024
+
+
+class BrokerApi:
+    def __getattr__(self, name):
+        return globals()[name]
+
+
+def native_backend(config):
+    return native.Backend(BrokerApi(), config)
+
+
+def is_native(release):
+    return read(release/'release.json').get('backend', 'docker-compose') == 'systemd'
 
 
 def require(condition, code, message):
@@ -432,11 +448,11 @@ def checked_hostname(hostname, application_id, config):
 
 
 def public_app(app):
-    return {key: app[key] for key in ('id', 'name', 'projectRoot', 'createdBy', 'createdAt', 'updatedAt', 'state') if key in app} | {key: app[key] for key in ('currentReleaseId', 'latestOperationId', 'hostname', 'url') if key in app}
+    return {key: app[key] for key in ('id', 'name', 'projectRoot', 'createdBy', 'createdAt', 'updatedAt', 'state') if key in app} | {key: app[key] for key in ('currentReleaseId', 'latestOperationId', 'hostname', 'url', 'backend', 'deploymentProfile') if key in app}
 
 
 def prepare(profile, roots, payload, config):
-    require(set(payload) <= {'projectRoot', 'manifestPath', 'name', 'applicationId', 'hostname', 'httpService', 'httpPort'}, 'invalid_manifest', 'Unexpected publication fields.')
+    require(set(payload) <= {'projectRoot', 'manifestPath', 'name', 'applicationId', 'hostname', 'httpService', 'httpPort', 'backend', 'deploymentProfile'}, 'invalid_manifest', 'Unexpected publication fields.')
     project = policy.authorized_project(payload.get('projectRoot', ''), roots, config)
     identifier = payload.get('applicationId') or uuid.uuid4().hex
     directory = app_dir(identifier)
@@ -449,6 +465,21 @@ def prepare(profile, roots, payload, config):
         require(isinstance(name, str) and SLUG.fullmatch(name), 'invalid_manifest', 'Choose an application name such as my-blog.')
         require(not any(item['projectRoot'] == str(project) and item['name'] == name for _, item in all_apps()), 'not_allowed', 'Application name is already registered in this project; supply applicationId to update it.')
         app = {'id': identifier, 'name': name, 'projectRoot': str(project), 'createdBy': profile['instanceId'], 'createdAt': now(), 'state': 'unpublished'}
+    backend = payload.get('backend', app.get('backend', 'docker-compose'))
+    require(backend in ('docker-compose', 'systemd'), 'invalid_manifest', 'Unknown application backend.')
+    identity = payload.get('deploymentProfile', app.get('deploymentProfile'))
+    if payload.get('applicationId'):
+        require(backend == app.get('backend', 'docker-compose') and identity == app.get('deploymentProfile'),
+                'not_allowed', 'Create a new application to change backend or deployment profile.')
+    if backend == 'systemd':
+        native_backend(config).authorized_profile(identity, project, app['name'], profile['instanceId'])
+        require(not payload.get('hostname') and 'httpService' not in payload and 'httpPort' not in payload,
+                'not_supported', 'Native services have no public route. Use Docker Compose for managed HTTP publishing.')
+        app['deploymentProfile'] = identity
+    else:
+        require(config.get('applications', {}).get('enabled') is True, 'not_configured', 'Docker hosting is not enabled.')
+        require(identity is None, 'invalid_manifest', 'Deployment profiles apply to systemd applications.')
+    app['backend'] = backend
     hostname = payload.get('hostname', app.get('hostname'))
     checked_hostname(hostname, identifier, config)
     release_id, operation_id = uuid.uuid4().hex, uuid.uuid4().hex
@@ -456,12 +487,17 @@ def prepare(profile, roots, payload, config):
     snapshot = release/'source'
     try:
         digest = safe_snapshot(project, snapshot, config)
-        manifest_path = payload.get('manifestPath', 'compose.yaml')
+        manifest_path = payload.get('manifestPath', 'application.yaml' if backend == 'systemd' else 'compose.yaml')
         path = local_path(snapshot, manifest_path)
-        require(path.stat().st_size < 1024*1024, 'invalid_manifest', 'Compose declaration is too large.')
+        require(path.stat().st_size < 1024*1024, 'invalid_manifest', 'Application declaration is too large.')
         import yaml
         declaration = yaml.safe_load(path.read_text())
-        compose, ports, bindings, names = validate_compose(declaration, snapshot, release, config, allocate_port(config))
+        if backend == 'systemd':
+            spec, bindings, names = native_backend(config).validate(declaration, snapshot, app, identity, profile['instanceId'])
+            ports, compose = [], {'services': {'service': {}}}
+            atomic(release/'native.json', spec)
+        else:
+            compose, ports, bindings, names = validate_compose(declaration, snapshot, release, config, allocate_port(config))
         endpoint = None
         if ports:
             matched = [port for port in ports if port['service'] == payload.get('httpService', ports[0]['service']) and port['containerPort'] == payload.get('httpPort', ports[0]['containerPort'])]
@@ -473,9 +509,13 @@ def prepare(profile, roots, payload, config):
         source_commit = git['stdout'].strip() if git['exitCode'] == 0 and re.fullmatch(r'[a-f0-9]{40,64}', git['stdout'].strip()) else None
         record = {'id': release_id, 'applicationId': identifier, 'createdAt': now(), 'createdBy': profile['instanceId'], 'snapshotDigest': digest,
                   'manifestPath': manifest_path, 'credentialNames': names, 'credentialVersions': {}, 'ports': ports, 'hostname': hostname,
-                  'endpoint': endpoint, 'composeProject': f't3app-{identifier}-{release_id}', 'status': 'prepared',
+                  'endpoint': endpoint, 'backend': backend, 'status': 'prepared',
                   'components': list(compose['services']), 'images': {}, 'sourceCommit': source_commit}
-        atomic(release/'compose.json', compose)
+        if backend == 'systemd':
+            record.update(deploymentProfile=identity, runtimeUser=spec['profile']['runtimeUser'])
+        else:
+            record['composeProject'] = f't3app-{identifier}-{release_id}'
+            atomic(release/'compose.json', compose)
         atomic(release/'bindings.json', bindings)
         atomic(release/'release.json', record)
         operation = {'id': operation_id, 'applicationId': identifier, 'releaseId': release_id, 'action': 'publish', 'stage': 'validating', 'createdAt': now(), 'updatedAt': now(), 'actor': profile['instanceId']}
@@ -559,6 +599,8 @@ def start_worker(directory, operation, config):
     operation_update(operation_path, 'queued')
     result = run(['/usr/bin/systemd-run', '--quiet', '--collect', '--unit', 't3-application-'+operation['id'],
                   '--property=Type=exec', '--property=UMask=0077', '--property=TimeoutStartSec=infinity',
+                  '--property=MemoryHigh=384M', '--property=MemoryMax=512M', '--property=MemorySwapMax=0',
+                  '--property=CPUQuota=100%', '--property=TasksMax=128',
                   BROKER, 'worker', directory.name, operation['id']], timeout=10)
     if result['exitCode']:
         operation_update(operation_path, 'failed', error={'code': 'start_failed', 'message': 'Could not start the independent T3 application job.'})
@@ -632,8 +674,63 @@ def inspect_runtime(release):
         return [], False
 
 
+def ensure_builder(config):
+    """Only our recorded builder is configured; never change the host's default builder."""
+    limits = native.budgets(config.get('applications', {}).get('build', {}), native.DEFAULT_BUILD, require)
+    path = STATE/'buildkit.json'
+    record = read(path)
+    if record:
+        require(isinstance(record.get('name'), str) and re.fullmatch(r't3-app-build-[a-f0-9]{32}', record['name']), 'not_configured', 'Invalid managed build worker record.')
+    if record and record.get('limits') != limits:
+        checked_run([DOCKER, 'buildx', 'stop', record['name']], 'build_failed', 'Could not stop the previous managed builder.', timeout=60)
+        record = None
+    if not record:
+        record = {'name': 't3-app-build-'+uuid.uuid4().hex, 'limits': limits}
+        atomic(path, record)
+    name = record['name']
+    require(re.fullmatch(r't3-app-build-[a-f0-9]{32}', name), 'not_configured', 'Invalid managed build worker record.')
+    inspected = run([DOCKER, 'buildx', 'inspect', name], timeout=15)
+    if inspected['exitCode'] != 0:
+        args = [DOCKER, 'buildx', 'create', '--name', name, '--node', name+'0', '--driver', 'docker-container']
+        options = {'memory': str(limits['memoryMiB'])+'m', 'memory-swap': str(limits['memoryMiB'])+'m',
+                   'cpu-period': '100000', 'cpu-quota': str(limits['cpuPercent']*1000),
+                   'default-load': 'true', 'restart-policy': 'no'}
+        for key, value in options.items(): args += ['--driver-opt', key+'='+value]
+        checked_run(args, 'build_failed', 'Could not create the resource-limited BuildKit worker.', timeout=30)
+    else:
+        require(re.search(r'^Driver:\s+docker-container\s*$', inspected['stdout'], re.MULTILINE) is not None, 'not_configured', 'The managed builder must use docker-container; no default-builder fallback is permitted.')
+    checked_run([DOCKER, 'buildx', 'inspect', '--bootstrap', name], 'build_failed', 'Could not start the managed BuildKit worker.', timeout=120)
+    container = 'buildx_buildkit_'+name+'0'
+    checked_run([DOCKER, 'update', '--memory', str(limits['memoryMiB'])+'m', '--memory-swap', str(limits['memoryMiB'])+'m',
+                 '--cpu-period', '100000', '--cpu-quota', str(limits['cpuPercent']*1000), '--pids-limit', str(limits['tasks']), container],
+                'build_failed', 'Could not apply the BuildKit resource budget.')
+    result = checked_run([DOCKER, 'inspect', container, '--format', '{{json .HostConfig}}'], 'build_failed', 'Could not verify the BuildKit resource budget.')
+    actual = json.loads(result['stdout'])
+    require(actual.get('Memory') == limits['memoryMiB']*1024*1024 and actual.get('MemorySwap') == limits['memoryMiB']*1024*1024 and
+            actual.get('CpuPeriod') == 100000 and actual.get('CpuQuota') == limits['cpuPercent']*1000 and actual.get('PidsLimit') == limits['tasks'],
+            'build_failed', 'The actual BuildKit resource budget does not match host policy.')
+    return name, limits
+
+
+def build_compose(release, config, log, secrets):
+    with Lock(STATE/'build.lock'):
+        compose = read(release/'compose.json')
+        if not any('build' in item for item in compose['services'].values()): return
+        builder = None
+        try:
+            builder, limits = ensure_builder(config)
+            checked_run(compose_command(release, 'build', '--pull', '--builder', builder), 'build_failed',
+                        'Docker image build failed. Read this operation\'s build logs.', timeout=limits['timeoutSeconds'], secrets=secrets, log=log)
+        finally:
+            builder = builder or read(STATE/'buildkit.json', {}).get('name')
+            if builder and re.fullmatch(r't3-app-build-[a-f0-9]{32}', builder):
+                checked_run([DOCKER, 'buildx', 'stop', builder], 'build_failed', 'Could not stop the managed build worker.', timeout=60)
+
+
 def worker(identifier, operation_id, config):
     directory = app_dir(identifier)
+    if read(directory/'application.json').get('backend') == 'systemd':
+        return native_backend(config).worker(directory, operation_id)
     operation_path = operation_dir(directory, operation_id)/'operation.json'
     operation = read(operation_path)
     release = release_dir(directory, operation['releaseId']) if operation.get('releaseId') else None
@@ -647,7 +744,7 @@ def worker(identifier, operation_id, config):
         if action in ('publish', 'rollback', 'start', 'restart'):
             if action == 'publish':
                 operation_update(operation_path, 'building')
-                checked_run(compose_command(release, 'build', '--pull'), 'build_failed', 'Docker image build failed. Read this operation\'s build logs.', timeout=1200, secrets=secrets, log=log)
+                build_compose(release, config, log, secrets)
                 checked_run(compose_command(release, 'pull', '--ignore-buildable'), 'build_failed', 'Application image pull failed.', timeout=600, secrets=secrets, log=log)
                 compose = read(release/'compose.json')
                 for service in compose['services'].values():
@@ -764,7 +861,7 @@ def wait_operation(path, timeout=25):
         os.close(fd)
 
 
-def get_logs(directory, app, payload):
+def get_logs(directory, app, payload, config=None):
     limit = payload.get('limit', 100)
     require(type(limit) is int and 1 <= limit <= 500, 'invalid_manifest', 'Log limit must be between 1 and 500.')
     kind = payload.get('kind', 'runtime')
@@ -812,7 +909,7 @@ def get_logs(directory, app, payload):
             if payload.get(field):
                 require(isinstance(payload[field], str) and len(payload[field]) <= 64, 'invalid_manifest', 'Use an RFC3339 log time.')
                 args.extend(['--'+field, payload[field]])
-        result = run(compose_command(release, *args), timeout=15, limit=256*1024, secrets=secrets)
+        result = native_backend(config).logs(release, payload, secrets) if is_native(release) else run(compose_command(release, *args), timeout=15, limit=256*1024, secrets=secrets)
         require(result['exitCode'] == 0, 'start_failed', 'Cannot read registered application logs.')
         entries = [{'time': now(), 'source': 'runtime', 'text': line} for line in (result['stdout']+result['stderr']).splitlines() if payload.get('filter', '') in line]
         identity, offset = uuid.uuid4().hex, 0
@@ -840,28 +937,35 @@ def request(instance_id, action, envelope, config):
     roots = scope_roots(profile, envelope.get('roots'))
     payload = envelope.get('input', {})
     require(isinstance(payload, dict), 'invalid_manifest', 'Expected an application request object.')
+    deployment_profiles = native_backend(config).visible_profiles(instance_id, roots)
+    backends = (['docker-compose'] if config.get('applications', {}).get('enabled') else []) + (['systemd'] if deployment_profiles else [])
     if action == 'info':
         return {'environment': {'instanceId': instance_id, 'home': profile['home'], 'workspaces': [root for root in roots if root not in (profile['providerHome'], profile.get('softwareDirectory'))],
-                                'executionUid': profile['uid'], 'applicationBackend': 'docker-compose' if config.get('applications', {}).get('enabled') else 'not-configured',
-                                'applicationRuntimeUid': config['runtimeUid'], 'applicationLifecycle': 'independent-docker-unless-stopped',
+                                'executionUid': profile['uid'], 'applicationBackend': ','.join(backends) or 'not-configured', 'applicationBackends': backends, 'deploymentProfiles': deployment_profiles,
+                                **({'applicationRuntimeUid': config['runtimeUid']} if 'docker-compose' in backends else {}), 'applicationLifecycle': 'independent-managed-services',
                                 'harnessLifecycle': 'ends-with-provider-session-or-T3-shutdown',
                                 'frameworkAccess': 'read-only-or-hidden', 'networkNamespace': Path(profile['network'].get('path', '')).name,
-                                'publicAccess': 'explicit-dedicated-hostname-via-Caddy', 'privateApplicationAccess': 'application_exec-and-logs'}}
-    require(config.get('applications', {}).get('enabled') is True, 'not_configured', 'Application publishing is not configured. The T3 host administrator must enable Docker hosting.')
+                                'publicAccess': 'docker-compose:explicit-dedicated-hostname-via-Caddy;systemd:administrator-listen-ports-only', 'privateApplicationAccess': 'application_exec-and-logs'}}
+    require(backends or action != 'prepare' and (STATE/'apps').exists(), 'not_configured', 'Application publishing is not configured. Ask the host administrator to enable Docker hosting or a systemd profile.')
     if action == 'list':
         visible = []
         for _, app in all_apps():
             try:
                 policy.authorized_project(app['projectRoot'], roots, config)
+                if app.get('backend') == 'systemd':
+                    native_backend(config).authorized_profile(app.get('deploymentProfile'), app['projectRoot'], app['name'], instance_id)
                 if not payload.get('projectRoot') or str(Path(payload['projectRoot']).resolve()) == app['projectRoot']:
                     visible.append(public_app(app))
             except (OSError, policy.PolicyError):
                 pass
-        return {'applications': visible}
+        return {'applications': visible, 'deploymentProfiles': deployment_profiles, 'backends': backends}
     if action == 'prepare':
         with Lock(STATE/'state.lock'), Lock(PUBLICATION_LOCK):
             return prepare(profile, roots, payload, config)
     directory, app = authorized_app(payload.get('applicationId'), roots, config)
+    systemd_app = app.get('backend') == 'systemd'
+    if systemd_app:
+        native_backend(config).authorized_profile(app.get('deploymentProfile'), app['projectRoot'], app['name'], instance_id)
     if action == 'status':
         operation_id = payload.get('operationId', app.get('latestOperationId'))
         operation = None
@@ -871,10 +975,16 @@ def request(instance_id, action, envelope, config):
                 reconcile_operation(directory, path)
             operation = wait_operation(path) if payload.get('wait') else read(path)
             app = read(directory/'application.json')
-        containers, available = inspect_runtime(release_dir(directory, app['currentReleaseId'])) if app.get('currentReleaseId') else ([], True)
-        return {'application': public_app(app), 'containers': containers, 'runtimeAvailable': available, **({'operation': operation} if operation else {})}
+        runtime = native_backend(config).inspect if systemd_app else inspect_runtime
+        entries, available = runtime(release_dir(directory, app['currentReleaseId'])) if app.get('currentReleaseId') else ([], True)
+        if systemd_app and app.get('pendingReleaseId') and app['pendingReleaseId'] != app.get('currentReleaseId'):
+            pending, pending_available = runtime(release_dir(directory, app['pendingReleaseId']))
+            entries += pending; available = available and pending_available
+        return {'application': public_app(app), 'units' if systemd_app else 'containers': entries, 'runtimeAvailable': available, **({'operation': operation} if operation else {})}
     if action == 'inspect':
         release = release_dir(directory, payload.get('releaseId', app.get('currentReleaseId')))
+        if systemd_app:
+            return {'application': public_app(app), 'release': read(release/'release.json'), 'configuration': native_backend(config).inspect_configuration(release)}
         compose = read(release/'compose.json')
         # Do not return env_file paths or values. Only vault names/versions are public.
         visible = {name: {key: value for key, value in service.items() if key in ('command', 'entrypoint', 'user', 'working_dir', 'ports', 'restart', 'cpus', 'mem_limit', 'pids_limit', 'healthcheck', 'cap_drop', 'security_opt')} for name, service in compose['services'].items()}
@@ -887,9 +997,9 @@ def request(instance_id, action, envelope, config):
         records = sorted([read(path) for path in (directory/'releases').glob('*/release.json')], key=lambda value: value['createdAt'], reverse=True)
         return {'releases': records[offset:offset+limit], 'nextOffset': offset+limit if len(records) > offset+limit else None}
     if action == 'logs':
-        return {'logs': get_logs(directory, app, payload)}
+        return {'logs': get_logs(directory, app, payload, config)}
     if action == 'exec':
-        require(app['state'] == 'running' and app.get('currentReleaseId'), 'start_failed', 'Start the registered application before container diagnostics.')
+        require(app['state'] == 'running' and app.get('currentReleaseId'), 'start_failed', 'Start the registered application before diagnostics.')
         release = release_dir(directory, app['currentReleaseId'])
         component = payload.get('component')
         require(component in read(release/'release.json')['components'], 'not_allowed', 'Select a registered application component.')
@@ -899,6 +1009,13 @@ def request(instance_id, action, envelope, config):
         require(type(timeout) is int and 1 <= timeout <= 120, 'invalid_manifest', 'Diagnostic timeout must be between 1 and 120 seconds.')
         stdin = payload.get('stdin')
         require(stdin is None or isinstance(stdin, str) and len(stdin.encode()) <= 65536, 'invalid_manifest', 'Diagnostic stdin exceeds the allowed size.')
+        if systemd_app:
+            backend = native_backend(config)
+            spec = backend.validate_release(release, instance_id)
+            cwd = payload.get('cwd', '/app')
+            require(isinstance(cwd, str) and any(policy.inside(Path(cwd), Path(root)) for root in ('/app', '/data', '/tmp')) and '..' not in Path(cwd).parts and not any(c in cwd for c in '\0\n\r'), 'invalid_manifest', 'Diagnostic cwd must be inside /app, /data or /tmp.')
+            result = backend.transient(release, spec, argv, kind='exec', timeout=timeout, stdin=stdin, cwd=cwd)
+            return {'execution': result, 'application': public_app(app)}
         args = ['exec', '-T']
         if payload.get('cwd'):
             require(isinstance(payload['cwd'], str) and payload['cwd'].startswith('/') and '\0' not in payload['cwd'], 'invalid_manifest', 'Diagnostic cwd must be an absolute container path.')
@@ -919,6 +1036,7 @@ def request(instance_id, action, envelope, config):
             require(app.get('latestOperationId') == operation['id'], 'operation_busy', 'This preparation is no longer the latest application operation.')
             require(operation['stage'] == 'validating' and operation['action'] == 'publish', 'not_allowed', 'This publication is not awaiting credential binding.')
             release = release_dir(directory, operation['releaseId'])
+            if systemd_app: native_backend(config).validate_release(release, instance_id)
             install_values(release, envelope.get('values', {}), envelope.get('versions', {}))
         elif action == 'abandon':
             operation_path = operation_dir(directory, payload.get('operationId'))/'operation.json'
@@ -933,10 +1051,13 @@ def request(instance_id, action, envelope, config):
             operation_action = payload.get('action') if action == 'control' else action
             require(operation_action in ('start', 'stop', 'restart', 'rollback', 'unpublish'), 'not_allowed', 'Unknown application control.')
             release_id = payload.get('releaseId') if action == 'rollback' else app.get('currentReleaseId')
+            pending_only = systemd_app and not release_id and app.get('pendingReleaseId') and operation_action in ('stop', 'unpublish')
+            if pending_only: release_id = app['pendingReleaseId']
             require(release_id is not None, 'not_found', 'This application has no published release yet.')
             metadata = read(release_dir(directory, release_id)/'release.json')
-            require(metadata['status'] == 'ready', 'not_allowed', 'Only successfully published immutable releases can be started or restored.')
+            require(pending_only or metadata['status'] == 'ready', 'not_allowed', 'Only successfully published immutable releases can be started or restored.')
             if operation_action in ('start', 'restart', 'rollback'):
+                if systemd_app: native_backend(config).validate_release(release_dir(directory, release_id), instance_id)
                 versions = envelope.get('versions', {})
                 require(isinstance(versions, dict) and set(versions) == set(metadata['credentialNames']) and
                         all(versions[name] == metadata['credentialVersions'].get(name) for name in metadata['credentialNames']) and

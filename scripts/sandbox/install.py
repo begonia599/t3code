@@ -47,6 +47,7 @@ def main():
     install_file(Path("/usr/local/libexec/t3code_resource_policy.py"), Path(__file__).with_name("t3code_resource_policy.py").read_bytes(), 0o644)
     install_file(Path("/usr/local/libexec/t3code-gh.py"), Path(__file__).with_name("t3code-gh.py").read_bytes(), 0o755)
     install_file(Path("/usr/local/libexec/t3code-applications"), Path(__file__).with_name("t3code-applications.py").read_bytes(), 0o755)
+    install_file(Path("/usr/local/libexec/t3code_systemd.py"), Path(__file__).with_name("t3code_systemd.py").read_bytes(), 0o644)
     install_file(Path("/usr/local/libexec/t3code-shell-bridge.py"), Path(__file__).with_name("t3code-shell-bridge.py").read_bytes(), 0o755)
     install_file(Path("/usr/local/libexec/t3code-harness-init.py"), Path(__file__).with_name("t3code-harness-init.py").read_bytes(), 0o755)
     install_file(Path("/usr/local/bin/t3-resource"), Path(__file__).with_name("t3-resource.py").read_bytes(), 0o755)

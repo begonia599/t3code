@@ -202,7 +202,9 @@ T3 上的 GitHub CLI 已登录时，新启动的托管实例自动继承当前�
 
 ## 业务应用发布与运维
 
-应用发布使用宿主 Docker Compose，运行与聊天和 T3 进程独立。管理员先安装 Docker Engine、Compose v2、Buildx 和 python3-yaml，安装上述启动器，再登记保护范围和发布域名。例如：
+应用可以使用 Docker Compose，或使用管理员按项目登记的 systemd 原生服务配置。两种方式都独立于聊天和 T3 进程运行。以下先介绍 Docker 发布；无需 HTTP 端口的 Bot 及指定运行用户的服务见后文。
+
+Docker 发布需由管理员先安装 Docker Engine、Compose v2、Buildx 和 python3-yaml，安装上述启动器，再登记保护范围和发布域名。例如：
 
 ```bash
 sudo python3 scripts/sandbox/install_resource_management.py --owner dev \
@@ -240,10 +242,72 @@ x-t3:
       API_TOKEN: BLOG_API_TOKEN
 ```
 
-构建快照包含未提交代码，排除 `.git`、依赖缓存、`.env`、私钥等秘密文件；运行凭证应使用上述绑定。首版容器环境绑定支持单行值；多行私钥可用于工具绑定。应用启动、重启和回滚会重新验证凭证权限与发布时的值/版本；删除或轮换后需重新发布，已有运行进程的环境不会被追溯清空。应用镜像需为非 root 身份准备可写目录；容器内诊断还需安装标准 `timeout` 工具。
+构建快照包含未提交代码，排除 `.git`、依赖缓存、`.env`、私钥等秘密文件；运行凭证应使用上述绑定。首版容器环境绑定支持单行值；多行私钥可用于工具绑定。通过应用工具启动、重启和回滚会重新验证凭证权限与发布时的值/版本；删除或轮换后需重新发布，已有运行进程的环境不会被追溯清空。Docker/systemd 的自动恢复使用已发布绑定，轮换后应重新发布。应用镜像需为非 root 身份准备可写目录；容器内诊断还需安装标准 `timeout` 工具。
 
 让 Agent 调用 `environment_info` 查看实际环境，调用 `application_publish` 创建发布任务，再用 `application_status` 等待结果。客户端资源设置也可发布和管理应用。新应用不指定域名时无公网入口；显式指定独立域名才通过 Caddy 发布，DNS 必须预先指向服务器。公开任务只有在 HTTPS 实际到达该发布版本时才成功，DNS、证书或代理失败会尝试恢复旧版本与路由。更新省略域名会沿用原域名，传 `hostname: null` 可移除公开入口。私有后端仅宿主可达，Agent 通过应用日志和容器诊断工具维护。
 
 首版更新采用替换策略：先构建，再停止旧版并启动新版，通过健康检查后切换入口；失败时尝试恢复旧版。发布成功的版本记录源码摘要、Git 提交、实际镜像和凭证版本。停止、启动、重启、查看日志及版本历史、回滚和撤回均可通过应用工具或资源设置操作；容器内诊断通过 `application_exec`。已授权访问同一业务项目的其他 Harness 也可维护该应用。
 
 Docker 使用 `unless-stopped`，业务进程退出时按策略重启，主动停止后不会因机器重启恢复。健康不良本身不触发自动重启。回滚只恢复代码、配置和该版凭证，保留持久数据；数据库迁移需按业务自身的恢复流程处理。撤回会移除容器和公网路由，保留数据与历史，可以重新启动或发布。
+
+### 原生 Bot 与指定运行用户
+
+选择 **systemd** 后端可以托管无需域名或 HTTP 端口的 Bot。宿主管理员先为项目、应用名称和 Harness 实例登记部署授权，指定已有的运行用户及构建、运行限额；Harness 随后可发布和维护该应用。构建始终使用普通 T3 宿主用户。运行用户可以是专用业务用户，确需 UID 0 时管理员必须显式设置 `allowRoot: true`。
+
+这里的 root 运行在应用私有的文件系统和 PID 空间中，默认无 Linux capabilities；不能访问宿主 `/root`、其他进程、Docker socket 或 T3 管理目录。程序在 `/app` 读取发布版本，向 `/data` 写入持久数据，临时文件放在 `/tmp`。系统解释器和动态库以只读方式提供。依赖必须可在构建阶段安装到项目目录，例如 Python venv 或 Node 的 `node_modules`，不能在构建时使用 apt 或向宿主安装软件。需要管理整台宿主的程序仍由维护端部署。
+
+维护端需安装 systemd 257+、python3-yaml，并支持 cgroup v2 的 memory/cpu/pids 控制器、PID 命名空间及 socket bind BPF 策略。更新上述启动器以安装新的应用代理模块。资源安装器会运行一个短暂且受限的预检服务，实际确认 PID 隔离和端口策略可执行；不满足条件时拒绝登记配置。
+
+例如将下面文件保存为仅 root 可写的 `/etc/t3code/native-profiles.json`，其父目录也须仅 root 可写。业务项目目录必须已经存在；实例 ID 使用资源设置中的实际 ID：
+
+```json
+{
+  "my-bot": {
+    "projectRoot": "/home/dev/workspaces/my-bot",
+    "applicationName": "my-bot",
+    "instances": ["codex-main"],
+    "runtimeUser": "root",
+    "allowRoot": true,
+    "build": { "memoryMiB": 1024, "cpuPercent": 100, "tasks": 128, "timeoutSeconds": 900 },
+    "runtime": { "memoryMiB": 256, "cpuPercent": 50, "tasks": 64, "timeoutSeconds": 60 }
+  }
+}
+```
+
+由维护端登记，并继续使用已有保护范围和实例映射：
+
+```bash
+sudo python3 scripts/sandbox/install_resource_management.py --owner dev \
+  --systemd-profiles /etc/t3code/native-profiles.json
+```
+
+首次启用资源管理还需按前文登记受保护的框架路径、仓库和实例映射。`--systemd-profiles` 替换整组原生部署配置，未传此参数则保留原配置。修改配置后旧版授权不再可用于启动或回滚，也不会在机器重启后重新启用；已运行的服务不会立即被停止，撤销时需先停止应用。新增授权后应重新发布。修改运行用户不会自动迁移已有 `/data` 内容的所有权，需维护端按业务需要处理。
+
+应用网络是单独的管理员决策，不会改写 Harness 出口。默认使用宿主网络；需要固定出口时，在该配置中同时指定现有 `networkNamespacePath`（如 `/run/netns/业务出口名称`）及该出口的 `resolvConf` 路径。命名空间不可用时发布失败，不回落到宿主网络。默认不允许监听端口；确需监听时由管理员通过 `listenPorts: [8080]` 允许非保留的 TCP 端口，程序自行决定监听地址。本版原生服务不自动创建 Caddy 公网路由；需要托管 HTTP 发布时继续使用 Docker 后端。
+
+项目提供 `application.yaml`，例如 Python Bot：
+
+```yaml
+build:
+  - ["/usr/bin/python3", "-m", "venv", "/app/.venv"]
+  - ["/app/.venv/bin/pip", "install", "-r", "/app/requirements.txt"]
+command: ["/app/.venv/bin/python", "/app/bot.py"]
+environment:
+  PYTHONUNBUFFERED: "1"
+credentials:
+  BOT_TOKEN: BOT_API_TOKEN
+healthcheck:
+  type: process
+```
+
+`BOT_API_TOKEN` 是凭证库名称。`runtime.timeoutSeconds` 限制发布检查的等待时间，不限制长驻服务寿命。运行凭证不传给构建命令。声明 `process` 检查只确认主进程正在运行；若需功能验证，使用 `healthcheck: { type: command, command: ["/app/.venv/bin/python", "/app/check_ready.py"] }`。检查命令在同样的应用文件系统、网络和运行身份下执行，拥有独立 PID 空间，可通过 `/data` 或应用接口检查状态。
+
+刷新客户端的应用列表，选择 systemd 和已登记配置后发布；Harness 也可调用 `application_publish`，传 `backend: "systemd"`、`deploymentProfile: "my-bot"`、项目目录和应用名称。更新仍使用原 `applicationId`，不能借更新更换后端或授权配置。构建结束后冻结产物并记录摘要，编辑工作区不会改变运行版本。
+
+更新先停止旧版，再启动和检查新版，以避免两个 Bot 同时消费消息；存在短暂中断。新版检查失败时先确认其已停止，再尝试恢复旧版，恢复结果记录在任务中。服务通过检查后才启用开机启动；进程异常退出由 systemd 重启，连续失败会触发频率限制。主动停止会禁用开机启动；撤回保留数据和版本，后续可重新启动。回滚保留 `/data`，不回滚业务迁移。日志、状态、历史版本和诊断沿用应用工具；`application_exec` 使用同授权的临时服务，不是宿主 shell，也不能直接查看主服务的 PID 空间。
+
+### 构建与运行资源限额
+
+原生服务的构建与运行分别限制内存、CPU 和进程数，健康检查及并发诊断与主服务共享应用运行总限额，禁用 swap，并限制构建总时长。原生与 Docker 构建共用宿主级排队锁，一次仅构建一个应用；该限额不包含其他宿主程序，管理员仍需为 T3 和系统留出余量。
+
+Docker 构建使用专用的 `docker-container` BuildKit 实例，启动后核验其实际内存、CPU 和 PID 限额，结束或失败后停止该构建实例，不修改宿主默认 builder。默认构建限额为 2048 MiB、100% CPU、256 个进程、1200 秒。管理员可通过 `--build-memory-mib 1024 --build-cpu-percent 100` 调整内存和 CPU，或在可信资源策略的 `applications.build` 中设置全部限额；运行容器仍使用已有 Compose 限额。需安装支持 `docker compose build --builder` 和 Buildx `default-load` 的版本。版本或限额不满足要求时构建失败，不退回无限额构建。

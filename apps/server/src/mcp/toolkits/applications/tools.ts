@@ -29,7 +29,7 @@ export const ApplicationsToolkit = Toolkit.make(
     }),
     failure: ApplicationError,
     description:
-      "Query this instance's actual HOME, accessible workspaces, native gh binding, network namespace and application hosting capabilities. Ordinary shell commands run as the Harness user; application publishing runs through T3 Docker. Harness background processes end with the session or T3 shutdown; published applications survive both. The controlling T3 source/config/runtime are protected. This is metadata, not a host administration interface.",
+      "Query this instance's actual HOME, accessible workspaces, native gh binding, network namespace and application hosting capabilities. Ordinary shell commands run as the Harness user; application publishing runs through the registered Docker Compose or systemd backend. Deployment profiles state the allowed native runtime user and resource budgets. Harness background processes end with the session or T3 shutdown; published applications survive both. The controlling T3 source/config/runtime are protected. This is metadata, not a host administration interface.",
   }).annotate(Tool.Readonly, true),
   Tool.make("application_list", {
     dependencies,
@@ -37,7 +37,7 @@ export const ApplicationsToolkit = Toolkit.make(
     success: ApplicationResponse,
     failure: ApplicationError,
     description:
-      "List T3-hosted business applications in your authorized project directories. Use returned application IDs for maintenance; an application is shared by authorized Harness instances for the same project, not restricted to its creator. Temporary service_publish routes are a separate capability.",
+      "List T3-hosted business applications in your authorized project directories. Use returned application IDs for maintenance; an application is shared by authorized Harness instances for the same project, not restricted to its creator. Native applications additionally require an administrator-granted deployment profile for this instance. Returns available backends and deploymentProfiles. Temporary service_publish routes are a separate capability.",
   }).annotate(Tool.Readonly, true),
   Tool.make("application_publish", {
     dependencies,
@@ -45,7 +45,7 @@ export const ApplicationsToolkit = Toolkit.make(
     success: ApplicationResponse,
     failure: ApplicationError,
     description:
-      "Publish an authorized business project through T3's host Docker Compose backend. Provide absolute projectRoot, project-relative manifestPath (default compose.yaml), and name for a new app or applicationId for an update. Compose must declare healthchecks, non-root runtime identity, container-only ports (e.g. '8080'), and T3-managed named volumes or relative read-only snapshot mounts. T3 snapshots source, builds immutable images, then replaces the previous version and checks health. Jobs/containers survive this chat and T3 restarts. A new app without hostname has no public route. On updates, omission retains the current hostname; hostname:null removes it. Request a dedicated hostname only when the user asks for public access. Public success also requires the HTTPS URL to reach this release through Caddy. x-t3.credentials maps service env names to vault names, never values. Returns a queued operation receipt, not success; use application_status with operationId and wait:true. Failed replacement attempts restore the prior running version where possible. Persistent data/migrations are never rolled back automatically. Framework projects and host administration are unavailable.",
+      "Publish an authorized business project. backend defaults to docker-compose; systemd requires a deploymentProfile returned by environment_info/application_list, bound to the exact project, application name and instance. Provide absolute projectRoot, project-relative manifestPath, and name for a new app or applicationId for an update. Native default application.yaml accepts command argv, optional build argv arrays/environment/credentials and a required healthcheck {type:'process'} or {type:'command',command:[...]}. Native code is /app (read-only), persistent data is /data; build runs as the normal host owner, runtime as the profile user, including root only if explicitly registered. Its filesystem/PID namespace and resource limits remain enforced. Native credentials map env names to vault names; never values. Native services need no domain/HTTP port and do not accept hostname/httpService/httpPort. No automatic public routing for native services. Docker defaults to compose.yaml. Compose must declare healthchecks, non-root runtime identity, container-only ports (e.g. '8080'), and T3-managed named volumes or relative read-only snapshot mounts. T3 snapshots source, builds immutable images, then replaces the previous version and checks health. Jobs/services survive this chat and T3 restarts. A new app without hostname has no public route. On updates, omission retains the current hostname; hostname:null removes it. Request a dedicated hostname only when the user asks for public access. Public success also requires the HTTPS URL to reach this release through Caddy. x-t3.credentials maps service env names to vault names, never values. Returns a queued operation receipt, not success; use application_status with operationId and wait:true. Failed replacement attempts restore the prior running version where possible. Persistent data/migrations are never rolled back automatically. Framework projects and host administration are unavailable.",
   })
     .annotate(Tool.Readonly, false)
     .annotate(Tool.OpenWorld, true),
@@ -55,7 +55,7 @@ export const ApplicationsToolkit = Toolkit.make(
     success: ApplicationResponse,
     failure: ApplicationError,
     description:
-      "Inspect registered application's actual containers, health, exit codes and restart counts, plus an operation's durable stage/error/recovery receipt. wait:true waits on that operation's change receipts for up to 25 seconds; only stage succeeded means completion, failed includes failedStage. A timeout can return a still-running stage; query again. runtimeAvailable:false means Docker state could not be inspected.",
+      "Inspect registered application's actual containers or systemd units, health, exit codes and restart counts, plus an operation's durable stage/error/recovery receipt. wait:true waits on that operation's change receipts for up to 25 seconds; only stage succeeded means completion, failed includes failedStage. A timeout can return a still-running stage; query again. runtimeAvailable:false means the selected runtime could not be inspected.",
   }).annotate(Tool.Readonly, true),
   Tool.make("application_inspect", {
     dependencies,
@@ -63,7 +63,7 @@ export const ApplicationsToolkit = Toolkit.make(
     success: ApplicationResponse,
     failure: ApplicationError,
     description:
-      "Inspect the current or selected immutable release's source snapshot digest, Git commit, actual image IDs, runtime identity/command, loopback ports, health checks, managed mounts and credential names/versions. Does not disclose secret values or host Docker/config paths. Use this to map production errors back to source.",
+      "Inspect the current or selected immutable release's source snapshot digest, Git commit, actual image IDs or artifact digest, runtime identity/command and budgets, loopback ports, health checks, managed mounts and credential names/versions. Does not disclose secret values or host Docker/config paths. Use this to map production errors back to source.",
   }).annotate(Tool.Readonly, true),
   Tool.make("application_logs", {
     dependencies,
@@ -79,7 +79,7 @@ export const ApplicationsToolkit = Toolkit.make(
     success: ApplicationResponse,
     failure: ApplicationError,
     description:
-      "Start, stop or restart a registered app's current immutable version. Does not rebuild the developer directory. Stop removes its public route; start restores that version's route after health succeeds. Docker unless-stopped preserves an explicit stop across reboot. Returns an operation receipt; wait through application_status.",
+      "Start, stop or restart a registered app's current immutable version. Does not rebuild the developer directory. Stop removes its public route; start restores that version's route after health succeeds. An explicit stop persists across reboot: Docker unless-stopped or a disabled native unit. Native services restart after failure, with bounded retries; the process healthcheck is a liveness check, not a functional probe. Returns an operation receipt; wait through application_status.",
   }).annotate(Tool.Readonly, false),
   Tool.make("application_exec", {
     dependencies,
@@ -87,7 +87,7 @@ export const ApplicationsToolkit = Toolkit.make(
     success: ApplicationResponse,
     failure: ApplicationError,
     description:
-      "Run bounded diagnostics INSIDE one registered running business container, as its configured non-root user. Specify component from application_inspect, command argv, optional absolute container cwd/stdin, timeoutSeconds (1-120). Requires the standard timeout utility in the image. Returns bounded/redacted stdout/stderr, exitCode and cancellation state. Cannot execute on the host, choose another user or access Docker/systemd/T3 internals.",
+      "Run bounded diagnostics for one registered running business application with its configured runtime authority. Docker uses the container's non-root user; native uses a separate temporary service with the same private filesystem, data, profile user, network and limits (not the main service's PID namespace). Specify component from application_inspect, command argv, optional absolute application cwd/stdin, timeoutSeconds (1-120). Docker requires the standard timeout utility in the image; native cwd must be under /app, /data or /tmp. Returns bounded/redacted stdout/stderr, exitCode and cancellation state. Cannot execute on the host, choose another user or access Docker/systemd/T3 internals.",
   }).annotate(Tool.Readonly, false),
   Tool.make("application_releases", {
     dependencies,

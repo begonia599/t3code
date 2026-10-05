@@ -25,11 +25,33 @@ export class ApplicationError extends Schema.TaggedError<ApplicationError>()(
   },
   { httpApiStatus: 400 },
 ) {}
+export const ApplicationBackend = Schema.Literals(["docker-compose", "systemd"]);
+export type ApplicationBackend = typeof ApplicationBackend.Type;
+const ApplicationBudget = Schema.Struct({
+  memoryMiB: Schema.Number,
+  cpuPercent: Schema.Number,
+  tasks: Schema.Number,
+  timeoutSeconds: Schema.Number,
+});
+export const ApplicationDeploymentProfile = Schema.Struct({
+  id: ServiceName,
+  projectRoot: Schema.String,
+  applicationName: ServiceName,
+  runtimeUser: Schema.String,
+  networkNamespace: Schema.String,
+  rootFilesystem: Schema.Literal("private"),
+  listenPorts: Schema.Array(Schema.Number),
+  build: ApplicationBudget,
+  runtime: ApplicationBudget,
+});
+export type ApplicationDeploymentProfile = typeof ApplicationDeploymentProfile.Type;
 export const ApplicationPublish = Schema.Struct({
   projectRoot: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
   manifestPath: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4096))),
   name: Schema.optionalKey(ServiceName),
   applicationId: Schema.optionalKey(ServiceId),
+  backend: Schema.optionalKey(ApplicationBackend),
+  deploymentProfile: Schema.optionalKey(ServiceName),
   hostname: Schema.optionalKey(
     Schema.NullOr(
       Schema.String.check(Schema.isPattern(/^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/)),
@@ -105,6 +127,8 @@ export const Application = Schema.Struct({
   latestOperationId: Schema.optionalKey(ServiceId),
   hostname: Schema.optionalKey(Schema.String),
   url: Schema.optionalKey(Schema.String),
+  backend: Schema.optionalKey(ApplicationBackend),
+  deploymentProfile: Schema.optionalKey(ServiceName),
 });
 export type Application = typeof Application.Type;
 export const ApplicationPort = Schema.Struct({
@@ -124,7 +148,11 @@ export const ApplicationRelease = Schema.Struct({
   ports: Schema.Array(ApplicationPort),
   hostname: Schema.NullOr(Schema.String),
   endpoint: Schema.NullOr(ApplicationPort),
-  composeProject: Schema.String,
+  composeProject: Schema.optionalKey(Schema.String),
+  backend: Schema.optionalKey(ApplicationBackend),
+  deploymentProfile: Schema.optionalKey(ServiceName),
+  runtimeUser: Schema.optionalKey(Schema.String),
+  artifactDigest: Schema.optionalKey(Schema.String),
   status: Schema.Literals(["prepared", "ready", "failed"]),
   components: Schema.Array(Schema.String),
   images: Schema.Record(Schema.String, Schema.String),
@@ -172,6 +200,26 @@ export const ApplicationResponse = Schema.Struct({
   releases: Schema.optionalKey(Schema.Array(ApplicationRelease)),
   operation: Schema.optionalKey(ApplicationOperation),
   containers: Schema.optionalKey(Schema.Array(ApplicationContainer)),
+  backends: Schema.optionalKey(Schema.Array(ApplicationBackend)),
+  deploymentProfiles: Schema.optionalKey(Schema.Array(ApplicationDeploymentProfile)),
+  units: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        component: Schema.String,
+        unit: Schema.String,
+        state: Schema.String,
+        subState: Schema.String,
+        exitCode: Schema.Number,
+        restartCount: Schema.Number,
+        startedAt: Schema.String,
+        user: Schema.String,
+        command: Schema.Array(Schema.String),
+        result: Schema.String,
+        pid: Schema.Number,
+        memoryBytes: Schema.Number,
+      }),
+    ),
+  ),
   runtimeAvailable: Schema.optionalKey(Schema.Boolean),
   nextOffset: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   configuration: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
@@ -221,7 +269,9 @@ export const HarnessEnvironmentInfo = Schema.Struct({
   workspaces: Schema.Array(Schema.String),
   executionUid: Schema.Number,
   applicationBackend: Schema.String,
-  applicationRuntimeUid: Schema.Number,
+  applicationBackends: Schema.optionalKey(Schema.Array(ApplicationBackend)),
+  deploymentProfiles: Schema.optionalKey(Schema.Array(ApplicationDeploymentProfile)),
+  applicationRuntimeUid: Schema.optionalKey(Schema.Number),
   applicationLifecycle: Schema.String,
   harnessLifecycle: Schema.String,
   frameworkAccess: Schema.String,

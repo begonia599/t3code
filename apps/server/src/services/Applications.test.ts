@@ -57,7 +57,22 @@ const prepared = {
     updatedAt: timestamp,
   },
 };
-function fixture() {
+function fixture(backend: "docker-compose" | "systemd" = "docker-compose") {
+  const response =
+    backend === "systemd"
+      ? {
+          ...prepared,
+          application: { ...prepared.application, backend, deploymentProfile: "bot" },
+          release: {
+            ...prepared.release,
+            backend,
+            manifestPath: "application.yaml",
+            runtimeUser: "root",
+            deploymentProfile: "bot",
+          },
+        }
+      : prepared;
+  if (backend === "systemd") Reflect.deleteProperty(response.release, "composeProject");
   let versions: Readonly<Record<string, number>> = {};
   const calls: Array<{ scope: unknown; action: string; input: unknown; credentials: unknown }> = [];
   const broker = Layer.succeed(ApplicationBroker, {
@@ -67,7 +82,7 @@ function fixture() {
         return action === "inspect"
           ? { release: { ...prepared.release, status: "ready", credentialVersions: versions } }
           : action === "prepare"
-            ? prepared
+            ? response
             : { operation: { ...prepared.operation, stage: "queued" } };
       }),
   });
@@ -193,3 +208,31 @@ it.effect(
     }).pipe(Effect.provide(test.layer));
   },
 );
+
+it.effect("preserves native deployment identity and resolves the same scoped credentials", () => {
+  const test = fixture("systemd");
+  return Effect.gen(function* () {
+    yield* (yield* CredentialVault).write({
+      name: "APP_KEY",
+      description: "Bot token",
+      valueType: "token",
+      value: Redacted.make("fixture-native-token"),
+      usage: "bindings-only",
+      allowedInstances: [scope.providerInstanceId],
+    });
+    const input = {
+      projectRoot: "/projects/blog",
+      name: "blog",
+      backend: "systemd" as const,
+      deploymentProfile: "bot",
+    };
+    const result = yield* (yield* Applications).request(scope, { action: "publish", input });
+    expect(test.calls[0]?.input).toEqual(input);
+    expect(test.calls.map((call) => call.action)).toEqual(["prepare", "commit"]);
+    expect(test.calls[1]?.credentials).toMatchObject({
+      values: { APP_KEY: "fixture-native-token" },
+    });
+    expect(result.operation?.stage).toBe("queued");
+    expect(result).toEqual({ operation: { ...prepared.operation, stage: "queued" } });
+  }).pipe(Effect.provide(test.layer));
+});
