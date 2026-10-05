@@ -354,10 +354,11 @@ class NativeTests(unittest.TestCase):
         def run(argv, **kwargs):
             calls.append(argv)
             if argv[0] == '/usr/bin/systemd-run': return {**OK, 'exitCode': 1}
-            return {**OK, 'stdout': 'timeout\n'} if 'show' in argv else OK
+            return {**OK, 'stdout': 'LoadState=loaded\nResult=timeout\n'} if 'show' in argv else OK
         with patch.object(broker, 'run', side_effect=run):
             result = self.backend.transient(release, spec, ['/usr/bin/true'], kind='build', timeout=5)
         self.assertTrue(result['cancelled'])
+        self.assertTrue(result['diagnostics'][0]['cancelled'])
         self.assertEqual(calls[-2][1], 'stop'); self.assertEqual(calls[-1][1], 'reset-failed')
 
     def test_unconfirmed_transient_cleanup_never_returns_build_success(self):
@@ -375,6 +376,199 @@ class NativeTests(unittest.TestCase):
         with patch.object(broker, 'start_worker') as start, self.assertRaises(broker.policy.PolicyError) as error:
             broker.request('codex', 'control', {**request, 'values': {'BOT_KEY': 'rotated'}, 'versions': {'BOT_KEY': 2}}, self.config)
         self.assertEqual(error.exception.code, 'credential_expired'); start.assert_not_called()
+
+    def test_pre_exec_failure_is_saved_before_cleanup_and_visible_without_current_release(self):
+        self.setup_native()
+        self.manifest['build'] = [['/bin/bash', '-c', 'echo probe-start']]
+        prepared, release = self.prepare()
+        directory = release.parent.parent
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if argv[0] == '/usr/bin/systemd-run': return {**OK, 'exitCode': 1}
+            if 'show' in argv:
+                return {**OK, 'stdout': 'LoadState=loaded\nActiveState=failed\nResult=exit-code\nExecMainCode=1\nExecMainStatus=226\nEnvironment=NEVER_EXPOSE\n'}
+            if argv[0] == '/usr/bin/journalctl':
+                self.assertLessEqual(kwargs['timeout'], 3)
+                self.assertLessEqual(kwargs['limit'], 16384)
+                unit = next(value for value in argv if value.startswith('--unit='))
+                self.assertRegex(unit, r'^--unit=t3-app-build-[a-f0-9]{32}\.service$')
+                return {**OK, 'stdout': 'Failed at step NAMESPACE: fixture-private-token\n'}
+            return OK
+        with patch.object(broker, 'run', side_effect=run), patch.object(native.os, 'chown'):
+            self.backend.worker(directory, prepared['operation']['id'])
+        status = broker.request('codex', 'status', {'roots': [str(self.workspace)], 'input': {'applicationId': directory.name}}, self.config)
+        self.assertNotIn('currentReleaseId', status['application'])
+        diagnostic, = status['operation']['diagnostics']
+        self.assertEqual(status['operation']['failedStage'], 'building')
+        self.assertEqual(diagnostic['step'], 1)
+        self.assertEqual(diagnostic['commandExitCode'], 1)
+        self.assertEqual(diagnostic['stdout'], '')
+        self.assertEqual(diagnostic['state']['ExecMainStatus'], '226')
+        self.assertIn('NAMESPACE', diagnostic['journal'])
+        self.assertNotIn('Environment', diagnostic['state'])
+        journal_index = next(i for i, argv in enumerate(calls) if argv[0] == '/usr/bin/journalctl')
+        stop_index = next(i for i, argv in enumerate(calls) if 'stop' in argv)
+        self.assertLess(journal_index, stop_index)
+        operation_dir = directory/'operations'/prepared['operation']['id']
+        persisted = (operation_dir/'operation.json').read_text()+(operation_dir/'output.jsonl').read_text()
+        self.assertNotIn('fixture-private-token', persisted)
+        self.assertNotIn('NEVER_EXPOSE', persisted)
+        self.assertIn('[REDACTED]', persisted)
+
+    def test_failed_journal_read_and_missing_unit_do_not_hide_exit_or_prevent_cleanup(self):
+        self.setup_native()
+        _, release = self.prepare()
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if argv[0] == '/usr/bin/systemd-run': return {**OK, 'exitCode': 17, 'stderr': 'script failure'}
+            if argv[0] == '/usr/bin/journalctl': raise OSError('journal missing')
+            if 'show' in argv: return {**OK, 'stdout': 'LoadState=not-found\n'}
+            return OK
+        with patch.object(broker, 'run', side_effect=run):
+            result = self.backend.transient(release, broker.read(release/'native.json'), ['/bin/false'], kind='exec', timeout=1)
+        diagnostic, = result['diagnostics']
+        self.assertEqual(result['exitCode'], 17)
+        self.assertEqual(diagnostic['stderr'], 'script failure')
+        self.assertFalse(diagnostic['stateAvailable'])
+        self.assertEqual(diagnostic['journalStatus'], 'unavailable')
+        self.assertEqual(calls[-2][1], 'stop'); self.assertEqual(calls[-1][1], 'reset-failed')
+
+    def test_original_candidate_failure_survives_rollback(self):
+        self.setup_native()
+        first, old = self.prepare(); self.ready(first, old)
+        second, release = self.prepare(applicationId=first['application']['id'])
+        def health(item):
+            if item == release: raise broker.policy.PolicyError('health_failed', 'candidate failed')
+        def run(argv, **kwargs):
+            if argv[0] == '/usr/bin/journalctl':
+                return {**OK, 'stdout': 'candidate startup traceback'}
+            if 'show' in argv: return {**OK, 'stdout': 'LoadState=loaded\nResult=exit-code\nExecMainStatus=42\n'}
+            return OK
+        with patch.object(broker, 'run', side_effect=run):
+            _, operation = self.run_worker(second, release, health=health)
+        self.assertEqual(operation['recovery'], 'restored')
+        self.assertEqual(broker.read(release.parent.parent/'application.json')['currentReleaseId'], old.name)
+        self.assertTrue(operation['diagnostics'])
+        for diagnostic in operation['diagnostics']:
+            self.assertEqual(diagnostic['releaseId'], release.name)
+            self.assertEqual(diagnostic['state']['ExecMainStatus'], '42')
+            self.assertIn('candidate startup traceback', diagnostic['journal'])
+
+    def test_interrupted_worker_uses_persisted_transient_target(self):
+        self.setup_native()
+        prepared, release = self.prepare()
+        operation_path = release.parent.parent/'operations'/prepared['operation']['id']/'operation.json'
+        broker.operation_update(operation_path, 'building')
+        unit = 't3-app-build-'+'a'*32+'.service'
+        broker.begin_diagnostic(release, unit, 'build', log=operation_path.parent/'output.jsonl', step=2)
+        def run(argv, **kwargs):
+            if argv[0] == '/usr/bin/journalctl': return {**OK, 'stdout': 'Saved manager error'}
+            return {**OK, 'stdout': 'inactive\n'}
+        with patch.object(broker, 'run', side_effect=run):
+            result = broker.reconcile_operation(release.parent.parent, operation_path)
+        self.assertEqual(result['stage'], 'failed')
+        self.assertEqual(result['diagnostics'][0]['unit'], unit)
+        self.assertEqual(result['diagnostics'][0]['step'], 2)
+        self.assertEqual(result['diagnostics'][1]['phase'], 'worker')
+
+    def test_diagnostics_bound_and_redact_evidence_before_persistence(self):
+        self.setup_native()
+        prepared, release = self.prepare()
+        secret = 'token-with-"quotes"-and-\\slashes'
+        broker.atomic(release/'secrets.json', {'BOT_KEY': secret})
+        log = release.parent.parent/'operations'/prepared['operation']['id']/'output.jsonl'
+        with patch.object(broker, 'run', return_value={**OK, 'stdout': secret+'\n'+'x'*20000, 'truncated': True}):
+            for step in range(8):
+                target = broker.begin_diagnostic(release, self.backend.unit_name(release), 'starting', step=step, log=log)
+                value = broker.capture_diagnostic(release, target, result={**OK, 'exitCode': 1, 'stderr': secret+'y'*5000}, log=log)
+                self.assertLessEqual(len(value['journal']), 16384)
+                self.assertLessEqual(len(value['stderr']), 4096)
+                self.assertTrue(value['truncated'])
+        saved = broker.read(log.parent/'operation.json')
+        self.assertEqual(len(saved['diagnostics']), 6)
+        for diagnostic in saved['diagnostics']:
+            self.assertNotIn(secret, diagnostic['journal']+diagnostic['stderr'])
+            self.assertIn('[REDACTED]', diagnostic['journal'])
+        for line in log.read_text().splitlines():
+            self.assertNotIn(secret, json.loads(line)['text'])
+
+    def test_status_includes_current_runtime_failure_separate_from_operation(self):
+        self.setup_native()
+        prepared, release = self.prepare(); self.ready(prepared, release)
+        def run(argv, **kwargs):
+            if 'show' in argv: return {**OK, 'stdout': 'LoadState=loaded\nActiveState=failed\nSubState=failed\nResult=oom-kill\nExecMainStatus=9\n'}
+            if argv[0] == '/usr/bin/journalctl': return {**OK, 'stdout': 'A process was killed by the OOM killer.'}
+            return OK
+        with patch.object(broker, 'run', side_effect=run):
+            response = broker.request('codex', 'status', {'roots': [str(self.workspace)], 'input': {'applicationId': prepared['application']['id']}}, self.config)
+        self.assertEqual(response['operation']['stage'], 'succeeded')
+        self.assertEqual(response['diagnostics'][0]['phase'], 'runtime')
+        self.assertEqual(response['diagnostics'][0]['state']['Result'], 'oom-kill')
+
+    def test_recovery_probe_failures_do_not_evict_original_failure(self):
+        self.setup_native()
+        first, old = self.prepare(); self.ready(first, old)
+        second, release = self.prepare(applicationId=first['application']['id'])
+        log = release.parent.parent/'operations'/second['operation']['id']/'output.jsonl'
+        def health(item):
+            if item == old:
+                for attempt in range(8):
+                    target = broker.begin_diagnostic(old, self.backend.unit_name(old), 'recovery', log=log, step=attempt)
+                    broker.capture_diagnostic(old, target, result={**OK, 'exitCode': 2}, log=log)
+            raise broker.policy.PolicyError('health_failed', 'readiness failed')
+        _, operation = self.run_worker(second, release, health=health)
+        self.assertEqual(operation['recovery'], 'failed')
+        self.assertLessEqual(len(operation['diagnostics']), 6)
+        self.assertEqual(operation['diagnostics'][0]['releaseId'], release.name)
+        self.assertEqual(operation['diagnostics'][-1]['releaseId'], old.name)
+        self.assertEqual(operation['diagnostics'][-1]['phase'], 'recovery')
+
+    def test_worker_launch_error_keeps_command_stderr_in_receipt(self):
+        self.setup_native()
+        prepared, release = self.prepare()
+        def run(argv, **kwargs):
+            if argv[0] == '/usr/bin/systemd-run': return {**OK, 'exitCode': 1, 'stderr': 'Failed to connect to bus'}
+            return OK
+        with patch.object(broker, 'run', side_effect=run), self.assertRaises(broker.policy.PolicyError):
+            broker.start_worker(release.parent.parent, prepared['operation'], self.config)
+        operation = broker.read(release.parent.parent/'operations'/prepared['operation']['id']/'operation.json')
+        self.assertEqual(operation['failedStage'], 'queued')
+        self.assertEqual(operation['diagnostics'][0]['stderr'], 'Failed to connect to bus')
+
+    def test_diagnostic_persistence_failure_still_cleans_up_temporary_unit(self):
+        self.setup_native()
+        _, release = self.prepare()
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv)
+            return {**OK, 'exitCode': 17} if argv[0] == '/usr/bin/systemd-run' else OK
+        with patch.object(broker, 'run', side_effect=run), patch.object(broker, '_capture_diagnostic', side_effect=OSError('disk full')):
+            result = self.backend.transient(release, broker.read(release/'native.json'), ['/bin/false'], kind='exec', timeout=1)
+        self.assertEqual(result['exitCode'], 17)
+        self.assertEqual(result['diagnostics'][0]['journalStatus'], 'unavailable')
+        self.assertEqual(calls[-2][1], 'stop'); self.assertEqual(calls[-1][1], 'reset-failed')
+
+    def test_start_command_error_is_retained_after_restoring_previous_release(self):
+        self.setup_native()
+        first, old = self.prepare(); self.ready(first, old)
+        second, release = self.prepare(applicationId=first['application']['id'])
+        def run(argv, **kwargs):
+            if argv[1:3] == ['start', self.backend.unit_name(release)]:
+                return {**OK, 'exitCode': 1, 'stderr': 'Job failed: fixture-private-token'}
+            if 'show' in argv:
+                return {**OK, 'stdout': 'LoadState=loaded\nResult=exit-code\nExecMainStatus=203\n'}
+            return OK
+        with patch.object(broker, 'run', side_effect=run), patch.object(self.backend, 'build'), patch.object(self.backend, 'install'), patch.object(self.backend, 'health'):
+            self.backend.worker(release.parent.parent, second['operation']['id'])
+        operation = broker.read(release.parent.parent/'operations'/second['operation']['id']/'operation.json')
+        self.assertEqual(operation['recovery'], 'restored')
+        diagnostic, = operation['diagnostics']
+        self.assertEqual(diagnostic['phase'], 'starting')
+        self.assertEqual(diagnostic['commandExitCode'], 1)
+        self.assertEqual(diagnostic['stderr'], 'Job failed: [REDACTED]')
+        self.assertEqual(diagnostic['state']['ExecMainStatus'], '203')
 
 
 class InstallationTests(unittest.TestCase):

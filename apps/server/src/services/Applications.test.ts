@@ -57,7 +57,10 @@ const prepared = {
     updatedAt: timestamp,
   },
 };
-function fixture(backend: "docker-compose" | "systemd" = "docker-compose") {
+function fixture(
+  backend: "docker-compose" | "systemd" = "docker-compose",
+  statusResponse?: unknown,
+) {
   const response =
     backend === "systemd"
       ? {
@@ -85,6 +88,7 @@ function fixture(backend: "docker-compose" | "systemd" = "docker-compose") {
     request: (caller, action, input, credentials, administrator) =>
       Effect.sync(() => {
         calls.push({ scope: caller, action, input, credentials, administrator });
+        if (action === "status" && statusResponse) return statusResponse;
         return action === "inspect"
           ? { release: { ...prepared.release, status: "ready", credentialVersions: versions } }
           : action === "prepare"
@@ -106,6 +110,46 @@ function fixture(backend: "docker-compose" | "systemd" = "docker-compose") {
     ),
   };
 }
+it.effect(
+  "retains native failure diagnostics across the broker response schema without a running release",
+  () => {
+    const diagnostic = {
+      id: "d".repeat(32),
+      releaseId: prepared.release.id,
+      unit: `t3-app-build-${"e".repeat(32)}.service`,
+      phase: "build",
+      step: 1,
+      capturedAt: prepared.operation.createdAt,
+      commandExitCode: 1,
+      cancelled: false,
+      state: { LoadState: "loaded", Result: "exit-code", ExecMainCode: "1", ExecMainStatus: "226" },
+      stateAvailable: true,
+      journal: "Failed at step NAMESPACE",
+      journalStatus: "available",
+      stdout: "",
+      stderr: "",
+      truncated: false,
+    };
+    const test = fixture("systemd", {
+      application: prepared.application,
+      operation: {
+        ...prepared.operation,
+        stage: "failed",
+        failedStage: "building",
+        diagnostics: [diagnostic],
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* (yield* Applications).request(scope, {
+        action: "status",
+        input: { applicationId, operationId },
+      });
+      expect(result.application?.currentReleaseId).toBeUndefined();
+      expect(result.operation?.diagnostics).toEqual([diagnostic]);
+      expect(test.calls[0]?.scope).toBe(scope);
+    }).pipe(Effect.provide(test.layer));
+  },
+);
 it.effect(
   "resolves scoped vault bindings through broker stdin and returns only a queued receipt",
   () => {

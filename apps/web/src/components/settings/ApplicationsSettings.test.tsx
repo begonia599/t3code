@@ -125,3 +125,96 @@ it("clears profile authority when switching instances and cannot publish with st
     "Select a registered deployment profile.",
   );
 });
+
+it("shows pre-exec failure evidence for a first release and opens that operation's logs", async () => {
+  const applicationId = "a".repeat(32);
+  const operationId = "b".repeat(32);
+  const releaseId = "c".repeat(32);
+  const app = {
+    id: applicationId,
+    name: "my-bot",
+    projectRoot: "/projects/bot",
+    state: "unpublished",
+    backend: "systemd",
+    deploymentProfile: "bot",
+  };
+  fixture.execute.mockResolvedValueOnce(AsyncResult.success({ applications: [app] }));
+  await act(() => button("Refresh applications").click());
+  fixture.execute.mockResolvedValueOnce(
+    AsyncResult.success({
+      application: app,
+      operation: {
+        id: operationId,
+        stage: "failed",
+        diagnostics: [
+          {
+            id: "d".repeat(32),
+            releaseId,
+            unit: "t3-app-build-test.service",
+            phase: "build",
+            step: 2,
+            commandExitCode: 1,
+            state: { ExecMainStatus: "226", Result: "exit-code" },
+            stateAvailable: true,
+            journalStatus: "available",
+            journal: "Failed at step NAMESPACE",
+            capturedAt: "2026-10-05T12:00:00Z",
+            truncated: true,
+          },
+        ],
+      },
+    }),
+  );
+  await act(() => button("Manage").click());
+  const panel = container.querySelector('[aria-label="Deployment diagnostics"]');
+  expect(panel?.textContent).toContain("Step 2");
+  expect(panel?.textContent).toContain("Launcher exit: 1");
+  expect(panel?.textContent).toContain("ExecMainStatus=226");
+  expect(panel?.textContent).toContain("Failed at step NAMESPACE");
+  expect(panel?.textContent).toContain("Log output was truncated.");
+  fixture.execute.mockResolvedValueOnce(
+    AsyncResult.success({ logs: { entries: [], cursor: null, truncated: false } }),
+  );
+  await act(() => button("Operation logs").click());
+  expect(fixture.execute).toHaveBeenLastCalledWith({
+    environmentId,
+    input: {
+      instanceId: "codex",
+      request: {
+        action: "logs",
+        input: {
+          applicationId,
+          operationId,
+          kind: "build",
+          limit: 100,
+        },
+      },
+    },
+  });
+});
+
+it("makes unavailable diagnostics explicit instead of implying a successful runtime", async () => {
+  fixture.execute.mockResolvedValueOnce(
+    AsyncResult.success({
+      diagnostics: [
+        {
+          id: "d".repeat(32),
+          releaseId: "c".repeat(32),
+          unit: "t3-app-test.service",
+          phase: "runtime",
+          capturedAt: "2026-10-05T12:00:00Z",
+          state: {},
+          stateAvailable: false,
+          journalStatus: "unavailable",
+          journal: "",
+          truncated: false,
+          collectionError: "Diagnostic query failed or timed out.",
+        },
+      ],
+    }),
+  );
+  await act(() => button("Refresh applications").click());
+  expect(container.textContent).toContain("Systemd state unavailable.");
+  expect(container.textContent).toContain("Journal could not be read.");
+  expect(container.textContent).toContain("Diagnostic query failed or timed out.");
+});

@@ -554,6 +554,11 @@ def reconcile_operation(directory, operation_path):
         if operation['stage'] in TERMINAL:
             return operation
         message = 'The independent application worker was interrupted. Inspect current containers and routes before retrying; no recovery result is assumed.'
+        log = operation_path.parent/'output.jsonl'
+        capture_pending_diagnostic(directory, log)
+        release = release_dir(directory, operation['releaseId'])
+        target = begin_diagnostic(release, 't3-application-'+operation['id']+'.service', 'worker', since=operation['createdAt'])
+        capture_diagnostic(release, target, log=log)
     result = operation_update(operation_path, 'failed', failedStage=stage, finishedAt=now(),
                               error={'code': 'internal_error', 'message': message})
     release = release_dir(directory, operation['releaseId'])
@@ -597,6 +602,89 @@ def operation_update(operation_path, stage, **fields):
     return operation
 
 
+def begin_diagnostic(release, unit, phase, *, log=None, step=None, since=None):
+    target = {'id': uuid.uuid4().hex, 'releaseId': release.name, 'unit': unit,
+              'phase': phase, 'since': since or now()}
+    if step is not None: target['step'] = step
+    if log: atomic(log.parent/'diagnostic-target.json', target)
+    return target
+
+
+def capture_diagnostic(release, target, *, result=None, log=None):
+    try:
+        return _capture_diagnostic(release, target, result=result, log=log)
+    except Exception:
+        # Disk/full or collection failures must not stop service cleanup or rollback.
+        return {key: target[key] for key in ('id', 'releaseId', 'unit', 'phase')} | {
+            'capturedAt': now(), 'state': {}, 'stateAvailable': False, 'journal': '',
+            'journalStatus': 'unavailable', 'truncated': False,
+            'collectionError': 'Could not collect or save deployment diagnostics.'}
+
+
+def _capture_diagnostic(release, target, *, result=None, log=None):
+    """Read only a broker-selected unit; save bounded, redacted evidence before cleanup."""
+    operation_path = log.parent/'operation.json' if log else None
+    if operation_path:
+        for saved in read(operation_path).get('diagnostics', []):
+            if saved['id'] == target['id']: return saved
+    secrets = list(read(release/'secrets.json', {}).values())
+    fields = ('LoadState', 'ActiveState', 'SubState', 'Result', 'ExecMainCode',
+              'ExecMainStatus', 'ConditionResult', 'AssertResult', 'NRestarts', 'InvocationID')
+    diagnostic = {key: target[key] for key in ('id', 'releaseId', 'unit', 'phase', 'step') if key in target}
+    diagnostic.update(capturedAt=now(), state={}, stateAvailable=False, journal='', journalStatus='unavailable', truncated=False)
+    errors = []
+
+    def query(argv, limit):
+        try:
+            value = run(argv, timeout=3, limit=limit, secrets=secrets)
+            diagnostic['truncated'] |= value.get('truncated', False)
+            if value['exitCode'] == 0 and not value.get('cancelled'): return value['stdout']
+            errors.append(redact(value.get('stderr', ''), secrets)[:2048] or 'Diagnostic query failed or timed out.')
+        except Exception:
+            # Observability must never replace the original failure or prevent cleanup.
+            errors.append('Diagnostic query could not be executed.')
+        return None
+
+    output = query(['/usr/bin/systemctl', 'show', target['unit'], '--property='+','.join(fields)], 8192)
+    if output is not None:
+        diagnostic['state'] = {key: redact(value, secrets)[:256] for line in output.splitlines()
+                               if '=' in line for key, value in [line.split('=', 1)] if key in fields}
+        diagnostic['stateAvailable'] = bool(diagnostic['state']) and diagnostic['state'].get('LoadState') != 'not-found'
+    journal = query(['/usr/bin/journalctl', '--no-pager', '--output=short-iso-precise', '--lines=40', '--reverse',
+                     '--unit='+target['unit'], '--since='+target['since'], '--until='+diagnostic['capturedAt']], 16384)
+    if journal is not None:
+        journal = redact(journal, secrets)
+        diagnostic['journal'] = journal[:16384]
+        diagnostic['journalStatus'] = 'available' if journal.strip() and journal.strip() != '-- No entries --' else 'empty'
+        diagnostic['truncated'] |= len(journal) > 16384
+    if errors: diagnostic['collectionError'] = '\n'.join(errors)
+    if result:
+        diagnostic.update(commandExitCode=result['exitCode'], cancelled=bool(result.get('cancelled')) or diagnostic['state'].get('Result') == 'timeout')
+        for stream in ('stdout', 'stderr'):
+            output = redact(result.get(stream, ''), secrets)
+            diagnostic[stream] = output[-4096:]
+            diagnostic['truncated'] |= len(output) > 4096
+        diagnostic['truncated'] |= result.get('truncated', False)
+    if log:
+        operation = read(operation_path)
+        operation['diagnostics'] = [*operation.get('diagnostics', []), diagnostic][-6:]
+        atomic(operation_path, operation)
+        header = {key: value for key, value in diagnostic.items() if key not in ('journal', 'stdout', 'stderr')}
+        append_log(log, 'diagnostic', json.dumps(header, ensure_ascii=False))
+        for source in ('stdout', 'stderr', 'journal'):
+            for line in diagnostic.get(source, '').splitlines(): append_log(log, source, line[:8192])
+    return diagnostic
+
+
+def capture_pending_diagnostic(directory, log):
+    try:
+        target = read(log.parent/'diagnostic-target.json', None)
+        if target:
+            return capture_diagnostic(release_dir(directory, target['releaseId']), target, log=log)
+    except Exception:
+        return None
+
+
 def start_worker(directory, operation, config):
     operation_path = directory/'operations'/operation['id']/'operation.json'
     operation_update(operation_path, 'queued')
@@ -605,8 +693,11 @@ def start_worker(directory, operation, config):
                   '--property=MemoryHigh=384M', '--property=MemoryMax=512M', '--property=MemorySwapMax=0',
                   '--property=CPUQuota=100%', '--property=TasksMax=128',
                   BROKER, 'worker', directory.name, operation['id']], timeout=10)
-    if result['exitCode']:
-        operation_update(operation_path, 'failed', error={'code': 'start_failed', 'message': 'Could not start the independent T3 application job.'})
+    if result['exitCode'] or result.get('cancelled'):
+        release = release_dir(directory, operation['releaseId'])
+        target = begin_diagnostic(release, 't3-application-'+operation['id']+'.service', 'worker', since=operation['createdAt'])
+        capture_diagnostic(release, target, result=result, log=operation_path.parent/'output.jsonl')
+        operation_update(operation_path, 'failed', failedStage='queued', finishedAt=now(), error={'code': 'start_failed', 'message': 'Could not start the independent T3 application job. Inspect operation diagnostics.'})
         require(False, 'start_failed', 'Could not start the independent T3 application job.')
 
 
@@ -982,10 +1073,17 @@ def request(instance_id, action, envelope, config):
             app = read(directory/'application.json')
         runtime = native_backend(config).inspect if systemd_app else inspect_runtime
         entries, available = runtime(release_dir(directory, app['currentReleaseId'])) if app.get('currentReleaseId') else ([], True)
+        unhealthy_current = systemd_app and (not entries or any(entry['state'] != 'active' or entry['subState'] != 'running' for entry in entries))
         if systemd_app and app.get('pendingReleaseId') and app['pendingReleaseId'] != app.get('currentReleaseId'):
             pending, pending_available = runtime(release_dir(directory, app['pendingReleaseId']))
             entries += pending; available = available and pending_available
-        return {'application': public_app(app), 'units' if systemd_app else 'containers': entries, 'runtimeAvailable': available, **({'operation': operation} if operation else {})}
+        diagnostics = []
+        if unhealthy_current and app['state'] == 'running' and app.get('currentReleaseId'):
+            release = release_dir(directory, app['currentReleaseId'])
+            target = begin_diagnostic(release, native_backend(config).unit_name(release), 'runtime', since=read(release/'release.json')['createdAt'])
+            diagnostics.append(capture_diagnostic(release, target))
+        return {'application': public_app(app), 'units' if systemd_app else 'containers': entries, 'runtimeAvailable': available,
+                **({'operation': operation} if operation else {}), **({'diagnostics': diagnostics} if diagnostics else {})}
     if action == 'inspect':
         release = release_dir(directory, payload.get('releaseId', app.get('currentReleaseId')))
         if systemd_app:

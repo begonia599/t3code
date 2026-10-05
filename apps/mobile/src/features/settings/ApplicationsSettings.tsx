@@ -1,4 +1,5 @@
 import { DeploymentAuthorizations } from "./DeploymentAuthorizations";
+import { ApplicationDiagnostics } from "./ApplicationDiagnostics";
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
@@ -200,7 +201,12 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
               () =>
                 void request({
                   action: "logs",
-                  input: { applicationId: selected.id, kind: "build", limit: 100 },
+                  input: {
+                    applicationId: selected.id,
+                    kind: "build",
+                    limit: 100,
+                    ...(result?.operation ? { operationId: result.operation.id } : {}),
+                  },
                 }),
             )}
             {action(
@@ -231,6 +237,9 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
             : ""}
         </Text>
       ) : null}
+      <ApplicationDiagnostics
+        items={[...(result?.operation?.diagnostics ?? []), ...(result?.diagnostics ?? [])]}
+      />
       {result?.releases?.map((release) => (
         <View key={release.id}>
           <Text>

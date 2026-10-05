@@ -56,9 +56,17 @@ export class ApplicationBroker extends Context.Service<
             scope.providerInstanceId,
             action,
           ],
-          // Native diagnostics include a bounded service-stop grace period.
+          // Status may long-poll and then collect scoped failure evidence. Native
+          // exec also includes a bounded service-stop grace period.
           {
-            timeout: action === "exec" ? 180_000 : administrator ? 60_000 : 35_000,
+            timeout:
+              action === "exec"
+                ? 180_000
+                : action === "status"
+                  ? 75_000
+                  : administrator
+                    ? 60_000
+                    : 35_000,
             maxBuffer: 2 * 1024 * 1024,
           },
           (error, stdout, stderr) => {

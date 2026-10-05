@@ -81,7 +81,7 @@ export const ApplicationsToolkit = Toolkit.make(
     success: ApplicationResponse,
     failure: ApplicationError,
     description:
-      "Inspect registered application's actual containers or systemd units, health, exit codes and restart counts, plus an operation's durable stage/error/recovery receipt. wait:true waits on that operation's change receipts for up to 25 seconds; only stage succeeded means completion, failed includes failedStage. A timeout can return a still-running stage; query again. runtimeAvailable:false means the selected runtime could not be inspected.",
+      "Inspect registered application's actual containers or systemd units, health, exit codes and restart counts, plus an operation's durable stage/error/recovery receipt. Native operation.diagnostics retains bounded, redacted unit state, launcher exit, build step and scoped journal before cleanup/rollback, even when the first release failed. Top-level diagnostics describes a currently unhealthy native service; these are separate from a past deployment failure. Check stateAvailable/journalStatus/collectionError/truncated: missing evidence is not a successful service or a proven cause. wait:true waits on that operation's change receipts for up to 25 seconds; only stage succeeded means completion, failed includes failedStage. A timeout can return a still-running stage; query again. On failure, read diagnostics and application_logs with that operationId, fix project code/config when supported by the evidence, then publish again within the existing grant. Host/isolation faults require maintainer repair, never weakening the deployment profile. runtimeAvailable:false means the selected runtime could not be inspected.",
   }).annotate(Tool.Readonly, true),
   Tool.make("application_inspect", {
     dependencies,
@@ -97,7 +97,7 @@ export const ApplicationsToolkit = Toolkit.make(
     success: ApplicationResponse,
     failure: ApplicationError,
     description:
-      "Read bounded build/runtime/health/route diagnostics for a registered app, with optional RFC3339 since/until, text filter, limit (1-500) and cursor. Build/health/route logs use operationId and advance a byte cursor; runtime logs page a five-minute snapshot of the newest 2000 lines, then query without cursor for fresh logs. Credentials are redacted, truncation is explicit. No unbounded stream is sent to the model.",
+      "Read bounded build/runtime/health/route diagnostics for a registered app, with optional RFC3339 since/until, text filter, limit (1-500) and cursor. Build/health/route logs use operationId and advance a byte cursor; they include native failure state and scoped journal saved before temporary unit cleanup or rollback. Read application_status.operation.diagnostics first for the latest bounded failure evidence. Runtime logs use releaseId when investigating a failed candidate, otherwise the current release; they page a five-minute snapshot of the newest 2000 lines, then query without cursor for fresh logs. Credentials are redacted, truncation is explicit. No unbounded stream is sent to the model.",
   }).annotate(Tool.Readonly, true),
   Tool.make("application_control", {
     dependencies,

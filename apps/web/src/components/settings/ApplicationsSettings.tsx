@@ -1,4 +1,5 @@
 import { DeploymentAuthorizations } from "./DeploymentAuthorizations";
+import { ApplicationDiagnostics } from "./ApplicationDiagnostics";
 import { useState } from "react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
@@ -235,7 +236,12 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
               onClick={() =>
                 void request({
                   action: "logs",
-                  input: { applicationId: selected.id, kind: "build", limit: 100 },
+                  input: {
+                    applicationId: selected.id,
+                    kind: "build",
+                    limit: 100,
+                    ...(result?.operation ? { operationId: result.operation.id } : {}),
+                  },
                 })
               }
             >
@@ -288,6 +294,9 @@ export function ApplicationsSettings({ environmentId }: { environmentId: Environ
             {result.operation.recovery ? ` · ${t("Recovery")}: ${result.operation.recovery}` : ""}
           </p>
         ) : null}
+        <ApplicationDiagnostics
+          items={[...(result?.operation?.diagnostics ?? []), ...(result?.diagnostics ?? [])]}
+        />
         {result?.releases?.map((release) => (
           <div className="flex flex-wrap items-center gap-2" key={release.id}>
             <span className="mr-auto">

@@ -214,6 +214,25 @@ export const ApplicationRelease = Schema.Struct({
   images: Schema.Record(Schema.String, Schema.String),
   sourceCommit: Schema.NullOr(Schema.String),
 });
+export const ApplicationDiagnostic = Schema.Struct({
+  id: ServiceId,
+  releaseId: ServiceId,
+  unit: Schema.String,
+  phase: Schema.String,
+  step: Schema.optionalKey(Schema.Number),
+  capturedAt: Schema.String,
+  commandExitCode: Schema.optionalKey(Schema.Number),
+  cancelled: Schema.optionalKey(Schema.Boolean),
+  state: Schema.Record(Schema.String, Schema.String),
+  stateAvailable: Schema.Boolean,
+  journal: Schema.String,
+  journalStatus: Schema.Literals(["available", "empty", "unavailable"]),
+  stdout: Schema.optionalKey(Schema.String),
+  stderr: Schema.optionalKey(Schema.String),
+  collectionError: Schema.optionalKey(Schema.String),
+  truncated: Schema.Boolean,
+});
+export type ApplicationDiagnostic = typeof ApplicationDiagnostic.Type;
 export const ApplicationOperation = Schema.Struct({
   id: ServiceId,
   applicationId: ServiceId,
@@ -236,6 +255,7 @@ export const ApplicationOperation = Schema.Struct({
   finishedAt: Schema.optionalKey(Schema.String),
   failedStage: Schema.optionalKey(Schema.String),
   recovery: Schema.optionalKey(Schema.Literals(["unchanged", "restored", "failed"])),
+  diagnostics: Schema.optionalKey(Schema.Array(ApplicationDiagnostic)),
   error: Schema.optionalKey(Schema.Struct({ code: ApplicationErrorCode, message: Schema.String })),
 });
 export const ApplicationContainer = Schema.Struct({
@@ -256,6 +276,7 @@ export const ApplicationResponse = Schema.Struct({
   release: Schema.optionalKey(ApplicationRelease),
   releases: Schema.optionalKey(Schema.Array(ApplicationRelease)),
   operation: Schema.optionalKey(ApplicationOperation),
+  diagnostics: Schema.optionalKey(Schema.Array(ApplicationDiagnostic)),
   containers: Schema.optionalKey(Schema.Array(ApplicationContainer)),
   backends: Schema.optionalKey(Schema.Array(ApplicationBackend)),
   deploymentProfiles: Schema.optionalKey(Schema.Array(ApplicationDeploymentProfile)),
@@ -298,6 +319,7 @@ export const ApplicationResponse = Schema.Struct({
       exitCode: Schema.Number,
       truncated: Schema.Boolean,
       cancelled: Schema.Boolean,
+      diagnostics: Schema.optionalKey(Schema.Array(ApplicationDiagnostic)),
     }),
   ),
 });

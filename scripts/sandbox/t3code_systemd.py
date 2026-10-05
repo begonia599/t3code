@@ -255,7 +255,7 @@ class Backend:
         path.write_text(''.join(key+'='+quote(value).replace('%%', '%')+'\n' for key, value in env.items()))
         path.chmod(0o600)
 
-    def transient(self, release, spec, argv, *, kind, timeout, stdin=None, cwd='/app', log=None):
+    def transient(self, release, spec, argv, *, kind, timeout, stdin=None, cwd='/app', log=None, step=None):
         b = self.b
         building = kind == 'build'
         settings = self._settings(release, spec, build=building, cwd=cwd)
@@ -265,21 +265,29 @@ class Backend:
         else:
             self.environment(release, spec)
         unit = 't3-app-'+kind+'-'+uuid.uuid4().hex
-        command = ['/usr/bin/systemd-run', '--quiet', '--wait', '--pipe', '--unit', unit,
+        command = ['/usr/bin/systemd-run', '--wait', '--pipe', '--unit', unit,
+                   '--description=T3 application '+kind,
                    '--property=ConditionPathExists='+str(POLICIES/spec['profileDigest'])]
         command += ['--property='+key+'='+entry for key, value in settings.items() for entry in (value if isinstance(value, list) else [value])]
         # --expand-environment=no prevents systemd-run from expanding supplied argv.
         command += ['--expand-environment=no', '--', *argv]
+        phase = 'recovery' if log and b.read(log.parent/'diagnostic-target.json', {}).get('phase') == 'recovery' else kind
+        target = b.begin_diagnostic(release, unit+'.service', phase, log=log, step=step)
         try:
             result = b.run(command, timeout=timeout+20, stdin=stdin, secrets=list(b.read(release/'secrets.json', {}).values()), log=log)
-            if result['exitCode'] != 0 and not result.get('cancelled'):
-                state = b.run(['/usr/bin/systemctl', 'show', unit+'.service', '--property=Result', '--value'], timeout=5)
-                if state['exitCode'] == 0 and state['stdout'].strip() == 'timeout': result['cancelled'] = True
+            if result['exitCode'] != 0 or result.get('cancelled'):
+                diagnostic = b.capture_diagnostic(release, target, result=result, log=log)
+                if diagnostic['state'].get('Result') == 'timeout': result['cancelled'] = True
+                result['diagnostics'] = [diagnostic]
             return result
+        except Exception:
+            b.capture_diagnostic(release, target, log=log)
+            raise
         finally:
             # Only this invocation's generated unit can be stopped, even after caller timeout.
             stopped = b.run(['/usr/bin/systemctl', 'stop', unit+'.service'], timeout=20)
             if stopped['exitCode'] != 0 or stopped.get('cancelled'):
+                b.capture_diagnostic(release, target, result=stopped, log=log)
                 state = b.run(['/usr/bin/systemctl', 'show', unit+'.service', '--property=LoadState,ActiveState'], timeout=10)
                 values = dict(line.split('=', 1) for line in state['stdout'].splitlines() if '=' in line)
                 b.require(state['exitCode'] == 0 and values.get('LoadState') == 'not-found', 'start_failed',
@@ -337,11 +345,12 @@ class Backend:
                 os.chown(Path(parent)/name, self.config['ownerUid'], self.config['ownerGid'], follow_symlinks=False)
         deadline = time.monotonic()+spec['profile']['build']['timeoutSeconds']
         try:
-            for argv in spec['build']:
+            for step, argv in enumerate(spec['build'], 1):
                 remaining = int(deadline-time.monotonic())
                 b.require(remaining > 0, 'build_failed', 'The native build exceeded its time budget.')
-                result = self.transient(release, spec, argv, kind='build', timeout=remaining, log=log)
-                b.require(result['exitCode'] == 0 and not result['cancelled'], 'build_failed', 'Native build command failed. Inspect the build log.')
+                result = self.transient(release, spec, argv, kind='build', timeout=remaining, log=log, step=step)
+                b.require(result['exitCode'] == 0 and not result['cancelled'], 'build_failed',
+                          f"Native build step {step} failed (launcher exit {result['exitCode']}, cancelled={result['cancelled']}). Inspect operation diagnostics and logs.")
             artifact = release/'artifact'
             value = self.freeze(work, artifact, allow_external=True)
             metadata = b.read(release/'release.json'); metadata['artifactDigest'] = value
@@ -381,11 +390,14 @@ class Backend:
                 if os.path.exists(temporary): os.unlink(temporary)
         self.b.checked_run(['/usr/bin/systemctl', 'daemon-reload'], 'start_failed', 'Could not reload the managed systemd unit.')
 
-    def control(self, release, action, *, check=True):
-        runner = self.b.checked_run if check else self.b.run
+    def control(self, release, action, *, check=True, log=None):
         argv = ['/usr/bin/systemctl', action, self.unit_name(release)]
-        if check: return runner(argv, 'start_failed', 'The managed systemd service could not '+action+'.', timeout=45)
-        return runner(argv, timeout=45)
+        result = self.b.run(argv, timeout=45, secrets=list(self.b.read(release/'secrets.json', {}).values()), log=log)
+        if check and (result['exitCode'] != 0 or result.get('cancelled')):
+            target = self.b.read(log.parent/'diagnostic-target.json') if log else self.b.begin_diagnostic(release, self.unit_name(release), action)
+            self.b.capture_diagnostic(release, target, result=result, log=log)
+            self.b.require(False, 'start_failed', 'The managed systemd service could not '+action+'. Inspect operation diagnostics.')
+        return result
 
     def stop(self, release, *, remove=False, check=True):
         disabled = self.control(release, 'disable', check=False)
@@ -419,8 +431,12 @@ class Backend:
         b = self.b
         health = spec['healthcheck']
         deadline = time.monotonic()+spec['profile']['runtime']['timeoutSeconds']
+        current_target = b.read(log.parent/'diagnostic-target.json', {}) if log else {}
+        phase = 'recovery' if current_target.get('phase') == 'recovery' else 'checking-health'
+        since = b.read(log.parent/'operation.json')['createdAt'] if log else b.read(release/'release.json')['createdAt']
         # This is the production readiness probe, not a test synchronization mechanism.
         for attempt in range(health['retries']):
+            b.begin_diagnostic(release, self.unit_name(release), phase, log=log, since=since)
             units, available = self.inspect(release)
             active = available and len(units) == 1 and units[0]['state'] == 'active' and units[0]['subState'] == 'running' and units[0]['pid'] > 0
             if active:
@@ -464,12 +480,15 @@ class Backend:
         touched_old = started_new = False
         unconfirmed = previous.get('pendingReleaseId')
         cleaned_pending = None
+        def target(candidate, phase):
+            b.begin_diagnostic(candidate, self.unit_name(candidate), phase, log=log, since=operation['createdAt'])
         try:
             action = operation['action']
             if unconfirmed:
                 # A killed worker or failed cleanup can leave a candidate alive.
                 # Reconcile it before any later start, including another publish.
                 pending = b.release_dir(directory, unconfirmed)
+                target(pending, 'stopping')
                 self.stop(pending, remove=pending != old or action == 'unpublish')
                 cleaned_pending = pending
                 unconfirmed = None
@@ -488,18 +507,22 @@ class Backend:
                 b.operation_update(operation_path, 'starting')
                 if old:
                     touched_old = True
+                    target(old, 'stopping')
                     self.stop(old)
+                target(release, 'starting')
                 self.install(release, spec)
                 unconfirmed = release.name
                 with b.Lock(b.STATE/'state.lock'):
                     app = b.read(directory/'application.json'); app['pendingReleaseId'] = release.name
                     b.atomic(directory/'application.json', app)
                 started_new = True
-                self.control(release, 'start')
+                self.control(release, 'start', log=log)
                 b.operation_update(operation_path, 'checking-health')
+                target(release, 'checking-health')
                 self.health(release, spec, log)
+                target(release, 'enabling')
                 # An unsuccessful candidate must never become a boot-time service.
-                self.control(release, 'enable')
+                self.control(release, 'enable', log=log)
                 metadata = b.read(release/'release.json'); metadata['status'] = 'ready'
                 b.atomic(release/'release.json', metadata)
                 with b.Lock(b.STATE/'state.lock'):
@@ -511,6 +534,7 @@ class Backend:
                 if old and old != release: self.stop(old, remove=True, check=False)
             elif action in ('stop', 'unpublish'):
                 b.operation_update(operation_path, 'stopping')
+                target(release, 'stopping')
                 if release != cleaned_pending: self.stop(release, remove=action == 'unpublish')
                 with b.Lock(b.STATE/'state.lock'):
                     app = b.read(directory/'application.json')
@@ -521,21 +545,37 @@ class Backend:
             b.operation_update(operation_path, 'succeeded', finishedAt=b.now())
         except Exception as error:
             stage = b.read(operation_path)['stage']
+            b.capture_pending_diagnostic(directory, log)
+            # A probe has its own temporary unit; retain the service state as well.
+            if stage == 'checking-health' and b.read(log.parent/'diagnostic-target.json', {}).get('unit') != self.unit_name(release):
+                target(release, stage)
+                b.capture_pending_diagnostic(directory, log)
+            failure_diagnostics = b.read(operation_path).get('diagnostics', [])
             recovery = 'unchanged'
             try:
                 if started_new:
                     # Do not start the previous bot if stopping the candidate failed.
+                    target(release, 'recovery')
                     self.stop(release, remove=release != old)
                     unconfirmed = None
                 if touched_old and old and previous['state'] == 'running':
+                    target(old, 'recovery')
                     old_spec = self.validate_release(old, operation['actor'])
                     self.install(old, old_spec)
-                    self.control(old, 'start')
+                    self.control(old, 'start', log=log)
                     self.health(old, old_spec, log)
-                    self.control(old, 'enable')
+                    target(old, 'recovery')
+                    self.control(old, 'enable', log=log)
                     recovery = 'restored'
             except Exception:
+                b.capture_pending_diagnostic(directory, log)
                 recovery = 'failed'
+            # Recovery probes must not evict the evidence that triggered rollback.
+            latest = b.read(operation_path)
+            failure_ids = {item['id'] for item in failure_diagnostics}
+            recovery_diagnostics = [item for item in latest.get('diagnostics', []) if item['id'] not in failure_ids]
+            latest['diagnostics'] = failure_diagnostics[-4:]+recovery_diagnostics[-2:]
+            b.atomic(operation_path, latest)
             if unconfirmed:
                 recovery = 'failed'
             if operation['action'] in ('stop', 'unpublish'):
