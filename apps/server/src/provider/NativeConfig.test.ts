@@ -47,6 +47,86 @@ const environment = ServerConfig.layerTest(process.cwd(), {
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(environment)("NativeConfig", (it) => {
+  for (const driver of ["codex", "claudeAgent"] as const) {
+    it.effect(`edits the default ${driver} instance without an explicit instance record`, () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const target = { instanceId: ProviderInstanceId.make(driver) };
+        const filePath = f.path.join(f.home, driver === "codex" ? "config.toml" : "settings.json");
+        const before = driver === "codex" ? 'model_verbosity = "medium"\n' : '{"env":{}}\n';
+        const after =
+          driver === "codex"
+            ? 'model_verbosity = "high"\n'
+            : '{"env":{"BASH_DEFAULT_TIMEOUT_MS":"60000"}}\n';
+        yield* f.fs.writeFileString(filePath, before);
+        yield* Effect.gen(function* () {
+          const service = yield* NativeConfig.NativeConfig;
+          const catalog = yield* service.list(target);
+          assert.equal(catalog.driver, driver);
+          assert.equal(catalog.homePath, f.home);
+          const document = yield* service.read({ ...target, path: filePath });
+          const saved = yield* service.write({
+            ...target,
+            path: filePath,
+            revision: document.revision,
+            content: after,
+          });
+          assert.equal(yield* f.fs.readFileString(filePath), after);
+          yield* service.undo({ undoToken: saved.undoToken });
+          assert.equal(yield* f.fs.readFileString(filePath), before);
+        }).pipe(
+          Effect.provide(
+            NativeConfig.layer.pipe(
+              Layer.provide(
+                ServerSettings.layerTest({
+                  providerInstances: {},
+                  providers: {
+                    [driver]: {
+                      homePath: f.home,
+                      ...(driver === "codex" ? { setupMode: "existing" } : {}),
+                    },
+                  },
+                }),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  it.effect(
+    "keeps explicit instances ahead of legacy defaults and rejects missing custom instances",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const codexId = ProviderInstanceId.make("codex");
+        yield* Effect.gen(function* () {
+          const service = yield* NativeConfig.NativeConfig;
+          assert.equal((yield* service.list({ instanceId: codexId })).homePath, f.home);
+          const missing = yield* service.list({ instanceId }).pipe(Effect.result);
+          assert.equal(missing._tag, "Failure");
+          if (missing._tag === "Failure") assert.equal(missing.failure.reason, "unsupported");
+        }).pipe(
+          Effect.provide(
+            NativeConfig.layer.pipe(
+              Layer.provide(
+                ServerSettings.layerTest({
+                  providers: { codex: { homePath: f.path.join(f.root, "unused-legacy-home") } },
+                  providerInstances: {
+                    [codexId]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      config: { homePath: f.home, setupMode: "existing" },
+                    },
+                  },
+                }),
+              ),
+            ),
+          ),
+        );
+      }),
+  );
+
   it.effect("finds Claude local settings in a linked worktree's main checkout", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

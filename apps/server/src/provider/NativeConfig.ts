@@ -33,6 +33,7 @@ import { expandHomePath } from "../pathExpansion.ts";
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
 import { resolveCodexHomeLayout } from "./Drivers/CodexHomeLayout.ts";
 import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
+import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegistryHydration.ts";
 
 const isNativeConfigError = Schema.is(NativeConfigError);
 const decodeCodex = Schema.decodeUnknownEffect(CodexSettings);
@@ -272,7 +273,7 @@ const make = Effect.gen(function* () {
     const current = yield* settings.getSettings.pipe(
       Effect.mapError(() => failure("unavailable", "Provider settings are unavailable.")),
     );
-    const instance = current.providerInstances[input.instanceId];
+    const instance = deriveProviderInstanceConfigMap(current)[input.instanceId];
     if (!instance || (instance.driver !== "codex" && instance.driver !== "claudeAgent"))
       return yield* failure(
         "unsupported",
