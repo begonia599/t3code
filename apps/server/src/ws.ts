@@ -3385,11 +3385,16 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
-        [WS_METHODS.nativeConfigList]: (input) => nativeConfig.list(input),
-        [WS_METHODS.nativeConfigRead]: (input) => nativeConfig.read(input),
-        [WS_METHODS.nativeConfigPreview]: (input) => nativeConfig.preview(input),
-        [WS_METHODS.nativeConfigWrite]: (input) => nativeConfig.write(input),
-        [WS_METHODS.nativeConfigUndo]: (input) => nativeConfig.undo(input),
+        [WS_METHODS.nativeConfigList]: (input) =>
+          observeRpcEffect(WS_METHODS.nativeConfigList, nativeConfig.list(input)),
+        [WS_METHODS.nativeConfigRead]: (input) =>
+          observeRpcEffect(WS_METHODS.nativeConfigRead, nativeConfig.read(input)),
+        [WS_METHODS.nativeConfigPreview]: (input) =>
+          observeRpcEffect(WS_METHODS.nativeConfigPreview, nativeConfig.preview(input)),
+        [WS_METHODS.nativeConfigWrite]: (input) =>
+          observeRpcEffect(WS_METHODS.nativeConfigWrite, nativeConfig.write(input)),
+        [WS_METHODS.nativeConfigUndo]: (input) =>
+          observeRpcEffect(WS_METHODS.nativeConfigUndo, nativeConfig.undo(input)),
         [WS_METHODS.projectsReadFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsReadFile,

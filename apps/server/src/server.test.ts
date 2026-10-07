@@ -106,6 +106,7 @@ const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
 );
 const encodeTestJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
+import * as NativeConfig from "./provider/NativeConfig.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as DeviceService from "./device/DeviceService.ts";
@@ -531,6 +532,7 @@ const buildAppUnderTest = (options?: {
     usageLimitSources?: Partial<UsageLimitSources.UsageLimitSources["Service"]>;
     providerService?: Partial<ProviderService.ProviderService["Service"]>;
     providerAuth?: Partial<ProviderAuthService["Service"]>;
+    nativeConfig?: Partial<NativeConfig.NativeConfig["Service"]>;
     providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
     antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
     codexInstallation?: Partial<CodexInstallation["Service"]>;
@@ -825,6 +827,7 @@ const buildAppUnderTest = (options?: {
             uploadFeedback: () => Effect.die("Provider feedback is not stubbed in this test"),
             ...options?.layers?.providerService,
           }),
+          Layer.mock(NativeConfig.NativeConfig)({ ...options?.layers?.nativeConfig }),
           Layer.mock(ProviderAuthService)({
             ...options?.layers?.providerAuth,
           }),
@@ -6686,6 +6689,110 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
+
+  for (const scope of ["orchestration:read", "orchestration:operate", "access:read"] as const) {
+    it.effect(`native configuration enforces ${scope} on actual websocket requests`, () =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const document = {
+          file: {
+            path: "/fixture/config.toml",
+            scope: "user" as const,
+            kind: "settings" as const,
+            format: "toml" as const,
+            exists: true,
+            writable: true,
+            problem: null,
+          },
+          resolvedPath: "/fixture/config.toml",
+          revision: "fixture-revision",
+          content: "model = 'fixture'",
+        };
+        const result = <A>(method: string, value: A) =>
+          Effect.sync(() => {
+            calls.push(method);
+            return value;
+          });
+        yield* buildAppUnderTest({
+          layers: {
+            nativeConfig: {
+              list: () =>
+                result("list", {
+                  driver: "codex" as const,
+                  homePath: "/fixture",
+                  files: [document.file],
+                  truncated: false,
+                  environmentOverrides: [],
+                  hasLaunchOverrides: false,
+                }),
+              read: () => result("read", document),
+              preview: () => result("preview", "fixture diff"),
+              write: () => result("write", { document, undoToken: "fixture-undo" }),
+              undo: () => result("undo", document),
+            },
+          },
+        });
+        const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, { scope });
+        assert.equal(token.response.status, 200);
+        const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+        });
+        const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const target = { instanceId: ProviderInstanceId.make("codex") };
+              const read = { ...target, path: document.file.path };
+              const write = { ...read, revision: document.revision, content: document.content };
+              const requests = [
+                [
+                  "orchestration:read",
+                  client[WS_METHODS.nativeConfigList](target).pipe(Effect.asVoid),
+                ],
+                [
+                  "orchestration:read",
+                  client[WS_METHODS.nativeConfigRead](read).pipe(Effect.asVoid),
+                ],
+                [
+                  "orchestration:operate",
+                  client[WS_METHODS.nativeConfigPreview](write).pipe(Effect.asVoid),
+                ],
+                [
+                  "orchestration:operate",
+                  client[WS_METHODS.nativeConfigWrite](write).pipe(Effect.asVoid),
+                ],
+                [
+                  "orchestration:operate",
+                  client[WS_METHODS.nativeConfigUndo]({ undoToken: "fixture-undo" }).pipe(
+                    Effect.asVoid,
+                  ),
+                ],
+              ] as const;
+              for (const [requiredScope, request] of requests) {
+                const outcome = yield* request.pipe(Effect.result);
+                if (scope === requiredScope) assert.equal(outcome._tag, "Success");
+                else {
+                  assertTrue(outcome._tag === "Failure");
+                  assert.equal(outcome.failure._tag, "EnvironmentAuthorizationError");
+                  if (outcome.failure._tag === "EnvironmentAuthorizationError")
+                    assert.equal(outcome.failure.requiredScope, requiredScope);
+                }
+              }
+            }),
+          ),
+        );
+        assert.deepEqual(
+          calls,
+          scope === "orchestration:read"
+            ? ["list", "read"]
+            : scope === "orchestration:operate"
+              ? ["preview", "write", "undo"]
+              : [],
+        );
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
 
   it.effect("provider setup lets read-only clients observe installation but not change setup", () =>
     Effect.gen(function* () {
