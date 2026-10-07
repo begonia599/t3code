@@ -58,6 +58,7 @@ export const ASSET_ROUTE_PREFIX = "/api/assets";
 
 const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
+const AGENT_DOWNLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
 const INLINE_VIDEO_MIME_TYPE_PATTERN = /^video\/[\w!#$&^.+-]+$/i;
@@ -103,6 +104,17 @@ const AssetClaimsSchema = Schema.Union([
     filePath: Schema.String,
     device: Schema.String,
     inode: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("agent-download"),
+    filePath: Schema.String,
+    fileName: Schema.String,
+    device: Schema.String,
+    inode: Schema.String,
+    size: Schema.String,
+    modifiedAt: Schema.String,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -157,6 +169,7 @@ export type ResolvedAsset =
       readonly kind: "file";
       readonly path: string;
       readonly download?: boolean;
+      readonly cacheControl?: string;
       readonly fileName?: string;
       readonly mimeType?: string;
       readonly file?: OpenMediaFile;
@@ -725,6 +738,49 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   };
 });
 
+/** Signs one completed host file for download, bound to its identity and modification time. */
+export const issueAgentDownloadUrl = Effect.fn("AssetAccess.issueAgentDownloadUrl")(function* (
+  requestedPath: string,
+) {
+  const path = yield* Path.Path;
+  const canonicalFile = yield* resolveCanonicalFile(requestedPath);
+  if (canonicalFile === null) return null;
+  const opened = yield* Effect.scoped(
+    openMediaFile(canonicalFile).pipe(
+      Effect.map((file) =>
+        file === null
+          ? null
+          : {
+              device: file.info.dev.toString(),
+              inode: file.info.ino.toString(),
+              size: file.info.size.toString(),
+              modifiedAt: file.info.mtimeNs.toString(),
+            },
+      ),
+    ),
+  );
+  if (opened === null) return null;
+  const fileName = path.basename(canonicalFile);
+  const expiresAt = (yield* Clock.currentTimeMillis) + AGENT_DOWNLOAD_TTL_MS;
+  const claims = {
+    version: 1 as const,
+    kind: "agent-download" as const,
+    filePath: canonicalFile,
+    fileName,
+    ...opened,
+    expiresAt,
+  };
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
+  const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
+  const token = `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`;
+  return {
+    relativeUrl: `${ASSET_ROUTE_PREFIX}/${token}/${encodeURIComponent(fileName)}`,
+    fileName,
+    expiresAt,
+  };
+});
+
 export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   token: string,
   relativePath: string,
@@ -814,6 +870,27 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const decodedPath = decodeRelativePath(relativePath);
   if (decodedPath === null) return null;
   const path = yield* Path.Path;
+  if (claims.kind === "agent-download") {
+    if (decodedPath !== claims.fileName) return null;
+    const canonicalFile = yield* resolveCanonicalFile(claims.filePath).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    if (canonicalFile !== claims.filePath) return null;
+    const file = yield* openMediaFile(canonicalFile, claims).pipe(Effect.orElseSucceed(() => null));
+    return file &&
+      file.info.size.toString() === claims.size &&
+      file.info.mtimeNs.toString() === claims.modifiedAt
+      ? ({
+          kind: "file",
+          path: canonicalFile,
+          download: true,
+          cacheControl: "private, no-store",
+          fileName: claims.fileName,
+          mimeType: "application/octet-stream",
+          file,
+        } satisfies ResolvedAsset)
+      : null;
+  }
   if (claims.kind === "media-file-exact") {
     if (decodedPath !== path.basename(claims.filePath)) return null;
     const canonicalFile = yield* resolveCanonicalFile(claims.filePath).pipe(

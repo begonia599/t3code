@@ -32,6 +32,14 @@ also send files to T3 Code through another app's system share sheet.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
+## Download files from an agent
+
+Ask the agent to share a file it created or found on the environment host. The
+agent can add a download link to its reply, including for files larger than the
+chat attachment limit. Open the link from a connected web, desktop, or mobile
+client. Anyone with the link can download that one file for 24 hours; if the
+file changes, ask the agent for a new link.
+
 ## Send while the agent is working
 
 On web and desktop, a message sent during a running turn waits at the end of the conversation as a

@@ -160,6 +160,10 @@ import {
   shouldOpenMarkdownFileLinkInEditor,
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
+import {
+  isEnvironmentAssetLink,
+  resolveEnvironmentAssetLink,
+} from "@t3tools/client-runtime/markdown-links";
 import { readLocalApi } from "../localApi";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
@@ -2367,6 +2371,8 @@ function useChatMarkdownState({
     remoteOpen.isResolved,
   );
   const preparedConnection = usePreparedConnection(environmentId);
+  const environmentHttpBaseUrl =
+    preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null;
   const openMarkdownMedia = useCallback(
     (source: string, resolvedFilePath?: string, clickedImage?: HTMLImageElement | null) => {
       const requestId = ++mediaRequestId.current;
@@ -2725,6 +2731,7 @@ function useChatMarkdownState({
       cwd,
       diffThemeName,
       environmentId,
+      environmentHttpBaseUrl,
       expandMedia,
       fileLinkChip,
       githubMedia,
@@ -2756,6 +2763,7 @@ function useChatMarkdownState({
       cwd,
       diffThemeName,
       environmentId,
+      environmentHttpBaseUrl,
       expandMedia,
       fileLinkChip,
       githubMedia,
@@ -2909,6 +2917,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const {
       cwd,
       environmentId,
+      environmentHttpBaseUrl,
       imageBaseDir,
       markdownFileLinkMetaByHref,
       threadRef,
@@ -2934,6 +2943,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
         renderContextReference({ ...contextReference, label })
       ) : (
         <span>{label}</span>
+      );
+    }
+    if (href && isEnvironmentAssetLink(href)) {
+      const downloadUrl =
+        environmentHttpBaseUrl === null
+          ? null
+          : resolveEnvironmentAssetLink(environmentHttpBaseUrl, href);
+      return downloadUrl === null ? (
+        <span>{children}</span>
+      ) : (
+        <a {...props} href={downloadUrl} download target="_blank" rel="noopener noreferrer">
+          {children}
+        </a>
       );
     }
     const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";

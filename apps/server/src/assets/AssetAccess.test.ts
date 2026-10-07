@@ -23,7 +23,12 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
-import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  issueAgentDownloadUrl,
+  issueAssetUrl,
+  resolveAsset,
+} from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -51,6 +56,86 @@ const testLayer = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
+  it.effect("downloads only the signed file and rejects changed or expired files", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-download-" });
+      const filePath = path.join(root, "preview.apk");
+      yield* fs.writeFileString(filePath, "first build");
+      const issued = yield* issueAgentDownloadUrl(filePath);
+      expect(issued).not.toBeNull();
+      if (!issued) return;
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const token = suffix.slice(0, separator);
+      const name = suffix.slice(separator + 1);
+      const asset = yield* resolveAsset(token, name);
+      expect(asset).toMatchObject({
+        kind: "file",
+        path: yield* fs.realPath(filePath),
+        download: true,
+        fileName: "preview.apk",
+        mimeType: "application/octet-stream",
+      });
+      if (asset?.kind !== "file") return;
+      const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+      expect(response.headers.get("content-disposition")).toBe(
+        'attachment; filename="preview.apk"',
+      );
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(yield* Effect.promise(() => response.text())).toBe("first build");
+      expect(yield* resolveAsset(token, "other.apk")).toBeNull();
+      expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
+      // An edit of the same length must invalidate the link too.
+      yield* fs.writeFileString(filePath, "other build");
+      yield* fs.utimes(filePath, 0, 0);
+      expect(yield* resolveAsset(token, name)).toBeNull();
+
+      const refreshed = yield* issueAgentDownloadUrl(filePath);
+      expect(refreshed).not.toBeNull();
+      if (!refreshed) return;
+      const refreshedSuffix = refreshed.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const refreshedSeparator = refreshedSuffix.indexOf("/");
+      yield* TestClock.setTime(refreshed.expiresAt);
+      expect(
+        yield* resolveAsset(
+          refreshedSuffix.slice(0, refreshedSeparator),
+          refreshedSuffix.slice(refreshedSeparator + 1),
+        ),
+      ).toBeNull();
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("downloads empty files and invalidates links after replacement or removal", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-download-empty-" });
+      const filePath = path.join(root, "空文件.zip");
+      yield* fs.writeFileString(filePath, "");
+      const issued = yield* issueAgentDownloadUrl(filePath);
+      expect(issued).not.toBeNull();
+      if (!issued) return;
+      const [token, name] = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/");
+      if (!token || !name) throw new Error("Missing download URL");
+      const asset = yield* resolveAsset(token, name);
+      expect(asset?.kind).toBe("file");
+      if (asset?.kind !== "file") return;
+      const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-disposition")).toContain(
+        `filename*=UTF-8''${encodeURIComponent("空文件.zip")}`,
+      );
+      expect(yield* Effect.promise(() => response.text())).toBe("");
+      yield* fs.rename(filePath, path.join(root, "previous.zip"));
+      yield* fs.writeFileString(filePath, "");
+      expect(yield* resolveAsset(token, name)).toBeNull();
+      yield* fs.remove(filePath);
+      expect(yield* resolveAsset(token, name)).toBeNull();
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.effect("loads private media immediately after login and reuses the found credential", () => {
     let lookups = 0;
     const authorizations: Array<string | undefined> = [];
