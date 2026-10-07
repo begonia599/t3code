@@ -559,9 +559,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  // Uses the existing (thread_id, created_at, message_id) index. Read only
+  // the timestamp, so refreshing a sidebar never loads conversation bodies.
+  const latestMessageAtColumn = sql`(
+    SELECT messages.created_at FROM projection_thread_messages messages
+    WHERE messages.thread_id = threads.thread_id AND messages.role IN ('user', 'assistant')
+    ORDER BY messages.created_at DESC LIMIT 1
+  ) AS "latestMessageAt"`;
+  const threadShellRowSchema = Schema.Struct({
+    ...ProjectionThreadDbRowSchema.fields,
+    latestMessageAt: Schema.NullOr(IsoDateTime),
+  });
+
   const listThreadRows = SqlSchema.findAll({
     Request: Schema.Void,
-    Result: ProjectionThreadDbRowSchema,
+    Result: threadShellRowSchema,
     execute: () =>
       sql`
         SELECT
@@ -592,11 +604,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
+          ${latestMessageAtColumn},
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           deleted_at AS "deletedAt"
-        FROM projection_threads
+        FROM projection_threads threads
         ORDER BY created_at ASC, thread_id ASC
       `,
   });
@@ -609,7 +622,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const listActiveThreadRows = SqlSchema.findAll({
     Request: ActiveThreadRowsRequest,
-    Result: ProjectionThreadDbRowSchema,
+    Result: threadShellRowSchema,
     execute: (request) =>
       sql`
         SELECT
@@ -640,6 +653,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
+          ${latestMessageAtColumn},
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
@@ -684,7 +698,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const listArchivedThreadRows = SqlSchema.findAll({
     Request: Schema.Void,
-    Result: ProjectionThreadDbRowSchema,
+    Result: threadShellRowSchema,
     execute: () =>
       sql`
         SELECT
@@ -715,11 +729,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
+          ${latestMessageAtColumn},
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           deleted_at AS "deletedAt"
-        FROM projection_threads
+        FROM projection_threads threads
         WHERE deleted_at IS NULL
           AND archived_at IS NOT NULL
         ORDER BY project_id ASC, archived_at DESC, thread_id DESC
@@ -1288,7 +1303,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const getActiveThreadRowById = SqlSchema.findOneOption({
     Request: ThreadIdLookupInput,
-    Result: ProjectionThreadDbRowSchema,
+    Result: threadShellRowSchema,
     execute: ({ threadId }) =>
       sql`
         SELECT
@@ -1319,11 +1334,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
+          ${latestMessageAtColumn},
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
           deleted_at AS "deletedAt"
-        FROM projection_threads
+        FROM projection_threads threads
         WHERE thread_id = ${threadId}
           AND deleted_at IS NULL
           AND archived_at IS NULL
@@ -2803,6 +2819,7 @@ pending_approval_requests AS (
                         titleState: row.titleState,
                         session: sessionByThread.get(row.threadId) ?? null,
                         latestUserMessageAt: row.latestUserMessageAt,
+                        latestMessageAt: row.latestMessageAt,
                         hasPendingApprovals: row.pendingApprovalCount > 0,
                         hasPendingUserInput: row.pendingUserInputCount > 0,
                         hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
@@ -2989,6 +3006,7 @@ pending_approval_requests AS (
                   titleState: row.titleState,
                   session: sessionByThread.get(row.threadId) ?? null,
                   latestUserMessageAt: row.latestUserMessageAt,
+                  latestMessageAt: row.latestMessageAt,
                   hasPendingApprovals: row.pendingApprovalCount > 0,
                   hasPendingUserInput: row.pendingUserInputCount > 0,
                   hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
@@ -3338,6 +3356,7 @@ pending_approval_requests AS (
         titleState: threadRow.value.titleState,
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
         latestUserMessageAt: threadRow.value.latestUserMessageAt,
+        latestMessageAt: threadRow.value.latestMessageAt,
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,

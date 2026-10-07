@@ -5,6 +5,7 @@ export interface ThreadSortInput {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly latestUserMessageAt?: string | null;
+  readonly latestMessageAt?: string | null | undefined;
   readonly messages?: ReadonlyArray<{
     readonly createdAt: string;
     readonly role: string;
@@ -103,6 +104,54 @@ function getLatestUserMessageTimestamp(thread: ThreadSortInput): number {
   return getFirstSortableTimestamp(thread.updatedAt, thread.createdAt) ?? Number.NEGATIVE_INFINITY;
 }
 
+export type RecentMessageSortInput = Omit<ThreadSortInput, "updatedAt"> & {
+  readonly updatedAt?: string;
+  readonly environmentId?: string;
+};
+
+/** A stable message clock, independent of renames, pinning and streamed tokens. */
+export function resolveLatestMessageAt(thread: RecentMessageSortInput): string | null {
+  if (thread.latestMessageAt !== undefined) {
+    // An explicit null is an empty conversation, not a missing server feature.
+    for (const value of [thread.latestMessageAt, thread.createdAt]) {
+      if (value != null && toSortableTimestamp(value) !== null) return value;
+    }
+    return null;
+  }
+  let latest = thread.latestUserMessageAt ?? null;
+  let latestMs = toSortableTimestamp(latest ?? undefined) ?? Number.NEGATIVE_INFINITY;
+  for (const message of thread.messages ?? []) {
+    if (message.role !== "user" && message.role !== "assistant") continue;
+    const timestamp = toSortableTimestamp(message.createdAt);
+    if (timestamp !== null && timestamp > latestMs) {
+      latest = message.createdAt;
+      latestMs = timestamp;
+    }
+  }
+  if (Number.isFinite(latestMs)) return latest;
+  for (const value of [thread.createdAt, thread.updatedAt]) {
+    if (value != null && toSortableTimestamp(value) !== null) return value;
+  }
+  return null;
+}
+
+export function sortThreadsByLatestMessage<
+  T extends RecentMessageSortInput & { readonly id: string },
+>(threads: readonly T[]): T[] {
+  return threads
+    .map((thread) => ({
+      thread,
+      timestamp: toSortableTimestamp(resolveLatestMessageAt(thread) ?? undefined) ?? 0,
+    }))
+    .sort(
+      (left, right) =>
+        right.timestamp - left.timestamp ||
+        left.thread.id.localeCompare(right.thread.id) ||
+        (left.thread.environmentId ?? "").localeCompare(right.thread.environmentId ?? ""),
+    )
+    .map(({ thread }) => thread);
+}
+
 export function getThreadSortTimestamp(
   thread: ThreadSortInput,
   sortOrder: SidebarThreadSortOrder | Exclude<SidebarProjectSortOrder, "manual">,
@@ -139,7 +188,14 @@ export function sortThreads<T extends { readonly id: string } & ThreadSortInput>
 ): T[] {
   if (threads.length < 2) return [...threads];
   return threads
-    .map((thread) => ({ thread, timestamp: getThreadSortTimestamp(thread, sortOrder) }))
+    .map((thread) => ({
+      thread,
+      timestamp:
+        sortOrder === "updated_at"
+          ? (toSortableTimestamp(resolveLatestMessageAt(thread) ?? undefined) ??
+            Number.NEGATIVE_INFINITY)
+          : getThreadSortTimestamp(thread, sortOrder),
+    }))
     .sort(
       (left, right) =>
         right.timestamp - left.timestamp ||
@@ -159,7 +215,11 @@ export function getLatestThreadForProject<
   let latestTimestamp = Number.NEGATIVE_INFINITY;
   for (const thread of threads) {
     if (thread.projectId !== projectId || thread.archivedAt !== null) continue;
-    const timestamp = getThreadSortTimestamp(thread, sortOrder);
+    const timestamp =
+      sortOrder === "updated_at"
+        ? (toSortableTimestamp(resolveLatestMessageAt(thread) ?? undefined) ??
+          Number.NEGATIVE_INFINITY)
+        : getThreadSortTimestamp(thread, sortOrder);
     if (
       latest === null ||
       timestamp > latestTimestamp ||

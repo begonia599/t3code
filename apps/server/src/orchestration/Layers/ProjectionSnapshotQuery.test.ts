@@ -111,6 +111,58 @@ const projectionSnapshotLayer = it.layer(
 );
 
 projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
+  it.effect(
+    "reads the actual latest chat message consistently for live, restored and archived shells",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const query = yield* ProjectionSnapshotQuery;
+        const threadId = ThreadId.make("message-recency");
+        yield* sql`INSERT INTO projection_projects
+        (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES ('message-recency-project', 'Recency', '/tmp/recency', '[]', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')`;
+        yield* sql`INSERT INTO projection_threads
+        (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
+        VALUES (${threadId}, 'message-recency-project', 'Recency', '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')`;
+        const current = Effect.gen(function* () {
+          const shell = yield* query.getThreadShellById(threadId);
+          assert(Option.isSome(shell));
+          return shell.value;
+        });
+        assert.strictEqual((yield* current).latestMessageAt, null);
+        yield* sql`INSERT INTO projection_thread_messages
+        (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
+        VALUES ('recency-user', ${threadId}, 'user', 'Hello', 0, '2026-10-01T01:00:00Z', '2026-10-01T01:00:00Z')`;
+        assert.strictEqual((yield* current).latestMessageAt, "2026-10-01T01:00:00Z");
+        yield* sql`INSERT INTO projection_thread_messages
+        (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
+        VALUES ('recency-assistant', ${threadId}, 'assistant', 'Reply', 1, '2026-10-01T02:00:00Z', '2026-10-01T02:00:00Z')`;
+        const expected = "2026-10-01T02:00:00Z";
+        assert.strictEqual((yield* current).latestMessageAt, expected);
+        // Streaming and thread metadata must not change the message creation clock.
+        yield* sql`UPDATE projection_thread_messages SET text = 'Reply complete', is_streaming = 0, updated_at = '2026-10-01T03:00:00Z' WHERE message_id = 'recency-assistant'`;
+        yield* sql`UPDATE projection_threads SET title = 'Renamed', updated_at = '2026-10-02T00:00:00Z' WHERE thread_id = ${threadId}`;
+        assert.strictEqual((yield* current).latestMessageAt, expected);
+        assert.strictEqual(
+          (yield* query.getShellSnapshot()).threads.find((t) => t.id === threadId)?.latestMessageAt,
+          expected,
+        );
+        yield* sql`UPDATE projection_threads SET archived_at = '2026-10-03T00:00:00Z' WHERE thread_id = ${threadId}`;
+        assert.strictEqual(
+          (yield* query.getArchivedShellSnapshot()).threads.find((t) => t.id === threadId)
+            ?.latestMessageAt,
+          expected,
+        );
+        yield* sql`UPDATE projection_threads SET archived_at = NULL WHERE thread_id = ${threadId}`;
+        // A reverted/deleted last reply must reveal the preceding message after reload.
+        yield* sql`DELETE FROM projection_thread_messages WHERE message_id = 'recency-assistant'`;
+        assert.strictEqual((yield* current).latestMessageAt, "2026-10-01T01:00:00Z");
+        yield* sql`DELETE FROM projection_thread_messages WHERE thread_id = ${threadId}`;
+        yield* sql`DELETE FROM projection_threads WHERE thread_id = ${threadId}`;
+        yield* sql`DELETE FROM projection_projects WHERE project_id = 'message-recency-project'`;
+      }),
+  );
+
   it.effect("hydrates read model from projection tables and computes snapshot sequence", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
@@ -626,6 +678,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
           latestUserMessageAt: "2026-02-24T00:00:04.000Z",
+          latestMessageAt: "2026-02-24T00:00:04.000Z",
           hasPendingApprovals: true,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,

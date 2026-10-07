@@ -12,6 +12,8 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
   sortThreads,
+  sortThreadsByLatestMessage,
+  resolveLatestMessageAt,
   type SettledThreadTimestampInput,
   type ThreadSortInput,
 } from "./threadSort.ts";
@@ -497,5 +499,70 @@ describe("sortActiveThreadsByOrderKey", () => {
     const keys = new Map(assignments.map((assignment) => [assignment.id, assignment.orderKey]));
     const updated = threads.map((thread) => ({ ...thread, activeOrderKey: keys.get(thread.id) }));
     expect(sortActiveThreadsByOrderKey(updated).map((thread) => thread.id)).toEqual(orderedIds);
+  });
+});
+
+describe("message recency", () => {
+  it("moves an old conversation above a newer one when an assistant reply arrives", () => {
+    const old = makeThread({ id: "old", latestMessageAt: "2026-03-09T10:01:00Z" });
+    const recent = makeThread({ id: "recent", latestMessageAt: "2026-03-09T10:02:00Z" });
+    const rows = Object.freeze([old, recent]);
+    expect(sortThreadsByLatestMessage(rows).map((row) => row.id)).toEqual(["recent", "old"]);
+    const replied = { ...old, latestMessageAt: "2026-03-09T10:03:00Z" };
+    expect(sortThreadsByLatestMessage([replied, recent]).map((row) => row.id)).toEqual([
+      "old",
+      "recent",
+    ]);
+    expect(rows[0]).toBe(old);
+    expect(sortThreads([replied, recent], "updated_at")[0]).toBe(replied);
+  });
+
+  it("ignores saved placement and metadata updates, with stable environment ties", () => {
+    const message = "2026-03-09T10:01:00Z";
+    const rows = [
+      {
+        ...makeThread({ id: "same", latestMessageAt: message }),
+        environmentId: "z",
+        activeOrderKey: "b",
+      },
+      {
+        ...makeThread({ id: "same", latestMessageAt: message }),
+        environmentId: "a",
+        activeOrderKey: "z",
+      },
+      makeThread({
+        id: "renamed",
+        latestMessageAt: "2026-03-09T10:00:00Z",
+        updatedAt: "2026-03-10T10:00:00Z",
+      }),
+    ];
+    expect(sortThreadsByLatestMessage(rows)).toEqual([rows[1], rows[0], rows[2]]);
+  });
+
+  it("uses creation for empty threads and tolerates invalid clocks", () => {
+    expect(
+      resolveLatestMessageAt(
+        makeThread({ latestMessageAt: null, updatedAt: "2026-04-01T00:00:00Z" }),
+      ),
+    ).toBe("2026-03-09T10:00:00.000Z");
+    expect(
+      resolveLatestMessageAt(makeThread({ latestMessageAt: "invalid", createdAt: "invalid" })),
+    ).toBeNull();
+    const invalid = makeThread({ id: "invalid", latestMessageAt: "invalid", createdAt: "invalid" });
+    const empty = makeThread({ id: "empty", latestMessageAt: null });
+    expect(sortThreadsByLatestMessage([invalid, empty])).toEqual([empty, invalid]);
+  });
+
+  it("supports older servers and hydrated messages without treating tool events as chat", () => {
+    const row = makeThread({
+      latestUserMessageAt: "2026-03-09T10:01:00Z",
+      messages: [
+        { role: "assistant", createdAt: "2026-03-09T10:02:00Z" },
+        { role: "tool", createdAt: "2026-03-09T10:03:00Z" },
+        { role: "user", createdAt: "invalid" },
+      ],
+    });
+    expect(resolveLatestMessageAt(row)).toBe("2026-03-09T10:02:00Z");
+    expect(resolveLatestMessageAt({ ...row, messages: [] })).toBe("2026-03-09T10:01:00Z");
   });
 });

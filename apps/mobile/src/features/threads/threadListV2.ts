@@ -11,7 +11,9 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
-  sortActiveThreadsByOrderKey,
+  sortThreadsByLatestMessage,
+  resolveLatestMessageAt,
+  type RecentMessageSortInput,
   resolveSettledThreadTimestamp,
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
@@ -142,18 +144,11 @@ function parseTimestampMs(isoDate: string): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-/** The active order shared by web and native: new/reopened rows, then the
-    saved arrangement. Activity does not move a thread. */
-export function sortThreadsForListV2<
-  T extends {
-    readonly id: string;
-    readonly createdAt: string;
-    readonly unsettledAt?: string | null | undefined;
-    readonly activeOrderKey?: string | null | undefined;
-    readonly environmentId?: string | undefined;
-  },
->(threads: readonly T[]): T[] {
-  return sortActiveThreadsByOrderKey(threads);
+/** Active conversations follow the latest user or assistant message. */
+export function sortThreadsForListV2<T extends RecentMessageSortInput & { readonly id: string }>(
+  threads: readonly T[],
+): T[] {
+  return sortThreadsByLatestMessage(threads);
 }
 
 /** Canonical card section for Move up/down, independent of search or scope. */
@@ -186,9 +181,9 @@ export function getThreadListV2OrderedSection(input: {
   const ordered =
     input.section === "pinned"
       ? sortPinnedThreadsByOrderKey(threads)
-      : sortActiveThreadsByOrderKey(threads);
+      : sortThreadsForListV2(threads);
   const pending =
-    input.pendingOrder?.section === input.section
+    input.section === "pinned" && input.pendingOrder?.section === input.section
       ? reconcilePendingThreadOrder(input.pendingOrder, ordered)
       : null;
   return applyPendingThreadOrder(ordered, input.section, pending);
@@ -370,9 +365,7 @@ function resolveThreadListV2ItemTimeLabel(
   if (variant === "card" && resolveThreadListV2Status(thread) !== "ready") return "";
   const settledTimestamp =
     variant === "slim" && !snoozed ? resolveSettledThreadTimestamp(thread) : null;
-  return relativeTime(
-    settledTimestamp ?? thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
-  );
+  return relativeTime(settledTimestamp ?? resolveLatestMessageAt(thread) ?? thread.createdAt);
 }
 
 /**
@@ -425,7 +418,7 @@ export function buildThreadListV2ListItems(input: {
         ? input.snoozeLabelNow
         : undefined;
     const move =
-      item.variant === "card"
+      item.variant === "card" && item.pinned
         ? input.moveAvailability?.get(`${item.thread.environmentId}:${item.thread.id}`)
         : undefined;
     return {
@@ -491,7 +484,7 @@ export function buildThreadListV2ListItems(input: {
 }
 
 /**
- * Partitions visible threads into the active card block (saved order) and
+ * Partitions visible threads into the active card block (message recency) and
  * the settled recency tail, matching the web v2 list.
  */
 export function buildThreadListV2Items(input: {
@@ -595,7 +588,7 @@ export function buildThreadListV2Items(input: {
     }
   }
 
-  const orderedActive = applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
+  const orderedActive = sortThreadsForListV2(active);
   const orderedSnoozed = [...snoozed].sort(
     (left, right) =>
       parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),

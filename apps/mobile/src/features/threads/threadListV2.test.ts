@@ -292,16 +292,16 @@ describe("resolveThreadListV2SnoozeGateExpiryMs", () => {
 });
 
 describe("sortThreadsForListV2", () => {
-  it("honors a saved active order and leaves new threads above it", () => {
+  it("ignores saved active keys when sorting conversations by time", () => {
     const sorted = sortThreadsForListV2([
       { id: "newer-arranged", createdAt: "2026-06-01T12:00:00.000Z", activeOrderKey: "t" },
       { id: "older-arranged", createdAt: "2026-06-01T08:00:00.000Z", activeOrderKey: "f" },
       { id: "new", createdAt: "2026-06-01T13:00:00.000Z" },
     ]);
-    expect(sorted.map((thread) => thread.id)).toEqual(["new", "older-arranged", "newer-arranged"]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["new", "newer-arranged", "older-arranged"]);
   });
 
-  it("orders by creation time, newest first, ignoring activity", () => {
+  it("uses creation time for conversations without messages", () => {
     const sorted = sortThreadsForListV2([
       { id: "oldest", createdAt: "2026-06-01T08:00:00.000Z" },
       { id: "newest", createdAt: "2026-06-01T12:00:00.000Z" },
@@ -310,7 +310,7 @@ describe("sortThreadsForListV2", () => {
     expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
   });
 
-  it("surfaces an un-settled thread at the top via its re-entry stamp", () => {
+  it("does not change message order when a conversation is reopened", () => {
     const sorted = sortThreadsForListV2([
       {
         id: "old-unsettled",
@@ -320,12 +320,12 @@ describe("sortThreadsForListV2", () => {
       { id: "newest", createdAt: "2026-06-01T12:00:00.000Z" },
       { id: "middle", createdAt: "2026-06-01T10:00:00.000Z" },
     ]);
-    expect(sorted.map((thread) => thread.id)).toEqual(["old-unsettled", "newest", "middle"]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "old-unsettled"]);
   });
 });
 
 describe("getThreadListV2OrderedSection", () => {
-  it("uses each saved order and excludes settled, snoozed, and archived rows", () => {
+  it("uses message order and saved pinned order, excluding parked rows", () => {
     const threads = [
       makeThread({ id: ThreadId.make("active-later"), title: "Later", activeOrderKey: "t" }),
       makeThread({ id: ThreadId.make("active-first"), title: "First", activeOrderKey: "f" }),
@@ -364,7 +364,7 @@ describe("getThreadListV2OrderedSection", () => {
       getThreadListV2OrderedSection({ threads, section: "active", now: NOW }).map(
         (thread) => thread.id,
       ),
-    ).toEqual(["active-new", "active-first", "active-later"]);
+    ).toEqual(["active-first", "active-later", "active-new"]);
     expect(
       getThreadListV2OrderedSection({ threads, section: "pinned", now: NOW }).map(
         (thread) => thread.id,
@@ -1038,7 +1038,7 @@ describe("buildThreadListV2ListItems", () => {
 });
 
 describe("pending mobile thread moves", () => {
-  function fixture(section: "active" | "pinned" = "active") {
+  function fixture(section: "active" | "pinned" = "pinned") {
     const rows = ["a", "b", "c"].map((id, index) =>
       makeThread({
         id: ThreadId.make(id),
@@ -1089,7 +1089,7 @@ describe("pending mobile thread moves", () => {
     }).items.map((item) => item.thread.id);
   }
 
-  it.each(["active", "pinned"] as const)(
+  it.each(["pinned"] as const)(
     "holds %s order through every intermediate key upsert",
     (section) => {
       const { rows, assignments, pending, update } = fixture(section);
@@ -1138,7 +1138,7 @@ describe("pending mobile thread moves", () => {
     expect(
       reconcilePendingThreadOrder(
         pending,
-        rows.map((row, index) => (index === 0 ? { ...row, activeOrderKey: "zz" } : row)),
+        rows.map((row, index) => (index === 0 ? { ...row, pinOrderKey: "zz" } : row)),
       ),
     ).toBeNull();
     const settled = rows.map((row, index) =>
@@ -1153,7 +1153,7 @@ describe("pending mobile thread moves", () => {
     expect(reconcilePendingThreadOrder(confirmed, rows)).toBeNull();
   });
 
-  it("preserves the hold for activity but releases for a reopened sort anchor", () => {
+  it("preserves pinned arrangement through activity and reopen timestamps", () => {
     const { rows, pending } = fixture();
     expect(
       reconcilePendingThreadOrder(
@@ -1166,7 +1166,7 @@ describe("pending mobile thread moves", () => {
         pending,
         rows.map((row, index) => (index === 0 ? { ...row, unsettledAt: NOW } : row)),
       ),
-    ).toBeNull();
+    ).toBe(pending);
   });
 });
 
@@ -1292,7 +1292,7 @@ describe("thread drag destinations", () => {
     expect(threadOrderAfterMove(["a", "b"], "missing", "down")).toBeNull();
   });
 
-  it.each(["active", "pinned"] as const)(
+  it.each(["pinned"] as const)(
     "persists a dropped %s row and holds its order until confirmed",
     (section) => {
       const ordered = ["a", "b", "c", "d"].map((id) =>
@@ -1939,7 +1939,7 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
     expect(threadListV2ListItemsAreEqual(settledQueued, settledPlain)).toBe(true);
   });
 
-  it("notices move-availability changes on card rows without a shell update", () => {
+  it("notices move-availability changes on pinned rows without a shell update", () => {
     const permissive = new Map([
       [`${environmentId}:stamp-ready`, { canMoveUp: true, canMoveDown: true }],
       [`${environmentId}:stamp-settled`, { canMoveUp: true, canMoveDown: true }],
@@ -1947,11 +1947,11 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
     const blocked = new Map([
       [`${environmentId}:stamp-settled`, { canMoveUp: true, canMoveDown: true }],
     ]);
-    const open = buildTickList([readyThread, settledThread], BASE_MS, [], {
+    const open = buildTickList([{ ...readyThread, pinnedAt: NOW }, settledThread], BASE_MS, [], {
       moveAvailability: permissive,
       snoozeEnvironmentIds: allEnvironments,
     });
-    const closed = buildTickList([readyThread, settledThread], BASE_MS, [], {
+    const closed = buildTickList([{ ...readyThread, pinnedAt: NOW }, settledThread], BASE_MS, [], {
       moveAvailability: blocked,
       snoozeEnvironmentIds: allEnvironments,
     });
@@ -2009,4 +2009,50 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
     expect(shelfLoaded.type === "v2-settled-shelf" && shelfLoaded.disabled).toBe(false);
     expect(threadListV2ListItemsAreEqual(shelfLoading, shelfLoaded)).toBe(false);
   });
+});
+
+it("updates mobile message order while keeping pinned rows and suppressing active move actions", () => {
+  const old = makeThread({
+    id: ThreadId.make("old-chat"),
+    title: "Old",
+    latestMessageAt: "2026-06-01T10:00:00Z",
+    activeOrderKey: "b",
+  });
+  const recent = makeThread({
+    id: ThreadId.make("recent-chat"),
+    title: "Recent",
+    latestMessageAt: "2026-06-01T11:00:00Z",
+    activeOrderKey: "z",
+  });
+  const pinned = makeThread({ id: ThreadId.make("pinned-chat"), title: "Pinned", pinnedAt: NOW });
+  const rows = [old, recent, pinned];
+  const layout = (threads: EnvironmentThreadShell[]) =>
+    buildThreadListV2Items({ threads, environmentId: null, searchQuery: "", now: NOW });
+  expect(layout(rows).items.map((item) => item.thread.id)).toEqual([
+    "pinned-chat",
+    "recent-chat",
+    "old-chat",
+  ]);
+  expect(
+    layout([{ ...old, latestMessageAt: "2026-06-01T12:00:00Z" }, recent, pinned]).items.map(
+      (item) => item.thread.id,
+    ),
+  ).toEqual(["pinned-chat", "old-chat", "recent-chat"]);
+  const moves = new Map(
+    rows.map((row) => [`${row.environmentId}:${row.id}`, { canMoveUp: true, canMoveDown: true }]),
+  );
+  const items = buildThreadListV2ListItems({
+    items: layout(rows).items,
+    pendingTasks: [],
+    moveAvailability: moves,
+  });
+  expect(
+    items
+      .filter((item) => item.type === "v2-thread")
+      .map((item) => [item.item.thread.id, item.canMoveUp]),
+  ).toEqual([
+    ["pinned-chat", true],
+    ["recent-chat", false],
+    ["old-chat", false],
+  ]);
 });

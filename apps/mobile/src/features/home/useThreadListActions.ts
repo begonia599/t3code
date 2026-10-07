@@ -570,9 +570,6 @@ export function useThreadListActions(): {
   const reorderPinnedMutation = useAtomCommand(threadEnvironment.reorderPin, {
     reportFailure: false,
   });
-  const reorderActiveMutation = useAtomCommand(threadEnvironment.reorderActive, {
-    reportFailure: false,
-  });
   const moveThread = useCallback(
     async (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
       if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
@@ -597,12 +594,30 @@ export function useThreadListActions(): {
           appAtomRegistry.set(threadDropBusyAtom, false);
         }
       }
+      if (section === "active") {
+        // A drop back into the inbox changes lifecycle, never message order.
+        const lifecycle = threadDropLifecycle(thread, section, new Date().toISOString());
+        if (!lifecycle.unpin && !lifecycle.unsettle && !lifecycle.unsnooze) return false;
+        if (
+          (lifecycle.unpin && !environmentSupportsPinning(thread.environmentId)) ||
+          (lifecycle.unsettle && !environmentSupportsSettlement(thread.environmentId)) ||
+          (lifecycle.unsnooze && !environmentSupportsSnooze(thread.environmentId))
+        )
+          return false;
+        appAtomRegistry.set(threadDropBusyAtom, true);
+        try {
+          if (lifecycle.unpin && !(await unpinThread(thread))) return false;
+          if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
+          if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
+          return true;
+        } finally {
+          appAtomRegistry.set(threadDropBusyAtom, false);
+        }
+      }
       const configs = appAtomRegistry.get(environmentServerConfigsAtom);
       const supportsReorder = (environmentId: EnvironmentThreadShell["environmentId"]) => {
         const capabilities = configs.get(environmentId)?.environment.capabilities;
-        return section === "pinned"
-          ? capabilities?.threadPinReorder === true
-          : capabilities?.threadActiveReorder === true;
+        return capabilities?.threadPinReorder === true;
       };
       if (!supportsReorder(thread.environmentId)) {
         Alert.alert(
@@ -634,14 +649,12 @@ export function useThreadListActions(): {
         reorderableEnvironmentIds: new Set([...configs.keys()].filter(supportsReorder)),
       })(scopedThreadKey(thread.environmentId, thread.id), direction);
       if (assignments === null) return false;
-      const lifecycle = threadDropLifecycle(thread, section, new Date().toISOString());
       const crossSection = !ordered.some(
         (row) => row.id === thread.id && row.environmentId === thread.environmentId,
       );
       if (
         crossSection &&
-        (((section === "pinned" || thread.pinnedAt != null) &&
-          !environmentSupportsPinning(thread.environmentId)) ||
+        (!environmentSupportsPinning(thread.environmentId) ||
           (thread.settledOverride === "settled" &&
             !environmentSupportsSettlement(thread.environmentId)) ||
           (effectiveSnoozed(thread, { now: new Date().toISOString() }) &&
@@ -665,31 +678,24 @@ export function useThreadListActions(): {
             }),
           );
       let succeeded = false;
-      const reorder = section === "pinned" ? reorderPinnedMutation : reorderActiveMutation;
+      const reorder = reorderPinnedMutation;
       try {
         if (crossSection) {
-          if (section === "pinned") {
-            const orderKey = assignments.find(
-              ({ id }) => id === scopedThreadKey(thread.environmentId, thread.id),
-            )?.orderKey;
-            const result = await pinMutation({
-              environmentId: thread.environmentId,
-              input: { threadId: thread.id, ...(orderKey === undefined ? {} : { orderKey }) },
-            });
-            if (result._tag === "Failure") {
-              Alert.alert("Could not pin thread", String(Cause.squash(result.cause)));
-              return false;
-            }
-          } else {
-            if (lifecycle.unpin && !(await unpinThread(thread))) return false;
-            if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
-            if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
+          const orderKey = assignments.find(
+            ({ id }) => id === scopedThreadKey(thread.environmentId, thread.id),
+          )?.orderKey;
+          const result = await pinMutation({
+            environmentId: thread.environmentId,
+            input: { threadId: thread.id, ...(orderKey === undefined ? {} : { orderKey }) },
+          });
+          if (result._tag === "Failure") {
+            Alert.alert("Could not pin thread", String(Cause.squash(result.cause)));
+            return false;
           }
         }
         for (const assignment of assignments) {
           if (
             crossSection &&
-            section === "pinned" &&
             thread.pinnedAt == null &&
             assignment.id === scopedThreadKey(thread.environmentId, thread.id)
           )
@@ -721,15 +727,7 @@ export function useThreadListActions(): {
         appAtomRegistry.set(threadDropBusyAtom, false);
       }
     },
-    [
-      settleThread,
-      reorderActiveMutation,
-      reorderPinnedMutation,
-      pinMutation,
-      unpinThread,
-      unsettleThread,
-      unsnoozeThread,
-    ],
+    [settleThread, reorderPinnedMutation, pinMutation, unpinThread, unsettleThread, unsnoozeThread],
   );
 
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);

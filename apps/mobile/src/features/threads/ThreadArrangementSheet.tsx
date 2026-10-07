@@ -218,7 +218,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
           ),
         ),
       });
-    return { pinned: planner("pinned"), active: planner("active") };
+    return { pinned: planner("pinned") };
   }, [sections, threads, configs]);
   const rows = useMemo(() => {
     const result: Row[] = [];
@@ -293,7 +293,10 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
           configs.get(current.thread.environmentId)?.environment.capabilities.threadSettlement
         )
           destination = { section: "settled", targetId: null, placement: "before" };
-      } else if (latest.current.planners[target.section](keyOf(current.thread), candidate) !== null)
+      } else if (target.section === "active") {
+        if (current.sourceSection !== "active")
+          destination = { section: "active", targetId: null, placement: "before" };
+      } else if (latest.current.planners.pinned(keyOf(current.thread), candidate) !== null)
         destination = candidate;
     }
     if (
@@ -409,10 +412,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
               })}
               renderItem={({ item }) => {
                 const thread = item.thread;
-                const planner =
-                  item.section === "pinned" || item.section === "active"
-                    ? planners[item.section]
-                    : null;
+                const planner = item.section === "pinned" ? planners.pinned : null;
                 const capabilities =
                   thread && configs.get(thread.environmentId)?.environment.capabilities;
                 const sectionActions = thread
@@ -436,7 +436,8 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
                           !capabilities?.threadSnooze)
                       )
                         return [];
-                      return planners[section](item.key, {
+                      if (section === "active") return [{ name: section, label }];
+                      return planners.pinned(item.key, {
                         section,
                         targetId: null,
                         placement: "before",
