@@ -1167,7 +1167,7 @@ export function EnvironmentProviderSettings({
                   {renderProviderInstance(selectedRow, "editor")}
                   {selectedRow.driver === "codex" || selectedRow.driver === "claudeAgent" ? (
                     <NativeConfigEditorButton
-                      key={selectedRow.instanceId}
+                      key={`native-config:${selectedRow.instanceId}`}
                       environmentId={environmentId}
                       instanceId={selectedRow.instanceId}
                       readOnly={readOnly}
