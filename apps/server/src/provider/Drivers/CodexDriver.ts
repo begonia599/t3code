@@ -35,6 +35,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { makeCodexAuth } from "../CodexAuth.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
 import * as ResetCreditCoordinator from "../Layers/resetCreditCoordinator.ts";
@@ -150,12 +151,17 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
       const continuationIdentity = codexContinuationIdentity(homeLayout);
-      const stampIdentity = withInstanceIdentity({
+      const identify = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
+      });
+      const canAuthenticate = enabled;
+      const stampIdentity: typeof identify = (provider) => ({
+        ...identify(provider),
+        setup: { canAuthenticate, canInstall: false },
       });
       yield* materializeCodexShadowHome(homeLayout).pipe(
         Effect.mapError(
@@ -293,6 +299,29 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       // its own account under `effectiveHomePath`, while plain instances share
       // the common home. The continuation key would conflate the two.
       const accountKey = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
+      const loginHome = pathService.resolve(
+        effectiveConfig.homePath ||
+          processEnv.CODEX_HOME?.trim() ||
+          (processEnv.HOME
+            ? pathService.join(processEnv.HOME, ".codex")
+            : homeLayout.sharedHomePath),
+      );
+      const credentialHome = yield* fileSystem
+        .realPath(loginHome)
+        .pipe(Effect.orElseSucceed(() => loginHome));
+      const auth = yield* makeCodexAuth({
+        instanceId,
+        credentialKey: `codex:${credentialHome}`,
+        enabled: canAuthenticate,
+        connect: withCodexAppServerClient({
+          binaryPath: effectiveConfig.binaryPath,
+          homePath: effectiveConfig.homePath,
+          launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+          cwd: process.cwd(),
+          environment: processEnv,
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        onChanged: snapshot.refresh.pipe(Effect.asVoid),
+      });
       const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = () =>
         resetCreditCoordinator
           .redeem(accountKey, (idempotencyKey) =>
@@ -362,6 +391,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         consumeResetCredit,
         adapter,
         textGeneration,
+        auth,
       } satisfies ProviderInstance;
     }),
 };

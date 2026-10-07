@@ -1,3 +1,5 @@
+import { ProviderLoginSettings } from "./ProviderLoginSettings";
+import { supportsProviderLogin } from "@t3tools/client-runtime/provider-login";
 import { NativeConfigEditorButton } from "./NativeConfigEditor";
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
@@ -325,6 +327,20 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                             environmentId={environmentId}
                             instanceId={provider.instanceId}
                             readOnly={!allowed}
+                          />
+                        ) : null}
+                        {supportsProviderLogin(
+                          provider.driver,
+                          config.settings.providerInstances[provider.instanceId]?.config ??
+                            (provider.driver === "codex"
+                              ? config.settings.providers.codex
+                              : undefined),
+                        ) ? (
+                          <ProviderLoginSettings
+                            environmentId={environmentId}
+                            provider={provider}
+                            disabled={!allowed}
+                            driver={provider.driver}
                           />
                         ) : null}
                         {canUpdateEnvironmentProvider(provider) ? (

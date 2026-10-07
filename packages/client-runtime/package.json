@@ -306,6 +306,10 @@
     "./state/nativeConfig": {
       "types": "./src/state/nativeConfig.ts",
       "default": "./src/state/nativeConfig.ts"
+    },
+    "./provider-login": {
+      "types": "./src/providerLogin.ts",
+      "default": "./src/providerLogin.ts"
     }
   },
   "scripts": {

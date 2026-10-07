@@ -1,3 +1,4 @@
+import * as NodeOS from "node:os";
 import { GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,9 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeGrokTextGeneration } from "../../textGeneration/GrokTextGeneration.ts";
+import { makeProviderLoginSpawner } from "../ProviderLoginProcess.ts";
+import { supportsGrokBrowserLogin } from "../cliProviderAuthSupport.ts";
+import { makeCliProviderAuth } from "../CliProviderAuth.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeGrokAdapter } from "../Layers/GrokAdapter.ts";
 import {
@@ -105,12 +109,17 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         driverKind: DRIVER_KIND,
         instanceId,
       });
-      const stampIdentity = withInstanceIdentity({
+      const identify = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
+      });
+      const canAuthenticate = enabled && supportsGrokBrowserLogin(processEnv);
+      const stampIdentity: typeof identify = (provider) => ({
+        ...identify(provider),
+        setup: { canAuthenticate, canInstall: false },
       });
       const effectiveConfig = { ...config, enabled } satisfies GrokSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
@@ -207,6 +216,28 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
               ),
             ]).pipe(Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })));
 
+      const loginHome = path.resolve(
+        cwd,
+        processEnv.GROK_HOME?.trim() ||
+          path.join(processEnv.HOME || processEnv.USERPROFILE || NodeOS.homedir(), ".grok"),
+      );
+      const credentialHome = yield* fileSystem
+        .realPath(loginHome)
+        .pipe(Effect.orElseSucceed(() => loginHome));
+      const spawnLogin = yield* makeProviderLoginSpawner({
+        instanceId,
+        binaryPath: effectiveConfig.binaryPath || "grok",
+        cwd,
+        environment: processEnv,
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      const auth = yield* makeCliProviderAuth({
+        instanceId,
+        provider: "grok",
+        credentialKey: `grok:${credentialHome}`,
+        enabled: canAuthenticate,
+        spawn: spawnLogin,
+        onChanged: snapshot.refresh.pipe(Effect.asVoid),
+      });
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -218,6 +249,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         snapshotForCwd,
         adapter,
         textGeneration,
+        auth,
       } satisfies ProviderInstance;
     }),
 };

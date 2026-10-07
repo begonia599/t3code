@@ -1,3 +1,5 @@
+import { ProviderLoginSection } from "./ProviderLoginSection";
+import { supportsProviderLogin } from "@t3tools/client-runtime/provider-login";
 import { NativeConfigEditorButton } from "./NativeConfigEditor";
 import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -988,6 +990,16 @@ export function EnvironmentProviderSettings({
                   },
                 })
               }
+            />
+          ) : mode === "editor" && supportsProviderLogin(row.driver, row.instance.config) ? (
+            <ProviderLoginSection
+              key={`${environmentId}:${row.instanceId}`}
+              environmentId={environmentId}
+              environmentLabel={environmentLabel}
+              instanceId={row.instanceId}
+              provider={liveProvider}
+              readOnly={readOnly}
+              driver={row.driver}
             />
           ) : null
         }

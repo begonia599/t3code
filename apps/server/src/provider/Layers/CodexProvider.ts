@@ -416,7 +416,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   );
   const initialize = yield* client.request("initialize", buildCodexInitializeParams());
   yield* client.notify("initialized", undefined);
-  return { client, initialize };
+  return { client, initialize, exitCode: child.exitCode };
 });
 
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {

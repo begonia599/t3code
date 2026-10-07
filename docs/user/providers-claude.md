@@ -4,6 +4,18 @@ T3 Code uses Claude Code's login and configuration. Start with the default provi
 for one account; [provider setup](./install.md#providers) covers installation and
 shared provider settings.
 
+## Sign in with a Claude subscription
+
+Open **Settings → Providers**, choose the environment and Claude instance, and
+start sign-in from its account section. Open the authorization link and paste the
+browser's authorization code back into T3 Code. Existing logins remain usable
+without signing in again. See [native CLI sign-in](./install.md#sign-in-to-an-installed-cli)
+for cancellation, expiry and signing out.
+
+This entry uses Claude's subscription login. Instances configured with API keys,
+OAuth-token environment variables, Bedrock, Vertex or Foundry keep their native
+authentication setup. Console OAuth profiles are not managed here.
+
 ## Separate accounts or configurations
 
 To view and edit this instance's native settings, instructions, memories and
@@ -12,8 +24,9 @@ Skills, see [Native agent configuration](./native-configuration.md).
 Use a separate Claude config directory for each account. This also works for named
 presets that need different Claude settings or a router connection.
 
-Keep your existing account in the default directory. On the environment's machine,
-create the second login:
+Keep your existing account in the default directory. Add another instance with a
+separate config directory and sign in from its account section. Alternatively,
+create the second login on the environment's machine:
 
 ```bash
 mkdir -p ~/.claude_personal

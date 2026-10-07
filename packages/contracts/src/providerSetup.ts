@@ -58,6 +58,11 @@ export const ProviderAuthInteraction = Schema.Union([
     userCode: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   }),
   Schema.Struct({
+    type: Schema.Literal("authorizationCode"),
+    id: SetupOperationId,
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+  }),
+  Schema.Struct({
     type: Schema.Literal("terminal"),
     id: SetupOperationId,
     output: Schema.String.check(Schema.isMaxLength(16_384)),
@@ -78,6 +83,10 @@ export const ProviderAuthInteraction = Schema.Union([
 export type ProviderAuthInteraction = typeof ProviderAuthInteraction.Type;
 
 export const ProviderAuthResponse = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("authorizationCode"),
+    code: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+  }),
   Schema.Struct({
     type: Schema.Literal("browser"),
     action: Schema.Literals(["accept", "decline"]),

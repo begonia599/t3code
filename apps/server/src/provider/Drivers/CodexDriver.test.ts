@@ -75,6 +75,59 @@ const noSpawn = ChildProcessSpawner.make(() =>
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(testLayer)("CodexDriver", (it) => {
+  it.effect(
+    "binds login to the shadow credentials while retaining shared conversation identity",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-login-homes-" });
+        const sharedHome = NodePath.join(tempDir, "shared");
+        const shadowHome = NodePath.join(tempDir, "personal");
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make("codex-login-shadow"),
+          displayName: "Personal",
+          enabled: false,
+          environment: [],
+          config: {
+            ...CodexDriver.defaultConfig(),
+            setupMode: "existing",
+            homePath: sharedHome,
+            shadowHomePath: shadowHome,
+          },
+        });
+        expect(instance.auth?.credentialBinding).toEqual({
+          owner: "provider",
+          key: `codex:${yield* fs.realPath(shadowHome)}`,
+        });
+        expect(instance.continuationIdentity.continuationKey).toBe(`codex:home:${sharedHome}`);
+        expect((yield* instance.snapshot.getSnapshot).setup).toEqual({
+          canAuthenticate: false,
+          canInstall: false,
+        });
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        Effect.scoped,
+      ),
+  );
+
+  it.effect("uses an environment-selected Codex home for login coordination", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-login-env-" });
+      const instance = yield* CodexDriver.create({
+        instanceId: ProviderInstanceId.make("codex-login-env"),
+        displayName: "Environment account",
+        enabled: false,
+        environment: [{ name: "CODEX_HOME", value: tempDir, sensitive: false }],
+        config: { ...CodexDriver.defaultConfig(), setupMode: "existing" },
+      });
+      expect(instance.auth?.credentialBinding).toEqual({
+        owner: "provider",
+        key: `codex:${yield* fs.realPath(tempDir)}`,
+      });
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
+  );
+
   it.effect("disconnect refreshes a restored managed account while its auth flow is idle", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");

@@ -111,14 +111,14 @@ and enable the provider you want. Installation, login, and configuration belong
 to that environment's machine, even when you connect from a phone or another
 computer.
 
-| Provider    | Install and authenticate                                                                                                                                  |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Codex       | [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), or install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`. |
-| Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`.                                                              |
-| Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                                                                                     |
-| Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                                                                                        |
-| OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
-| Antigravity | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
+| Provider    | Install and authenticate                                                                                                                                               |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex       | [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), or install [Codex CLI](https://developers.openai.com/codex/cli) and sign in from provider settings. |
+| Claude      | Install [Claude Code](https://claude.com/product/claude-code), then sign in from provider settings.                                                                    |
+| Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                                                                                                  |
+| Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then sign in from provider settings.                                                                                       |
+| OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                               |
+| Antigravity | Install and sign in with Google from T3 Code's provider settings.                                                                                                      |
 
 Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
@@ -147,6 +147,37 @@ their original values.
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md), and
 [Antigravity](./providers-antigravity.md).
+
+### Sign in to an installed CLI
+
+In **Settings → Providers**, select the environment and instance, then sign in
+from its account section. On mobile, open the environment's provider settings.
+Existing CLI logins are reused; opening settings does not start a new login.
+
+- **Codex:** open the authorization page and enter the device code. Device-code
+  login must be enabled for your ChatGPT account or workspace. This option applies
+  to an existing Codex installation; T3-managed ChatGPT accounts keep their own
+  connection flow.
+- **Claude:** open the authorization link, then paste the browser's authorization
+  code into T3 Code. The native command is `claude auth login --claudeai`.
+  API-key, Console, and cloud-provider authentication keep their native setup paths.
+- **Grok:** open the authorization page and enter the device code supplied by
+  `grok login --device-auth`.
+
+The installed CLI saves the login in the selected instance's native credential
+store. Its home directory, environment variables and server network connection
+are used even when authorization happens in a browser on another machine.
+Use separate native config directories for separate accounts.
+
+Only the client that starts a login can submit its code or cancel it. Other
+clients can see that sign-in is in progress. Pending logins expire after
+15 minutes; the provider may expire a code sooner. Cancel or retry from the account
+section when necessary. If authorization completed but the account still appears
+out of date, refresh account status before starting another login.
+
+Signing out stops running threads that share those credentials but keeps their
+history. It signs out the native CLI as well as T3 Code. Signing in again also stops
+threads using the same credentials, so finish active work before changing accounts.
 
 ## Next steps
 

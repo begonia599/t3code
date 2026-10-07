@@ -70,6 +70,11 @@ it.layer(testLayer)("GrokDriver", (it) => {
       });
       // `grok update` installs under GROK_HOME, so it must target this instance's home.
       expect(capabilities.update?.env?.GROK_HOME).toBe(grokHome);
+      expect(instance.auth?.credentialBinding).toEqual({
+        owner: "provider",
+        key: `grok:${yield* fs.realPath(grokHome)}`,
+      });
+      expect((yield* instance.snapshot.getSnapshot).setup?.canAuthenticate).toBe(false);
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner),
       Effect.scoped,

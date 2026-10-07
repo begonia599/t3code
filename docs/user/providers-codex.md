@@ -24,15 +24,17 @@ localhost page into the sign-in panel, even if that page could not load.
 To view and edit this instance's native settings, instructions and Skills, see
 [Native agent configuration](./native-configuration.md).
 
-T3 Code can use your installed Codex and its existing login. Run `codex login`
-on the environment's machine to sign in. [Provider setup](./install.md#providers)
-covers installation and custom configuration.
+T3 Code can use your installed Codex and its existing login. If it is signed out,
+start device-code sign-in in **Settings → Providers** for that instance, or run
+`codex login` on the environment's machine. See
+[native CLI sign-in](./install.md#sign-in-to-an-installed-cli) for authorization,
+cancellation and account changes.
 
 ## Use multiple accounts
 
 Add another ChatGPT account in **Settings → Providers**, then select the account
 from the thread's model picker. Compatible accounts can continue the same thread.
-Connecting accounts through T3 Code leaves your CLI login unchanged.
+Connecting T3-managed ChatGPT accounts leaves your CLI login unchanged.
 
 ### Multiple CLI logins
 
@@ -40,8 +42,9 @@ A shared Codex home with a shadow home lets work and personal accounts continue
 the same threads. The accounts share Codex sessions and configuration while keeping
 their own login and available models.
 
-Keep your first account in `~/.codex`. On the environment's machine, sign the
-second account into a fresh directory:
+Keep your first account in `~/.codex`. Add the second instance with a fresh shadow
+directory, then sign in from that instance's account section. Alternatively, sign
+in on the environment's machine:
 
 ```bash
 mkdir -p ~/.codex_personal

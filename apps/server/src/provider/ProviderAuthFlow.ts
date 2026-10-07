@@ -295,7 +295,9 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
                     phase: "waiting",
                     interaction,
                     authorizationUrl:
-                      interaction.type === "browser" || interaction.type === "deviceCode"
+                      interaction.type === "browser" ||
+                      interaction.type === "deviceCode" ||
+                      interaction.type === "authorizationCode"
                         ? interaction.url
                         : null,
                     message: "Complete sign-in to continue.",

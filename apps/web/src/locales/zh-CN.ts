@@ -1,5 +1,88 @@
 /** English source text is the fallback for missing entries and future locales. */
 export const zhCN: Readonly<Record<string, string>> = {
+  "Enable this instance to sign out.": "启用此实例后即可退出登录。",
+  "Codex sign-in ended before authorization completed.": "Codex 登录在授权完成前结束，请重试。",
+  "Refresh account status": "刷新账号状态",
+  "Sign-in completed. Refresh provider status to confirm the account.":
+    "原生登录已完成，请刷新提供方状态以确认账号。",
+  "Claude account": "Claude 账号",
+  "Grok account": "Grok 账号",
+  "Sign in with Claude": "使用 Claude 登录",
+  "Sign in with Grok": "使用 Grok 登录",
+  "Sign out of Claude?": "退出此 Claude 账号？",
+  "Sign out of Grok?": "退出此 Grok 账号？",
+  "Enable this instance to sign in.": "启用此实例后即可登录。",
+  "Browser sign-in is unavailable for this instance's authentication settings.":
+    "此实例的认证配置不支持浏览器登录，请检查实例配置或环境版本。",
+  "Waiting for sign-in.": "正在等待登录。",
+  "Signed in.": "已登录。",
+  "Sign in with your account.": "使用你的账号登录。",
+  "Could not update sign-in. Try again.": "无法更新登录状态，请重试。",
+  "Open the authorization page, then paste the code it gives you below.":
+    "打开授权页面，完成授权后将页面给出的授权码粘贴到下方。",
+  "Authorization code": "授权码",
+  "Submit authorization code": "提交授权码",
+  "Could not run the instance's login command. Check its CLI, execution environment, and network.":
+    "无法运行此实例的登录命令，请检查其 CLI、执行环境和网络。",
+  "The login command returned too much output. Check the CLI version and try again.":
+    "登录命令输出异常，请检查 CLI 版本后重试。",
+  "Enter the authorization code from the browser as a single line.":
+    "请填写浏览器给出的授权码，内容必须为单行。",
+  "Could not send the authorization code. Start sign-in again.": "无法提交授权码，请重新发起登录。",
+  "Sign-in did not complete. Update the CLI if needed and try again.":
+    "登录未完成，请检查或更新 CLI 后重试。",
+  "The CLI did not provide a supported sign-in link. Update it and try again.":
+    "CLI 未提供支持的登录链接，请更新后重试。",
+  "Could not verify the new account. Refresh provider status before retrying.":
+    "无法核验新账号，请刷新提供方状态后再重试。",
+  "The CLI did not confirm an account login. Check this instance's authentication settings.":
+    "CLI 未确认账号登录，请检查此实例的认证设置。",
+  "Could not sign out. Try again.": "无法退出登录，请重试。",
+  "Codex account": "Codex 账号",
+  "Authorize this instance in your browser without SSH.": "在浏览器中为此实例授权，无需 SSH。",
+  "Reading sign-in status.": "正在读取登录状态。",
+  "Sign in with ChatGPT": "使用 ChatGPT 登录",
+  "Retry sign-in": "重试登录",
+  "Cancel sign-in": "取消登录",
+  "Sign out": "退出登录",
+  "Sign out of Codex?": "退出此 Codex 账号？",
+  "This stops running threads using this sign-in. Thread history is kept.":
+    "这会停止使用此账号的运行中会话，会话历史将保留。",
+  "Open the authorization page and enter this one-time code.": "打开授权页面并输入此一次性验证码。",
+  "Open authorization page": "打开授权页面",
+  "Copy code": "复制验证码",
+  "Code copied": "验证码已复制",
+  "Expires at": "到期时间",
+  "Retry setup status": "重新读取登录状态",
+  "Starting sign-in.": "正在启动登录。",
+  "Complete sign-in to continue.": "完成授权后将自动继续。",
+  "Checking provider sign-in.": "正在核验登录结果。",
+  "Sign-in complete.": "登录完成。",
+  "Sign-in cancelled.": "已取消登录。",
+  "Sign-in expired. Start again.": "登录已过期，请重新发起。",
+  "Signed out.": "已退出登录。",
+  "Sign-in is in progress in another client.": "另一个客户端正在登录，请在该客户端完成或取消。",
+  "Could not open the sign-in page. Open the displayed link in your browser.":
+    "无法打开授权页面，请在浏览器中打开显示的链接。",
+  "Could not copy the code. Enter the displayed code manually.":
+    "无法复制验证码，请手动输入显示的验证码。",
+  "Could not start Codex sign-in. Check the instance's CLI and network.":
+    "无法启动 Codex 登录，请检查此实例的 CLI 和网络。",
+  "Could not start device-code login. Update Codex, enable device-code login in ChatGPT, and check the instance's network.":
+    "无法启动设备码登录，请更新 Codex、在 ChatGPT 中启用设备码登录，并检查此实例的网络。",
+  "This Codex version did not return a device-code login. Update Codex and try again.":
+    "此 Codex 版本未返回设备码登录信息，请更新后重试。",
+  "Codex returned an invalid device-code login.": "Codex 返回的设备码登录信息无效。",
+  "Codex sign-in failed or expired. Start again.": "Codex 登录失败或已过期，请重试。",
+  "Could not verify the Codex account. Refresh provider status before retrying.":
+    "无法核验 Codex 账号，请刷新提供方状态后再重试。",
+  "Codex did not report a ChatGPT account. Check the instance's authentication settings.":
+    "Codex 未返回 ChatGPT 账号，请检查此实例的认证设置。",
+  "Codex exited before sign-in could be verified. Start again.":
+    "Codex 在完成登录核验前退出，请重试。",
+  "The Codex login process could not be monitored. Start again.":
+    "无法监测 Codex 登录进程，请重试。",
+  "Could not sign out of Codex. Try again.": "无法退出 Codex 登录，请重试。",
   "This path contains too many symbolic links.": "此路径包含过多符号链接。",
   "Duplicate JSON keys require the raw editor. Your draft was kept unchanged.":
     "JSON 存在重复键，请在原文中编辑，草稿未被修改。",
