@@ -970,6 +970,26 @@ export function createServerEnvironmentAtoms<R, E>(
   }) => welcomeFamily(target.environmentId);
 
   return {
+    nativeConfigList: createEnvironmentRpcCommand(runtime, {
+      label: "native-config:list",
+      tag: WS_METHODS.nativeConfigList,
+    }),
+    nativeConfigRead: createEnvironmentRpcCommand(runtime, {
+      label: "native-config:read",
+      tag: WS_METHODS.nativeConfigRead,
+    }),
+    nativeConfigPreview: createEnvironmentRpcCommand(runtime, {
+      label: "native-config:preview",
+      tag: WS_METHODS.nativeConfigPreview,
+    }),
+    nativeConfigWrite: createEnvironmentRpcCommand(runtime, {
+      label: "native-config:write",
+      tag: WS_METHODS.nativeConfigWrite,
+    }),
+    nativeConfigUndo: createEnvironmentRpcCommand(runtime, {
+      label: "native-config:undo",
+      tag: WS_METHODS.nativeConfigUndo,
+    }),
     configValueAtom,
     updateStateAtom,
     settingsValueAtom,

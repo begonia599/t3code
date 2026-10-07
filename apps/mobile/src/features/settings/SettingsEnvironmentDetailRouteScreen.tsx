@@ -1,3 +1,4 @@
+import { NativeConfigEditorButton } from "./NativeConfigEditor";
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
@@ -319,6 +320,13 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                             </Text>
                           ) : null}
                         </View>
+                        {provider.driver === "codex" || provider.driver === "claudeAgent" ? (
+                          <NativeConfigEditorButton
+                            environmentId={environmentId}
+                            instanceId={provider.instanceId}
+                            readOnly={!allowed}
+                          />
+                        ) : null}
                         {canUpdateEnvironmentProvider(provider) ? (
                           <SettingsActionRow
                             icon="arrow.up.circle"

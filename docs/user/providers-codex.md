@@ -21,6 +21,9 @@ localhost page into the sign-in panel, even if that page could not load.
 
 ## Use an existing Codex login
 
+To view and edit this instance's native settings, instructions and Skills, see
+[Native agent configuration](./native-configuration.md).
+
 T3 Code can use your installed Codex and its existing login. Run `codex login`
 on the environment's machine to sign in. [Provider setup](./install.md#providers)
 covers installation and custom configuration.

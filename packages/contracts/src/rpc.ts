@@ -1,4 +1,14 @@
 import {
+  NativeConfigTarget,
+  NativeConfigList,
+  NativeConfigReadInput,
+  NativeConfigDocument,
+  NativeConfigWriteInput,
+  NativeConfigWriteResult,
+  NativeConfigUndoInput,
+  NativeConfigError,
+} from "./nativeConfig.ts";
+import {
   ChatGptReconnectProfileInput,
   ChatGptReconnectProfile,
   ChatGptImportProfileInput,
@@ -293,6 +303,12 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsListEntries: "projects.listEntries",
   projectsReadFile: "projects.readFile",
+  nativeConfigList: "nativeConfig.list",
+  nativeConfigRead: "nativeConfig.read",
+  nativeConfigPreview: "nativeConfig.preview",
+  nativeConfigWrite: "nativeConfig.write",
+  nativeConfigUndo: "nativeConfig.undo",
+
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
@@ -987,6 +1003,36 @@ const WsProjectsListEntriesRpc = Rpc.make(WS_METHODS.projectsListEntries, {
   error: Schema.Union([ProjectListEntriesError, EnvironmentAuthorizationError]),
 });
 
+const WsNativeConfigListRpc = Rpc.make(WS_METHODS.nativeConfigList, {
+  payload: NativeConfigTarget,
+  success: NativeConfigList,
+  error: Schema.Union([NativeConfigError, EnvironmentAuthorizationError]),
+});
+
+const WsNativeConfigReadRpc = Rpc.make(WS_METHODS.nativeConfigRead, {
+  payload: NativeConfigReadInput,
+  success: NativeConfigDocument,
+  error: Schema.Union([NativeConfigError, EnvironmentAuthorizationError]),
+});
+
+const WsNativeConfigPreviewRpc = Rpc.make(WS_METHODS.nativeConfigPreview, {
+  payload: NativeConfigWriteInput,
+  success: Schema.String,
+  error: Schema.Union([NativeConfigError, EnvironmentAuthorizationError]),
+});
+
+const WsNativeConfigWriteRpc = Rpc.make(WS_METHODS.nativeConfigWrite, {
+  payload: NativeConfigWriteInput,
+  success: NativeConfigWriteResult,
+  error: Schema.Union([NativeConfigError, EnvironmentAuthorizationError]),
+});
+
+const WsNativeConfigUndoRpc = Rpc.make(WS_METHODS.nativeConfigUndo, {
+  payload: NativeConfigUndoInput,
+  success: NativeConfigDocument,
+  error: Schema.Union([NativeConfigError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   payload: ProjectReadFileInput,
   success: ProjectReadFileResult,
@@ -1528,6 +1574,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeProjectClonesRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
+  WsNativeConfigListRpc,
+  WsNativeConfigReadRpc,
+  WsNativeConfigPreviewRpc,
+  WsNativeConfigWriteRpc,
+  WsNativeConfigUndoRpc,
+
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsEnsureScratchRpc,

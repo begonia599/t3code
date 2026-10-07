@@ -1,3 +1,4 @@
+import { NativeConfigEditorButton } from "./NativeConfigEditor";
 import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
@@ -1150,7 +1151,17 @@ export function EnvironmentProviderSettings({
           <div className="min-w-0 @min-[48rem]/providers:min-h-0">
             {selectedRow ? (
               <ScrollArea scrollFade chainVerticalScroll className="@min-[48rem]/providers:h-full">
-                <div className="space-y-6 p-4">{renderProviderInstance(selectedRow, "editor")}</div>
+                <div className="space-y-6 p-4">
+                  {renderProviderInstance(selectedRow, "editor")}
+                  {selectedRow.driver === "codex" || selectedRow.driver === "claudeAgent" ? (
+                    <NativeConfigEditorButton
+                      key={selectedRow.instanceId}
+                      environmentId={environmentId}
+                      instanceId={selectedRow.instanceId}
+                      readOnly={readOnly}
+                    />
+                  ) : null}
+                </div>
               </ScrollArea>
             ) : (
               <div className="p-6 text-sm text-muted-foreground">

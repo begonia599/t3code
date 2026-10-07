@@ -6,6 +6,9 @@ shared provider settings.
 
 ## Separate accounts or configurations
 
+To view and edit this instance's native settings, instructions, memories and
+Skills, see [Native agent configuration](./native-configuration.md).
+
 Use a separate Claude config directory for each account. This also works for named
 presets that need different Claude settings or a router connection.
 

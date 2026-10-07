@@ -302,6 +302,10 @@
     "./device/duo-control": {
       "types": "./src/device/duoControl.ts",
       "default": "./src/device/duoControl.ts"
+    },
+    "./state/nativeConfig": {
+      "types": "./src/state/nativeConfig.ts",
+      "default": "./src/state/nativeConfig.ts"
     }
   },
   "scripts": {
