@@ -48,6 +48,11 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+/** UI language is a device preference; provider output and project data are never translated. */
+export const InterfaceLanguage = Schema.Literals(["en", "zh-CN"]);
+export type InterfaceLanguage = typeof InterfaceLanguage.Type;
+export const DEFAULT_INTERFACE_LANGUAGE: InterfaceLanguage = "en";
+
 export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
@@ -296,6 +301,9 @@ export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
 export const ClientSettingsSchema = Schema.Struct({
+  language: InterfaceLanguage.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_LANGUAGE)),
+  ),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -1599,6 +1607,7 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  language: Schema.optionalKey(InterfaceLanguage),
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),

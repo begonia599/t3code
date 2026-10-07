@@ -1,7 +1,8 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation } from "@react-navigation/native";
-import { Platform, View } from "react-native";
+import { Alert, Platform, View } from "react-native";
+import { useAtomSet } from "@effect/atom-react";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -17,6 +18,8 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { useMobileLanguage, useMobileT } from "../../i18n";
+import { updateMobilePreferencesAtom } from "../../state/preferences";
 
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
@@ -128,6 +131,9 @@ function LocalSettingsRouteScreen() {
 }
 
 function SettingsIndexSections() {
+  const t = useMobileT();
+  const language = useMobileLanguage();
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const noServerTargets = selectedTargets.length === 0;
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
@@ -148,6 +154,18 @@ function SettingsIndexSections() {
     <>
       <SettingsSection title="Interface">
         <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
+        <SettingsRow
+          icon="globe"
+          label="Language"
+          value={t(language === "zh-CN" ? "Simplified Chinese" : "English")}
+          onPress={() =>
+            Alert.alert(t("Language"), t("Choose the language used on this device."), [
+              { text: "English", onPress: () => savePreferences({ language: "en" }) },
+              { text: "简体中文", onPress: () => savePreferences({ language: "zh-CN" }) },
+              { text: t("Cancel"), style: "cancel" },
+            ])
+          }
+        />
         {Platform.OS === "ios" ? (
           <SettingsRow icon="keyboard" label="Keyboard" target="SettingsKeyboard" />
         ) : null}

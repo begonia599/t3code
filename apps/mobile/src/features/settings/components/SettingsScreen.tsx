@@ -5,6 +5,7 @@ import { Platform, View } from "react-native";
 import type { ScreenHeaderProps } from "../../../components/ScreenHeader.types";
 import { ScreenHeader } from "../../../components/ScreenHeader";
 import { MaterialScreenContent as SettingsScreenContent } from "../../../components/MaterialScreenContent";
+import { useMobileT } from "../../../i18n";
 
 export { SettingsScreenContent };
 
@@ -16,11 +17,12 @@ export function SettingsScreen(
   },
 ) {
   const navigation = useNavigation();
+  const t = useMobileT();
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <ScreenHeader
-        title={props.title}
+        title={t(props.title)}
         actions={props.actions}
         trailing={Platform.OS === "android" ? props.trailing : undefined}
         sidebar={false}

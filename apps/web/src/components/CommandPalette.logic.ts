@@ -379,6 +379,21 @@ function rankCommandPaletteItemMatch(
   return 0;
 }
 
+/** Add translated action names to search without translating project, thread, or file names. */
+export function localizeCommandPaletteGroups(
+  groups: ReadonlyArray<CommandPaletteGroup>,
+  translate: (source: string) => string,
+): CommandPaletteGroup[] {
+  return groups.map((group) => ({
+    ...group,
+    items: group.items.map((item) => {
+      if (!item.value.startsWith("action:") || typeof item.title !== "string") return item;
+      const title = translate(item.title);
+      return { ...item, title, searchTerms: [...item.searchTerms, item.title, title] };
+    }),
+  }));
+}
+
 export function filterCommandPaletteGroups(input: {
   activeGroups: ReadonlyArray<CommandPaletteGroup>;
   query: string;

@@ -77,6 +77,20 @@ describe("ClientSettings rich text composer", () => {
   });
 });
 
+describe("ClientSettings interface language", () => {
+  it("defaults older device settings to English and persists a Chinese choice", () => {
+    expect(decodeClientSettings({ timestampFormat: "24-hour" }).language).toBe("en");
+    expect(decodeClientSettingsPatch({ language: "zh-CN" })).toEqual({ language: "zh-CN" });
+    expect(encodeClientSettings(decodeClientSettings({ language: "zh-CN" })).language).toBe(
+      "zh-CN",
+    );
+  });
+
+  it("rejects unsupported locale values", () => {
+    expect(() => decodeClientSettingsPatch({ language: "invalid" })).toThrow();
+  });
+});
+
 describe("ServerSettings default permissions", () => {
   it("keeps full access for settings saved before a default was configured", () => {
     expect(decodeServerSettings({}).defaultRuntimeMode).toBe("full-access");

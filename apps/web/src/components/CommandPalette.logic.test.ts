@@ -10,10 +10,53 @@ import {
   enumerateCommandPaletteItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
+  localizeCommandPaletteGroups,
   reduceCommandPaletteUiState,
   type CommandPaletteActionItem,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+import { zhCN } from "../locales/zh-CN";
+
+describe("localized command search", () => {
+  it("finds actions in either language while preserving user names and action targets", async () => {
+    const run = vi.fn(async () => {});
+    const action: CommandPaletteActionItem = {
+      kind: "action",
+      value: "action:project-settings",
+      title: "Project settings",
+      description: "Settings",
+      searchTerms: ["project settings"],
+      icon: null,
+      run,
+    };
+    const thread: CommandPaletteActionItem = {
+      ...action,
+      value: "thread:settings",
+      title: "Settings",
+      searchTerms: ["Settings"],
+    };
+    const groups = localizeCommandPaletteGroups(
+      [{ value: "actions", label: "Actions", items: [action, thread] }],
+      (source) => zhCN[source] ?? source,
+    );
+
+    for (const query of [">项目设置", ">Project settings"]) {
+      const result = filterCommandPaletteGroups({
+        activeGroups: groups,
+        query,
+        isInSubmenu: false,
+        projectSearchItems: [],
+        threadSearchItems: [],
+      })[0]?.items[0];
+      expect(result?.title).toBe("项目设置");
+      expect(result?.description).toBe("Settings");
+      if (result?.kind === "action") await result.run();
+    }
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(groups[0]?.items[1]).toBe(thread);
+    expect(action.title).toBe("Project settings");
+  });
+});
 
 describe("linked pull request thread navigation", () => {
   it("keeps archived relations searchable and routes them through the PR environment", async () => {

@@ -130,6 +130,12 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "language",
+    title: "Language",
+    to: "/settings/appearance",
+    searchTerms: ["locale", "中文", "简体中文", "语言"],
+  },
+  {
     id: "storage-worktrees",
     title: "Worktree cleanup",
     to: "/settings/storage",
@@ -979,6 +985,22 @@ export function filterAvailableSettingsSearchItems(
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement),
   );
+}
+
+/** Keep English aliases searchable alongside the translated title and section. */
+export function localizeSettingsSearchItems(
+  items: ReadonlyArray<SettingsSearchItem>,
+  translate: (source: string) => string,
+): SettingsSearchItem[] {
+  return items.map((item) => ({
+    ...item,
+    title: translate(item.title),
+    searchTerms: [
+      ...(item.searchTerms ?? []),
+      item.title,
+      translate(SETTINGS_SECTION_LABELS[item.to]),
+    ],
+  }));
 }
 
 export function searchSettings(

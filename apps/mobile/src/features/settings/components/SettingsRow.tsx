@@ -7,6 +7,7 @@ import { SymbolView } from "../../../components/AppSymbol";
 import { AppText as Text } from "../../../components/AppText";
 import type { SettingsLegalDocumentTarget, SettingsSheetTarget } from "./settings-sheet-targets";
 import { cn } from "../../../lib/cn";
+import { useMobileT } from "../../../i18n";
 
 type SymbolName = ComponentProps<typeof SymbolView>["name"];
 
@@ -21,13 +22,15 @@ export function SettingsRow(props: {
   readonly onPress?: () => void;
 }) {
   const navigation = useNavigation();
+  const t = useMobileT();
+  const label = t(props.label);
   if (Platform.OS === "android") {
     return (
       <MaterialListRow
         className="bg-grouped-card"
-        title={props.label}
+        title={label}
         subtitle={props.valuePosition === "trailing" ? undefined : props.value}
-        accessibilityLabel={[props.label, props.value].filter(Boolean).join(", ")}
+        accessibilityLabel={[label, props.value].filter(Boolean).join(", ")}
         trailing={
           props.valuePosition === "trailing" && props.value ? (
             <View className="flex-row items-center gap-3">
@@ -69,7 +72,7 @@ export function SettingsRow(props: {
       />
       <>
         <Text className="shrink-0 text-lg text-foreground" numberOfLines={1}>
-          {props.label}
+          {label}
         </Text>
         <View className="min-w-0 flex-1 items-end">
           {props.value ? (
@@ -97,7 +100,7 @@ export function SettingsRow(props: {
   if (target) {
     return (
       <Pressable
-        accessibilityLabel={props.label}
+        accessibilityLabel={label}
         accessibilityRole="button"
         disabled={props.disabled}
         onPress={() =>
@@ -116,7 +119,7 @@ export function SettingsRow(props: {
   if (fullScreenTarget) {
     return (
       <Pressable
-        accessibilityLabel={props.label}
+        accessibilityLabel={label}
         accessibilityRole="button"
         disabled={props.disabled}
         onPress={() => navigation.navigate(fullScreenTarget)}
@@ -128,7 +131,7 @@ export function SettingsRow(props: {
 
   return (
     <Pressable
-      accessibilityLabel={props.label}
+      accessibilityLabel={label}
       accessibilityRole="button"
       disabled={props.disabled}
       onPress={props.onPress}

@@ -51,6 +51,7 @@ import { isElectron } from "../env";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
+import { useInterfaceLanguage, useT } from "../i18n";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -122,21 +123,26 @@ export const Route = createRootRoute({
 });
 
 function RootRouteNotFoundView() {
+  const t = useT();
   return (
     <main className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-6">
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
-        <h1 className="text-lg font-medium text-foreground">Page not found</h1>
+        <h1 className="text-lg font-medium text-foreground">{t("Page not found")}</h1>
         <p className="text-sm text-muted-foreground">
-          This link doesn't point to a page in {APP_DISPLAY_NAME}. Go home to choose a project or
-          start a thread.
+          {t("This link doesn't point to a page in")} {APP_DISPLAY_NAME}.{" "}
+          {t("Go home to choose a project or start a thread.")}
         </p>
-        <Button render={<Link to="/" replace />}>Go home</Button>
+        <Button render={<Link to="/" replace />}>{t("Go home")}</Button>
       </div>
     </main>
   );
 }
 
 function RootRouteView() {
+  const language = useInterfaceLanguage();
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
   useEffect(() => installDesktopPasteAsText(window.desktopBridge, window), []);
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();

@@ -7,11 +7,13 @@ import {
   getThreadAutoSettlementSearchAvailability,
   isSettingsOverviewVisible,
   isSettingsSearchScopeAvailable,
+  localizeSettingsSearchItems,
   searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
   type SettingsSearchItem,
 } from "./settingsSearch";
+import { zhCN } from "../../locales/zh-CN";
 
 const ITEMS: ReadonlyArray<SettingsSearchItem> = [
   {
@@ -45,6 +47,18 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it("finds the language setting by Chinese or English title and section", () => {
+    const items = localizeSettingsSearchItems(
+      SETTINGS_SEARCH_ITEMS,
+      (source) => zhCN[source] ?? source,
+    );
+    for (const query of ["语言", "中文", "Language", "外观 语言", "Appearance Language"]) {
+      expect(searchSettings(query, items).map((item) => item.id)).toContain("language");
+    }
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "language")?.title).toBe("Language");
+    expect(getSettingsSearchTargetScope("language")?.scope).toBeNull();
+  });
+
   it.each(["send shortcut", "multiline", "new line"])("finds Send shortcut for %s", (query) => {
     expect(searchSettings(query).map((item) => item.id)).toContain("send-shortcut");
   });

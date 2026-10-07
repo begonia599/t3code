@@ -21,6 +21,13 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Interface language
+
+Choose **Settings → Appearance → Language** on web or desktop, or **Settings → Language** on
+mobile, to switch between English and Simplified Chinese. The choice is saved on each device and
+applies immediately. Translation coverage varies by screen; untranslated interface text falls back
+to English. Agent replies, terminal output, and project content keep their original text.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
