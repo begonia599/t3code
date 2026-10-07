@@ -37,6 +37,7 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { legacyLinkedPullRequestOf } from "@t3tools/shared/threadPullRequests";
+import { firstThreadSearchTermIndex, threadSearchTerms } from "@t3tools/shared/threadSearch";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -187,7 +188,7 @@ const EventReplayStatsRowSchema = Schema.Struct({
 });
 const ActiveThreadRowsRequest = Schema.Struct({ unsettledOnly: Schema.Boolean });
 const ProjectionThreadSearchRequest = Schema.Struct({
-  pattern: Schema.String,
+  patterns: Schema.Array(Schema.String),
   limit: Schema.Int,
 });
 const ProjectionThreadSearchRow = Schema.Struct({
@@ -295,18 +296,13 @@ function escapeLikePattern(value: string): string {
   return value.replaceAll("!", "!!").replaceAll("%", "!%").replaceAll("_", "!_");
 }
 
-function foldAsciiCase(value: string): string {
-  return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
-}
-
 function buildSearchSnippet(text: string, query: string): string {
   const normalizedText = text.replace(/\s+/g, " ").trim();
   if (normalizedText.length <= 240) {
     return normalizedText;
   }
 
-  const normalizedQuery = foldAsciiCase(query.replace(/\s+/g, " ").trim());
-  const matchIndex = foldAsciiCase(normalizedText).indexOf(normalizedQuery);
+  const matchIndex = firstThreadSearchTermIndex(normalizedText, query);
   const bodyLength = 236;
   const idealStart = Math.max(0, matchIndex - 72);
   const start = Math.min(idealStart, normalizedText.length - bodyLength);
@@ -1119,7 +1115,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const searchActiveThreadRows = SqlSchema.findAll({
     Request: ProjectionThreadSearchRequest,
     Result: ProjectionThreadSearchRow,
-    execute: ({ pattern, limit }) =>
+    execute: ({ patterns, limit }) =>
       sql`
         WITH ranked AS (
           SELECT
@@ -1170,7 +1166,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 )
               )
             )
-            AND messages.text LIKE ${pattern} ESCAPE '!'
+            AND ${sql.and(patterns.map((pattern) => sql`messages.text LIKE ${pattern} ESCAPE '!'`))}
         )
         SELECT
           thread_id AS "threadId",
@@ -3073,9 +3069,12 @@ pending_approval_requests AS (
   const searchThreads: ProjectionSnapshotQueryShape["searchThreads"] = Effect.fn(
     "ProjectionSnapshotQuery.searchThreads",
   )(function* (input) {
-    const escapedQuery = escapeLikePattern(input.query);
+    const patterns = threadSearchTerms(input.query).map((term) => `%${escapeLikePattern(term)}%`);
+    if (patterns.length === 0) {
+      return { matches: [] };
+    }
     const rows = yield* searchActiveThreadRows({
-      pattern: `%${escapedQuery}%`,
+      patterns,
       limit: input.limit ?? 50,
     }).pipe(
       Effect.mapError(
