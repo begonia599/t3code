@@ -1,4 +1,5 @@
 import "vite-plus/test/config";
+import * as NodeModule from "node:module";
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
@@ -76,6 +77,13 @@ export default mergeConfig(
       },
     },
     pack: {
+      // The UMD entry hides relative requires inside a factory; those remain
+      // unresolved in a standalone bundle. Use the package's ESM build instead.
+      alias: {
+        "jsonc-parser": NodeModule.createRequire(
+          new URL("../../packages/shared/package.json", import.meta.url),
+        ).resolve("jsonc-parser/lib/esm/main.js"),
+      },
       // The executable embeds one entry; the history worker becomes a hidden
       // subcommand there instead of a sibling script.
       entry: packExecutable ? ["src/bin.ts"] : ["src/bin.ts", "src/claude-history-worker.ts"],
