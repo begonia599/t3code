@@ -40,22 +40,19 @@ export function grokUsageResponseToLimits(
   response: typeof GrokUsageResponse.Type,
   checkedAt: string,
 ) {
-  const usedPercent = response.config?.creditUsagePercent;
-  if (usedPercent === undefined || !Number.isFinite(usedPercent)) {
-    // A billing read that succeeded but carries no percentage is an account
-    // with nothing metered yet, not one that can never report: xAI omits the
-    // field entirely (rather than sending 0) until usage registers, then fills
-    // it in. Calling that `unsupported` would strand the account — the Limits
-    // view drops unsupported entries and deliberately mutes their notice, so a
-    // freshly signed-in Grok account would vanish with no explanation until it
-    // happened to be used, and `applyUsageLimitsUpdate` would refuse the
-    // mid-turn windows that could have recovered it.
-    return makeUsageLimits({ checkedAt, windows: [] });
-  }
   const period = response.config?.currentPeriod;
   const periodType = period?.type?.replace(/^USAGE_PERIOD_TYPE_/, "");
   const kind = periodType === "WEEKLY" ? "weekly" : periodType === "MONTHLY" ? "monthly" : "other";
   const reset = period?.end ? DateTime.make(period.end) : Option.none();
+  // Grok's native /usage treats an omitted percentage as zero for an existing
+  // billing period. Require a recognized period and reset so an empty or
+  // incomplete response does not invent a full allowance.
+  const usedPercent =
+    response.config?.creditUsagePercent ??
+    (kind !== "other" && Option.isSome(reset) ? 0 : undefined);
+  if (usedPercent === undefined || !Number.isFinite(usedPercent)) {
+    return makeUsageLimits({ checkedAt, windows: [] });
+  }
   const window: ServerProviderUsageWindow = {
     id: "subscription",
     kind,

@@ -560,13 +560,48 @@ describe("Grok usage limits", () => {
     ]);
   });
 
-  it("does not invent allowance or reset dates when billing omits them", () => {
-    for (const response of [{}, { config: {} }, { config: { creditUsagePercent: NaN } }]) {
+  it.each([
+    ["WEEKLY", "weekly", "Weekly"],
+    ["MONTHLY", "monthly", "Monthly"],
+  ])(
+    "shows zero usage for an existing %s period when the percentage is omitted",
+    (type, kind, label) => {
+      const limits = grokUsageResponseToLimits(
+        {
+          config: {
+            currentPeriod: {
+              type: `USAGE_PERIOD_TYPE_${type}`,
+              end: "2026-10-10T00:47:33.374217+00:00",
+            },
+          },
+        },
+        checkedAt,
+      );
+      expect(limits.windows).toEqual([
+        { id: "subscription", kind, label, usedPercent: 0, resetsAt: "2026-10-10T00:47:33.374Z" },
+      ]);
+      expect(limits.unavailable).toBeUndefined();
+    },
+  );
+
+  it("does not invent allowance or reset dates for incomplete or invalid billing data", () => {
+    for (const response of [
+      {},
+      { config: {} },
+      { config: { creditUsagePercent: NaN } },
+      { config: { currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY" } } },
+      { config: { currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", end: "invalid" } } },
+      { config: { currentPeriod: { end: "2026-10-10T00:47:33Z" } } },
+      { config: { currentPeriod: { type: "UNKNOWN", end: "2026-10-10T00:47:33Z" } } },
+      {
+        config: {
+          creditUsagePercent: NaN,
+          currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", end: "2026-10-10T00:47:33Z" },
+        },
+      },
+    ]) {
       const limits = grokUsageResponseToLimits(response, checkedAt);
       expect(limits.windows).toEqual([]);
-      // Nothing metered yet, which xAI reports by omitting the field until
-      // usage registers. Marking it `unsupported` would drop the account from
-      // the Limits view for good; leaving the marker off keeps it listed.
       expect(limits.unavailable).toBeUndefined();
     }
     expect(
