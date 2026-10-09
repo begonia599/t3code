@@ -483,14 +483,6 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
-  const auth: ServerProviderAuth = environment[GROK_API_KEY_ENV]?.trim()
-    ? { status: "authenticated", type: "api_key", label: "xAI API key" }
-    : cliModels.authenticated === true
-      ? { status: "authenticated", type: "cached_token", label: "Grok account" }
-      : cliModels.authenticated === false
-        ? { status: "unauthenticated" }
-        : { status: "unknown" };
-
   const skills = yield* discoverGrokSkills(grokSettings, environment, cwd).pipe(
     Effect.tapError((cause) => Effect.logDebug("Grok skill discovery failed.", { cause })),
     Effect.orElseSucceed(() => []),
@@ -508,6 +500,32 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       errorTag: Exit.isFailure(acpExit) ? causeErrorTag(acpExit.cause) : "Timeout",
     });
   }
+
+  let authenticated = cliModels.authenticated;
+  if (authenticated === false && !environment[GROK_API_KEY_ENV]?.trim()) {
+    // `grok models` prints its cached login verdict BEFORE initializing the
+    // agent, which can silently renew an expired token. Re-read after native
+    // initialization rather than publishing that stale logged-out verdict.
+    const recheck = yield* runGrokCliCommand(grokSettings, ["models"], environment).pipe(
+      Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+      Effect.result,
+    );
+    authenticated =
+      Result.isSuccess(recheck) &&
+      Option.isSome(recheck.success) &&
+      recheck.success.value.code === 0
+        ? parseGrokModelsCliOutput(
+            `${recheck.success.value.stdout}\n${recheck.success.value.stderr}`,
+          ).authenticated
+        : null;
+  }
+  const auth: ServerProviderAuth = environment[GROK_API_KEY_ENV]?.trim()
+    ? { status: "authenticated", type: "api_key", label: "xAI API key" }
+    : authenticated === true
+      ? { status: "authenticated", type: "cached_token", label: "Grok account" }
+      : authenticated === false
+        ? { status: "unauthenticated" }
+        : { status: "unknown" };
 
   const discoveredModels = acpModels.length > 0 ? acpModels : cliModels.models;
   const models =

@@ -403,7 +403,11 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
   // A stand-in for the Grok CLI: `--version` and `models` print canned text,
   // and `agent stdio` execs the mock ACP agent so `initialize` returns model metadata.
-  const writeFakeGrokCli = (input: { readonly modelsOutput: string; readonly acp: boolean }) =>
+  const writeFakeGrokCli = (input: {
+    readonly modelsOutput: string;
+    readonly acp: boolean;
+    readonly afterModels?: { readonly output: string; readonly code: number };
+  }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-probe-" });
@@ -412,13 +416,23 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
         directory: dir,
         name: "grok",
         source: [
+          'import { existsSync, writeFileSync } from "node:fs";',
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          `const completedModels = ${JSON.stringify(NodePath.join(dir, "models-completed"))};`,
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          `const afterModels = ${JSON.stringify(input.afterModels ?? null)};`,
           'if (process.argv[2] === "--version") {',
           '  process.stdout.write("grok 1.0.13\\n");',
           "  process.exit(0);",
           "}",
           'if (process.argv[2] === "models") {',
+          "  if (afterModels && existsSync(completedModels)) {",
+          "    process.stdout.write(afterModels.output);",
+          "    process.exit(afterModels.code);",
+          "  }",
           // @effect-diagnostics-next-line preferSchemaOverJson:off
           `  process.stdout.write(${JSON.stringify(input.modelsOutput)});`,
+          '  writeFileSync(completedModels, "done");',
           "  process.exit(0);",
           "}",
           'if (process.argv[2] !== "agent") process.exit(1);',
@@ -479,6 +493,28 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.message).toContain("grok login");
       expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-4.6", "grok-mock-alt"]);
     }),
+  );
+
+  it.effect.each([
+    { name: "renewed token", output: LOGGED_IN_MODELS_OUTPUT, code: 0, status: "authenticated" },
+    { name: "missing login", output: LOGGED_OUT_MODELS_OUTPUT, code: 0, status: "unauthenticated" },
+    { name: "failed recheck", output: LOGGED_OUT_MODELS_OUTPUT, code: 1, status: "unknown" },
+  ])("rechecks the login verdict after native initialization: $name", (fixture) =>
+    Effect.gen(function* () {
+      const grokPath = yield* writeFakeGrokCli({
+        modelsOutput: LOGGED_OUT_MODELS_OUTPUT,
+        afterModels: fixture,
+        acp: true,
+      });
+      const snapshot = yield* checkGrokProviderStatus(
+        decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+        { ...process.env, XAI_API_KEY: "" },
+      );
+      expect(snapshot.auth.status).toBe(fixture.status);
+      if (fixture.status !== "unauthenticated") {
+        expect(snapshot.message ?? "").not.toContain("grok login");
+      }
+    }).pipe(Effect.scoped),
   );
 
   it.effect("falls back to CLI-listed models with a warning when ACP initialize fails", () =>
