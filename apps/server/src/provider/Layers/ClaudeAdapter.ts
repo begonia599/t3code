@@ -101,6 +101,7 @@ import {
   isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogContextEnvironment,
   resolveClaudeCatalogContextWindowTokens,
   resolveClaudeCatalogEffort,
   resolveClaudeModelSlug,
@@ -4923,6 +4924,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ? resolveClaudeCatalogApiModelId(modelCatalog, modelSelection)
         : undefined;
       const initialContextWindow = selectedClaudeContextWindow(modelCatalog, modelSelection);
+      const contextEnvironment = resolveClaudeCatalogContextEnvironment(
+        modelCatalog,
+        modelSelection,
+      );
       const rawEffort = getModelSelectionStringOptionValue(modelSelection, "effort");
       const effort =
         resolveClaudeCatalogEffort(modelCatalog, modelSelection?.model, rawEffort) ?? null;
@@ -4963,6 +4968,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? "bypassPermissions"
           : runtimeModeToPermission[input.runtimeMode]);
       const settings = {
+        ...(Object.keys(contextEnvironment).length > 0 ? { env: contextEnvironment } : {}),
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
         ...(fastMode ? { fastMode: true } : {}),
@@ -5020,7 +5026,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
-        env: McpProviderSession.withAgentDeviceEnvironment(claudeEnvironment, mcpSession),
+        env: McpProviderSession.withAgentDeviceEnvironment(
+          { ...claudeEnvironment, ...contextEnvironment },
+          mcpSession,
+        ),
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpSession

@@ -1,4 +1,4 @@
-import type { ClaudeModelCatalog } from "./ClaudeModelCatalog.ts";
+import { resolveClaudeModelCatalog, type ClaudeModelCatalog } from "./ClaudeModelCatalog.ts";
 
 // Transport tests must stay independent of bundled or remote manifest contents.
 // Keep every model, alias, capability, and runtime mapping in this fixture synthetic.
@@ -6,6 +6,7 @@ export const SYNTHETIC_CLAUDE_CAPABLE_MODEL = "claude-synthetic-capable";
 export const SYNTHETIC_CLAUDE_COLLIDING_ALIAS = "synthetic-collision";
 export const SYNTHETIC_CLAUDE_STANDARD_MODEL = "claude-synthetic-standard";
 export const SYNTHETIC_CLAUDE_THINKING_MODEL = "claude-synthetic-thinking";
+export const SYNTHETIC_CLAUDE_NATIVE_1M_MODEL = "claude-synthetic-native-1m";
 
 const effort = {
   id: "effort",
@@ -38,6 +39,25 @@ const runtime = {
 
 export const SYNTHETIC_CLAUDE_MODEL_CATALOG: ClaudeModelCatalog = {
   models: [
+    ...resolveClaudeModelCatalog({
+      version: 1,
+      currentModels: {},
+      providers: {
+        claudeAgent: {
+          profiles: {
+            native: { adapter: { claudeCode: { fixedContextWindowTokens: 1_000_000 } } },
+          },
+          models: [
+            {
+              slug: SYNTHETIC_CLAUDE_NATIVE_1M_MODEL,
+              name: "Native 1M",
+              status: "current",
+              profile: "native",
+            },
+          ],
+        },
+      },
+    }).models,
     {
       model: {
         slug: SYNTHETIC_CLAUDE_CAPABLE_MODEL,

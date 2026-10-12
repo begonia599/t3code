@@ -15,6 +15,7 @@ import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
   SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
   SYNTHETIC_CLAUDE_MODEL_CATALOG,
+  SYNTHETIC_CLAUDE_NATIVE_1M_MODEL,
   SYNTHETIC_CLAUDE_STANDARD_MODEL,
   SYNTHETIC_CLAUDE_THINKING_MODEL,
 } from "../provider/ClaudeModelCatalog.testFixtures.ts";
@@ -70,6 +71,10 @@ function makeFakeClaudeBinary(dir: string) {
         'const settingsIndex = argv.indexOf("--settings");',
         "if (settingsIndex === -1 || JSON.parse(argv[settingsIndex + 1]).disableAllHooks !== true) {",
         '  fail("text generation must disable hooks", 10);',
+        "}",
+        "const contextFlag = JSON.parse(argv[settingsIndex + 1]).env?.CLAUDE_CODE_DISABLE_1M_CONTEXT;",
+        "if (contextFlag !== undefined && process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT !== contextFlag) {",
+        '  fail("native context setting must also reach the child environment", 13);',
         "}",
         "const cwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;",
         "if (cwdMustNotBe && realpathSync(process.cwd()) === realpathSync(cwdMustNotBe)) {",
@@ -260,6 +265,38 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
+  for (const [value, flag] of [
+    ["200k", "1"],
+    ["1m", "0"],
+  ] as const) {
+    it.effect(`applies native ${value} context to Claude text generation`, () =>
+      withFakeClaudeEnv(
+        {
+          output: JSON.stringify({
+            structured_output: { subject: "Apply context limit", body: "" },
+          }),
+          argsMustContain: `"CLAUDE_CODE_DISABLE_1M_CONTEXT":"${flag}"`,
+          argsMustNotContain: "[1m]",
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generateCommitMessage({
+              cwd: process.cwd(),
+              branch: "feature/context",
+              stagedSummary: "1 file changed",
+              stagedPatch: "diff",
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("claudeAgent"),
+                SYNTHETIC_CLAUDE_NATIVE_1M_MODEL,
+                [{ id: "contextWindow", value }],
+              ),
+            });
+            expect(generated.subject).toBe("Apply context limit");
+          }),
+      ),
+    );
+  }
+
   it.effect("forwards Claude thinking settings without passing unsupported effort", () =>
     withFakeClaudeEnv(
       {
@@ -344,7 +381,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
               body: "Body",
             },
           }),
-          argsMustContain: `--model ${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded] --effort max --settings {"disableAllHooks":true,"fastMode":true}`,
+          argsMustContain: `--model ${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded] --effort max --settings {"disableAllHooks":true,"env":{"CLAUDE_CODE_DISABLE_1M_CONTEXT":"0"},"fastMode":true}`,
           claudeConfig: { customModels: [SYNTHETIC_CLAUDE_COLLIDING_ALIAS] },
         },
         (textGeneration) =>

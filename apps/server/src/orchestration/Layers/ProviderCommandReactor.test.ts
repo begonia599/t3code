@@ -3272,6 +3272,54 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  effectIt.effect("resumes Claude history when context changes and reuses unchanged sessions", () =>
+    Effect.gen(function* () {
+      const selection = (value: string) =>
+        createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-synthetic-native-1m", [
+          { id: "contextWindow", value },
+        ]);
+      const harness = yield* Effect.promise(() =>
+        createHarness({ threadModelSelection: selection("1m") }),
+      );
+      for (const [index, value] of ["1m", "200k", "1m", "1m"].entries()) {
+        const sent = yield* Deferred.make<void>();
+        const send = harness.sendTurn.getMockImplementation()!;
+        harness.sendTurn.mockImplementationOnce((input) =>
+          send(input).pipe(Effect.tap(() => Deferred.succeed(sent, undefined))),
+        );
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-context-${index}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId(`message-context-${index}`),
+            role: "user",
+            text: "continue",
+            attachments: [],
+          },
+          modelSelection: selection(value),
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Deferred.await(sent);
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.sendTurn.mock.calls).toHaveLength(index + 1);
+        // Repeating the same choice reuses the live session.
+        expect(harness.startSession.mock.calls).toHaveLength(Math.min(index + 1, 3));
+        if (index > 0) {
+          expect(harness.startSession.mock.calls.at(-1)?.[1]).toMatchObject({
+            resumeCursor: { opaque: "resume-1" },
+            modelSelection: selection(value),
+          });
+        }
+        expect(harness.sendTurn.mock.calls.at(-1)?.[0]).toMatchObject({
+          modelSelection: selection(value),
+        });
+      }
+    }),
+  );
+
   it("restarts claude sessions when claude effort changes", async () => {
     const harness = await createHarness({
       threadModelSelection: {

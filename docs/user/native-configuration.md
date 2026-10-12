@@ -29,6 +29,13 @@ session when needed by the native setting. After editing Skills, refresh the
 provider's skills with **Refresh agent skills**. The editor does not restart
 the agent or change its login or network settings automatically.
 
+In a Claude conversation, **Context Window → 200k / 1M** sets the native context
+limit for that conversation. T3 saves the selection and applies it when you next
+send a message, resuming the existing history. The 200k choice uses Claude's
+native context cap; returning to 1M removes that cap for the session. Other
+conversations and shared configuration files are unaffected. Claude still
+controls compaction, and the selected model and account must support 1M.
+
 Discovery is bounded to 500 files and text editing to 256 KiB per file. Memory
 folders are shown by their native directory names; their presence does not prove
 that the selected project loads them. Parent instruction files are candidates too.

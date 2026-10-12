@@ -44,6 +44,7 @@ import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
   SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
   SYNTHETIC_CLAUDE_MODEL_CATALOG,
+  SYNTHETIC_CLAUDE_NATIVE_1M_MODEL,
   SYNTHETIC_CLAUDE_STANDARD_MODEL,
   SYNTHETIC_CLAUDE_THINKING_MODEL,
 } from "../ClaudeModelCatalog.testFixtures.ts";
@@ -570,6 +571,61 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "isolates native context caps between conversations and reverses them on resume",
+    () => {
+      const environment = {
+        ...process.env,
+        CLAUDE_CODE_DISABLE_1M_CONTEXT: "1",
+        HTTPS_PROXY: "http://proxy.invalid:3128",
+      };
+      const harness = makeHarness({ environment, getSessionMessages: async () => [] });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const start = (threadId: ThreadId, value: string, resume = false) =>
+          adapter.startSession({
+            threadId,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              SYNTHETIC_CLAUDE_NATIVE_1M_MODEL,
+              [{ id: "contextWindow", value }],
+            ),
+            runtimeMode: "full-access",
+            ...(resume ? { resumeCursor: { sessionId: CLAUDE_ORIGINAL_SESSION_ID } } : {}),
+          });
+        yield* start(THREAD_ID, "200k");
+        const small = harness.getLastCreateQueryInput()!.options;
+        assert.equal(small.model, SYNTHETIC_CLAUDE_NATIVE_1M_MODEL);
+        assert.equal(small.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "1");
+        assert.deepEqual(small.settings, {
+          showThinkingSummaries: true,
+          env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" },
+        });
+
+        yield* start(RESUME_THREAD_ID, "1m");
+        const large = harness.getLastCreateQueryInput()!.options;
+        assert.equal(large.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "0");
+        assert.equal(small.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "1");
+        assert.equal(small.env?.HTTPS_PROXY, environment.HTTPS_PROXY);
+        assert.equal(large.env?.HTTPS_PROXY, environment.HTTPS_PROXY);
+        assert.equal(environment.CLAUDE_CODE_DISABLE_1M_CONTEXT, "1");
+
+        yield* start(THREAD_ID, "1m", true);
+        const resumed = harness.getLastCreateQueryInput()!.options;
+        assert.equal(resumed.resume, CLAUDE_ORIGINAL_SESSION_ID);
+        assert.equal(resumed.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "0");
+        assert.deepEqual(resumed.settings, {
+          showThinkingSummaries: true,
+          env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
+        });
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("forwards claude effort levels into query options", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -715,6 +771,7 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
+        env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
         showThinkingSummaries: true,
       });
       assert.deepEqual(createInput?.options.thinking, {
@@ -744,6 +801,7 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
+        env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
         showThinkingSummaries: true,
         fastMode: true,
       });
@@ -770,6 +828,7 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
+        env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
         showThinkingSummaries: true,
       });
     }).pipe(
@@ -865,6 +924,7 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(builtInOptions.model, `${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`);
         assert.equal(builtInOptions.effort, "max");
         assert.deepEqual(builtInOptions.settings, {
+          env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
           showThinkingSummaries: true,
           fastMode: true,
         });

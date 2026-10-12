@@ -7,6 +7,8 @@ import {
   formatClaudeVersionUpgradeMessage,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogContextEnvironment,
+  resolveClaudeCatalogContextWindowTokens,
   resolveClaudeCatalogEffort,
   resolveClaudeModelCatalog,
   resolveClaudeModelsForVersion,
@@ -67,6 +69,90 @@ const manifest = (): ModelManifestData => ({
 });
 
 describe("Claude model catalog", () => {
+  it("adds working context choices to remote native 1M profiles without changing their model ID", () => {
+    const source = manifest();
+    const catalog = resolveClaudeModelCatalog({
+      ...source,
+      providers: {
+        claudeAgent: {
+          ...source.providers!.claudeAgent!,
+          profiles: {
+            synthetic: {
+              capabilities: source.providers!.claudeAgent!.profiles.synthetic!.capabilities,
+              adapter: { claudeCode: { fixedContextWindowTokens: 1_000_000 } },
+            },
+          },
+        },
+      },
+    });
+    const selection = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "synthetic" };
+    const model = resolveClaudeModelsForVersion(catalog, "3.2.0")[0]!;
+    assert.deepStrictEqual(
+      model.capabilities?.optionDescriptors?.find((option) => option.id === "contextWindow")?.type,
+      "select",
+    );
+    assert.strictEqual(resolveClaudeCatalogContextWindowTokens(catalog, selection), 1_000_000);
+    for (const [value, tokens, flag] of [
+      ["200k", 200_000, "1"],
+      ["1m", 1_000_000, "0"],
+    ] as const) {
+      const selected = { ...selection, options: [{ id: "contextWindow", value }] };
+      assert.strictEqual(
+        resolveClaudeCatalogApiModelId(catalog, selected),
+        "claude-synthetic-next",
+      );
+      assert.strictEqual(resolveClaudeCatalogContextWindowTokens(catalog, selected), tokens);
+      assert.deepStrictEqual(resolveClaudeCatalogContextEnvironment(catalog, selected), {
+        CLAUDE_CODE_DISABLE_1M_CONTEXT: flag,
+      });
+    }
+    // An existing descriptor is replaced rather than duplicated.
+    assert.strictEqual(
+      model.capabilities?.optionDescriptors?.filter((option) => option.id === "contextWindow")
+        .length,
+      1,
+    );
+    assert.deepStrictEqual(
+      resolveClaudeCatalogContextEnvironment(catalog, {
+        ...selection,
+        model: "custom-opaque",
+        options: [{ id: "contextWindow", value: "200k" }],
+      }),
+      {},
+    );
+  });
+
+  it("keeps fixed 200k models and unrecognized context mappings untouched", () => {
+    const source = manifest();
+    const catalog = resolveClaudeModelCatalog(source);
+    assert.deepStrictEqual(
+      resolveClaudeCatalogContextEnvironment(catalog, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "synthetic",
+      }),
+      {},
+    );
+    const fixed = resolveClaudeModelCatalog({
+      ...source,
+      providers: {
+        claudeAgent: {
+          ...source.providers!.claudeAgent!,
+          profiles: {
+            synthetic: { adapter: { claudeCode: { fixedContextWindowTokens: 200_000 } } },
+          },
+        },
+      },
+    });
+    const selection = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "synthetic" };
+    assert.strictEqual(resolveClaudeCatalogContextWindowTokens(fixed, selection), 200_000);
+    assert.deepStrictEqual(resolveClaudeCatalogContextEnvironment(fixed, selection), {});
+    assert.isFalse(
+      fixed.models[0]!.model.capabilities?.optionDescriptors?.some(
+        (option) => option.id === "contextWindow",
+      ) ?? false,
+    );
+  });
+
   it("filters models at runtime-version boundaries and derives the upgrade message", () => {
     const catalog = resolveClaudeModelCatalog(manifest());
     assert.deepStrictEqual(resolveClaudeModelsForVersion(catalog, "3.1.9"), []);

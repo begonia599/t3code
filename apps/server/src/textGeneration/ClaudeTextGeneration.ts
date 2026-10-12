@@ -44,6 +44,7 @@ import {
   isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogContextEnvironment,
   resolveClaudeCatalogEffort,
   resolveClaudeModelSlug,
   scopeClaudeModelCatalog,
@@ -172,8 +173,14 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       thinkingDescriptor?.type === "boolean" ? thinkingDescriptor.currentValue : undefined;
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
+    const contextEnvironment = resolveClaudeCatalogContextEnvironment(
+      catalog,
+      resolvedModelSelection,
+    );
+    const invocationEnvironment = { ...claudeEnvironment, ...contextEnvironment };
     const settings = {
       disableAllHooks: true,
+      ...(Object.keys(contextEnvironment).length > 0 ? { env: contextEnvironment } : {}),
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
       ...(ultracode ? { ultracode: true } : {}),
@@ -217,10 +224,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--permission-mode",
           "dontAsk",
         ],
-        { env: claudeEnvironment },
+        { env: invocationEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: claudeEnvironment,
+        env: invocationEnvironment,
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {

@@ -48,9 +48,46 @@ function tryResolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeModelC
     const profile = decodeClaudeProfileAdapter(entry.profileAdapter ?? {});
     const adapter = decodeClaudeModelAdapter(entry.adapter ?? {});
     if (Option.isNone(profile) || Option.isNone(adapter)) return null;
+    const runtime = profile.value.claudeCode ?? {};
+    // Upstream advertises native 1M models without a selector. Our selector
+    // drives Claude's session-local native environment, not just a model suffix.
+    // Apply this after resolving either manifest so remote refreshes retain it.
+    const native1m = runtime.fixedContextWindowTokens === 1_000_000;
     models.push({
-      model: entry.model,
-      runtime: profile.value.claudeCode ?? {},
+      model: native1m
+        ? {
+            ...entry.model,
+            capabilities: {
+              ...entry.model.capabilities,
+              optionDescriptors: [
+                ...(entry.model.capabilities?.optionDescriptors ?? []).filter(
+                  (descriptor) => descriptor.id !== "contextWindow",
+                ),
+                {
+                  id: "contextWindow",
+                  label: "Context Window",
+                  type: "select",
+                  options: [
+                    {
+                      id: "200k",
+                      label: "200k",
+                      description: "Limit this conversation to 200k from the next message.",
+                    },
+                    {
+                      id: "1m",
+                      label: "1M",
+                      description: "Use native 1M context from the next message.",
+                      isDefault: true,
+                    },
+                  ],
+                },
+              ],
+            },
+          }
+        : entry.model,
+      runtime: native1m
+        ? { ...runtime, contextWindowTokens: { "200k": 200_000, "1m": 1_000_000 } }
+        : runtime,
       compatibility: adapter.value.claudeCode ?? {},
     });
   }
@@ -255,7 +292,21 @@ export function resolveClaudeCatalogContextWindowTokens(
 ): number | undefined {
   const entry = resolveClaudeCatalogModel(catalog, modelSelection?.model);
   if (!entry) return undefined;
-  if (entry.runtime.fixedContextWindowTokens) return entry.runtime.fixedContextWindowTokens;
   const contextWindow = resolveClaudeCatalogContextWindow(catalog, modelSelection);
-  return contextWindow ? entry.runtime.contextWindowTokens?.[contextWindow] : undefined;
+  return (
+    (contextWindow ? entry.runtime.contextWindowTokens?.[contextWindow] : undefined) ??
+    entry.runtime.fixedContextWindowTokens
+  );
+}
+
+/** Native overrides are scoped to one invocation; never mutate the shared Claude home. */
+export function resolveClaudeCatalogContextEnvironment(
+  catalog: ClaudeModelCatalog,
+  modelSelection: ModelSelection | undefined,
+): Record<string, string> {
+  if (!resolveClaudeCatalogContextWindow(catalog, modelSelection)) return {};
+  const tokens = resolveClaudeCatalogContextWindowTokens(catalog, modelSelection);
+  if (tokens !== 200_000 && tokens !== 1_000_000) return {};
+  // Explicitly clear an inherited cap on the reverse transition back to 1M.
+  return { CLAUDE_CODE_DISABLE_1M_CONTEXT: tokens === 200_000 ? "1" : "0" };
 }
