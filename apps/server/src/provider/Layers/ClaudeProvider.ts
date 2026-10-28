@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -52,6 +53,10 @@ import {
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
+
+const decodeClaudeAuthStatus = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ loggedIn: Schema.Boolean })),
+);
 
 const CLAUDE_PRESENTATION = {
   displayName: "Claude",
@@ -533,10 +538,54 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   );
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
+  // SDK initialization also succeeds without credentials. Only the native auth
+  // command can establish login state; cached capabilities must not override it.
+  const authProbe = yield* runClaudeCommand(
+    claudeSettings,
+    ["auth", "status"],
+    resolvedEnvironment,
+  ).pipe(
+    Effect.flatMap((result) =>
+      decodeClaudeAuthStatus(result.stdout).pipe(
+        Effect.map((status) => ({ ...status, code: result.code })),
+      ),
+    ),
+    Effect.timeout(DEFAULT_TIMEOUT_MS),
+    Effect.result,
+  );
+  const authStatus = Result.isSuccess(authProbe)
+    ? authProbe.success.code === 0 && authProbe.success.loggedIn
+      ? "authenticated"
+      : !authProbe.success.loggedIn &&
+          (authProbe.success.code === 0 || authProbe.success.code === 1)
+        ? "unauthenticated"
+        : "unknown"
+    : "unknown";
+  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
+  if (authStatus !== "authenticated") {
+    return buildServerProvider({
+      presentation: CLAUDE_PRESENTATION,
+      enabled: claudeSettings.enabled,
+      checkedAt,
+      models,
+      slashCommands: [COMPACT_SLASH_COMMAND],
+      skills,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "warning",
+        auth: { status: authStatus },
+        message:
+          authStatus === "unauthenticated"
+            ? "Claude is not signed in. Sign in to continue."
+            : "Could not verify Claude authentication status. Refresh to try again.",
+      },
+    });
+  }
+
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
-  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
@@ -552,8 +601,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         installed: true,
         version: parsedVersion,
         status: "warning",
-        auth: { status: "unknown" },
-        message: "Could not verify Claude authentication status from initialization result.",
+        auth: { status: "authenticated" },
+        message: "Could not read Claude account details from initialization result.",
       },
     });
   }
