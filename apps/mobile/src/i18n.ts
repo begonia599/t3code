@@ -5,6 +5,44 @@ import { useMemo } from "react";
 import { mobilePreferencesAtom } from "./state/preferences";
 
 const zhCN: Readonly<Record<string, string>> = {
+  "Overlapping requests in one thread could not be separated": "同一会话中的重叠请求无法独立计量",
+  "Untracked agent activity overlapped this interval": "期间有无法关联的代理活动",
+  "Quota scope is not supported for calibration": "该额度的适用范围暂不支持校准",
+
+  "Estimates need 3 complete samples covering at least 5 percentage points. Reference API rates are saved when each task starts; incomplete usage is excluded from calibration.":
+    "至少需要 3 个完整样本，累计覆盖 5 个百分点，才会显示估值。每次任务开始时保存 API 参考单价；不完整用量不参与校准。",
+  "Subscription API-equivalent estimates": "订阅额度 API 等值估算",
+  "Only T3 activity is recorded. Concurrent use elsewhere cannot be ruled out. Estimates depend on the observed model mix, not an official balance.":
+    "仅记录 T3 发起的工作，无法完全排除同时在其他客户端的消耗。估值取决于观测到的模型组合，并非官方余额。",
+  "Could not update subscription estimates.": "无法更新订阅额度估算。",
+  "Collecting samples. New tasks record quota before and after execution.":
+    "正在采集样本。新任务会记录执行前后的额度。",
+  "T3 recorded API equivalent": "T3 已记录的 API 等值（可能不完整）",
+  "Valid samples / quota coverage": "有效样本 / 额度覆盖",
+  "Estimated full cycle": "估算整周期等值",
+  "Collecting samples": "采集中",
+  "Estimated remaining at last observation": "上次观测时的剩余额度估值",
+  "Sample records and external activity": "采样记录与外部使用",
+  Running: "执行中",
+  calls: "次调用",
+  "Excluded: external activity": "已排除：期间有外部使用",
+  "Observation only; external overlap remains possible": "观测样本：仍可能混入外部同时使用",
+  "Restore sample": "恢复参与估算",
+  "Exclude: used elsewhere during this interval": "排除：这段时间在其他地方使用了",
+  "Older samples": "更早记录",
+  "Latest samples": "最新记录",
+  "Execution was interrupted; snapshots are incomplete": "服务重启或执行中断，缺少完整快照",
+  "Fresh starting quota is unavailable": "缺少新鲜的开始额度",
+  "Fresh ending quota is unavailable": "缺少新鲜的结束额度",
+  "Account identity is unavailable": "无法确认账号归属",
+  "Background usage is incomplete": "存在无法完整计量的后台调用",
+  "Token or subagent usage is incomplete": "token 或子代理用量不完整",
+  "Model price is unavailable": "模型价格未知",
+  "Token counts are inconsistent": "token 数据不一致",
+  "Account changed during execution": "期间账号发生变化",
+  "Reset cycle is unavailable": "无法确认重置周期",
+  "Model changed during execution": "执行期间模型发生变化",
+
   "Enable this instance to sign out.": "启用此实例后即可退出登录。",
   "Codex sign-in ended before authorization completed.": "Codex 登录在授权完成前结束，请重试。",
   "Refresh account status": "刷新账号状态",

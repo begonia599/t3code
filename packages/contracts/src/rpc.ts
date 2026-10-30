@@ -1,4 +1,10 @@
 import {
+  SubscriptionEstimationReadInput,
+  SubscriptionEstimationReport,
+  SubscriptionEstimationExcludeInput,
+  SubscriptionEstimationError,
+} from "./subscriptionEstimation.ts";
+import {
   NativeConfigTarget,
   NativeConfigList,
   NativeConfigReadInput,
@@ -417,6 +423,8 @@ export const WS_METHODS = {
   serverReportClientActivity: "server.reportClientActivity",
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
+  serverGetSubscriptionEstimation: "server.getSubscriptionEstimation",
+  serverExcludeSubscriptionSample: "server.excludeSubscriptionSample",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
 
@@ -697,6 +705,17 @@ const WsServerRetryResourceTelemetryRpc = Rpc.make(WS_METHODS.serverRetryResourc
   payload: Schema.Struct({}),
   success: ResourceTelemetryRetryResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsServerGetSubscriptionEstimationRpc = Rpc.make(WS_METHODS.serverGetSubscriptionEstimation, {
+  payload: SubscriptionEstimationReadInput,
+  success: SubscriptionEstimationReport,
+  error: Schema.Union([EnvironmentAuthorizationError, SubscriptionEstimationError]),
+});
+const WsServerExcludeSubscriptionSampleRpc = Rpc.make(WS_METHODS.serverExcludeSubscriptionSample, {
+  payload: SubscriptionEstimationExcludeInput,
+  success: Schema.Void,
+  error: Schema.Union([EnvironmentAuthorizationError, SubscriptionEstimationError]),
 });
 
 const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
@@ -1529,6 +1548,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetProcessResourceHistoryRpc,
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
+  WsServerGetSubscriptionEstimationRpc,
+  WsServerExcludeSubscriptionSampleRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,

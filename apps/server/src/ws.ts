@@ -1,3 +1,4 @@
+import * as SubscriptionEstimation from "./usage/SubscriptionEstimation.ts";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -676,6 +677,7 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
+      const subscriptionEstimation = yield* SubscriptionEstimation.SubscriptionEstimation;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -2947,6 +2949,18 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.serverGetSubscriptionEstimation]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetSubscriptionEstimation,
+            subscriptionEstimation.read(input.before, input.beforeId),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverExcludeSubscriptionSample]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverExcludeSubscriptionSample,
+            subscriptionEstimation.exclude(input.id, input.excluded),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverGetUsageSummary]: (input) =>
           observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {

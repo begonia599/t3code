@@ -105,6 +105,36 @@ or endpoint configurations do not report subscription limits.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## Estimate a subscription's API-equivalent allowance
+
+The **Subscription API-equivalent estimates** section on Usage compares token-priced T3 work
+with the change in your subscription quota. Collection starts with new work after this feature
+is enabled on the server; older transcript totals cannot supply the missing quota snapshots.
+
+T3 records fresh quota readings before and after an interval of activity. Overlapping tasks on
+the same account share an interval. Idle gaps are excluded. Each account, quota window, and
+reset cycle has its own calibration; a reset starts fresh. Session and weekly estimates describe
+different limits on the same subscription and should not be added together. Connected environments
+keep separate observations, even when they use the same subscription.
+
+After at least three complete intervals covering five percentage points, the estimate is:
+`recorded API-equivalent cost ÷ quota fraction consumed`. Remaining value uses the last observed
+remaining percentage. These thresholds reduce noise from rounded readings; they do not guarantee
+accuracy. A different model mix, delayed quota updates, or a changing allowance can change the result.
+Amounts use the reference API rates, including any custom prices, saved when each task starts.
+They are estimates, not an official balance or an invoice; service tiers and long-context premiums
+may differ from these reference rates.
+
+Only T3-started work is recorded here. Simultaneous use in another client cannot be reliably
+separated from the quota delta. Expand the sample records and exclude affected intervals; you
+can restore them later. Each record retains its initial and final readings and known cost.
+Intervals with missing readings, unknown prices, account changes, or incomplete token totals
+do not calibrate the allowance. This includes subagents and background tasks when their complete
+usage is unavailable. Their known cost may still appear, so recorded costs can be incomplete.
+Codex, Claude Code, and OpenCode turns can calibrate when their account reports subscription
+limits and their token totals are complete. Grok, Cursor, and Antigravity currently lack the
+complete turn-level usage needed here: quota observations alone do not produce an estimate.
+
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the

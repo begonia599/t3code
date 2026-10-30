@@ -43,6 +43,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -79,6 +80,7 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
+import * as SubscriptionEstimation from "../../usage/SubscriptionEstimation.ts";
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
@@ -488,6 +490,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const estimation = Option.getOrUndefined(
+    yield* Effect.serviceOption(SubscriptionEstimation.SubscriptionEstimation),
+  );
   const projectionQuery = yield* Effect.serviceOption(
     ProjectionSnapshotQuery.ProjectionSnapshotQuery,
   );
@@ -999,6 +1004,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           : Effect.void,
       ),
       Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
+      Effect.tap(() => (estimation ? estimation.event(event) : Effect.void)),
       Effect.asVoid,
     );
 
@@ -1771,7 +1777,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
               model: input.modelSelection?.model,
               runtimeMode: routed.runtimeMode,
             });
+            const estimateKey = `turn:${input.threadId}`;
+            if (estimation)
+              yield* estimation.begin({
+                instanceId: routed.instanceId,
+                runKey: estimateKey,
+                ...(input.modelSelection ? { selection: input.modelSelection } : {}),
+              });
             const turn = yield* routed.adapter.sendTurn(input).pipe(
+              Effect.onExit((exit) =>
+                Exit.isFailure(exit) && estimation ? estimation.finish(estimateKey) : Effect.void,
+              ),
               Effect.tapError((error) =>
                 analytics.record("provider.turn.rejected", {
                   provider: routed.adapter.provider,
@@ -1780,6 +1796,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                 }),
               ),
             );
+            if (estimation) yield* estimation.bind(estimateKey, String(turn.turnId));
             yield* associateTurnAnalytics({
               providerInstanceId: routed.instanceId,
               threadId: input.threadId,

@@ -1,3 +1,4 @@
+import { SubscriptionEstimates } from "./SubscriptionEstimates";
 import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
@@ -278,6 +279,13 @@ export function UsageRouteScreen() {
           />
         }
       >
+        {selectedEnvironments.map((environment) => (
+          <SubscriptionEstimates
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            label={environment.label}
+          />
+        ))}
         <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} role="tab" />
         <Animated.View
           key={tab}

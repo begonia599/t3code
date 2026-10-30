@@ -1,3 +1,4 @@
+import { SubscriptionEstimates } from "./SubscriptionEstimates";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -450,6 +451,13 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
+            {selectedEnvironments.map((environment) => (
+              <SubscriptionEstimates
+                key={environment.environmentId}
+                environmentId={environment.environmentId}
+                label={environment.label}
+              />
+            ))}
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0

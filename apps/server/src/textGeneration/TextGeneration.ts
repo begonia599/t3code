@@ -1,3 +1,6 @@
+import * as NodeCrypto from "node:crypto";
+import * as Option from "effect/Option";
+import * as SubscriptionEstimation from "../usage/SubscriptionEstimation.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -137,18 +140,37 @@ const resolveInstance = (
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const estimation = Option.getOrUndefined(
+    yield* Effect.serviceOption(SubscriptionEstimation.SubscriptionEstimation),
+  );
+  const observe = <A, E, R>(selection: ModelSelection, work: Effect.Effect<A, E, R>) =>
+    Effect.suspend(() => {
+      if (!estimation) return work;
+      const runKey = `background:${NodeCrypto.randomUUID()}`;
+      return Effect.acquireUseRelease(
+        estimation.begin({ instanceId: selection.instanceId, selection, runKey, background: true }),
+        () => work,
+        () => estimation.finish(runKey),
+      );
+    });
   return TextGeneration.of({
     generateCommitMessage: (input) =>
       resolveInstance(registry, "generateCommitMessage", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
+        Effect.flatMap((textGeneration) =>
+          observe(input.modelSelection, textGeneration.generateCommitMessage(input)),
+        ),
       ),
     generatePrContent: (input) =>
       resolveInstance(registry, "generatePrContent", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generatePrContent(input)),
+        Effect.flatMap((textGeneration) =>
+          observe(input.modelSelection, textGeneration.generatePrContent(input)),
+        ),
       ),
     generateBranchName: (input) =>
       resolveInstance(registry, "generateBranchName", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
+        Effect.flatMap((textGeneration) =>
+          observe(input.modelSelection, textGeneration.generateBranchName(input)),
+        ),
       ),
     generateThreadTitle: (input) =>
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
@@ -162,7 +184,10 @@ export const make = Effect.gen(function* () {
                   sourceControl,
                 ),
               ));
-            return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
+            return yield* observe(
+              input.modelSelection,
+              textGeneration.generateThreadTitle({ ...input, linkedContext }),
+            );
           }),
         ),
       ),

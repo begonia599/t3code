@@ -54,7 +54,13 @@ import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { readAntigravityUsage } from "./antigravityUsageReader.ts";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
-import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
+import {
+  createOverrideRateTable,
+  parseRateTable,
+  lookupRate,
+  type ModelRate,
+  type RateTable,
+} from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -119,6 +125,9 @@ export class UsageService extends Context.Service<
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
     /** Refetches the rate table ahead of its TTL. See `ensureRates`. */
     readonly refreshRates: Effect.Effect<UsagePricing>;
+    readonly quoteModel: (
+      model: string,
+    ) => Effect.Effect<{ rate: ModelRate | null; pricing: UsagePricing }, UsageReadError>;
   }
 >()("t3/usage/UsageService") {}
 
@@ -146,6 +155,7 @@ export const layerTest = Layer.succeed(
         scanDurationMs: 0,
       }),
     refreshRates: Effect.succeed(EMPTY_PRICING),
+    quoteModel: () => Effect.succeed({ rate: null, pricing: EMPTY_PRICING }),
   }),
 );
 
@@ -892,7 +902,20 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates } as const;
+  const quoteModel = (model: string) =>
+    Effect.gen(function* () {
+      yield* ensureRates(false);
+      const settings = yield* readSettings;
+      const overrides = createOverrideRateTable(settings.usagePriceOverrides);
+      const override = overrides.get(model.trim());
+      return {
+        rate: override ?? lookupRate(rates, model),
+        pricing: override
+          ? { ...pricing(), source: "custom", status: "fresh" as const }
+          : pricing(),
+      };
+    });
+  return { readSummary, refreshRates, quoteModel } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

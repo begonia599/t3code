@@ -197,6 +197,7 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as SubscriptionEstimation from "./usage/SubscriptionEstimation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as Data from "effect/Data";
 
@@ -1088,7 +1089,15 @@ const buildAppUnderTest = (options?: {
 
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(resourceTelemetryLayer),
-      Layer.provide(UsageService.layerTest),
+      Layer.provide(
+        Layer.mergeAll(
+          UsageService.layerTest,
+          Layer.mock(SubscriptionEstimation.SubscriptionEstimation)({
+            read: () => Effect.succeed({ cycles: [], samples: [], hasMore: false }),
+            exclude: () => Effect.void,
+          }),
+        ),
+      ),
       Layer.provide(
         Layer.mock(AnalyticsService.AnalyticsService)({
           record: () => Effect.void,
@@ -5311,6 +5320,25 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(first.response.status, 200);
       assert.equal(second.response.status, 200);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves subscription estimation RPCs through an authenticated connection", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const report = yield* client[WS_METHODS.serverGetSubscriptionEstimation]({});
+            assert.deepEqual(report, { cycles: [], samples: [], hasMore: false });
+            yield* client[WS_METHODS.serverExcludeSubscriptionSample]({
+              id: "sample",
+              excluded: true,
+            });
+          }),
+        ),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

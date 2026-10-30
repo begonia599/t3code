@@ -1094,6 +1094,15 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetResourceTelemetryHistory,
       staleTimeMs: 5_000,
     }),
+    subscriptionEstimation: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:subscription-estimation",
+      tag: WS_METHODS.serverGetSubscriptionEstimation,
+      staleTimeMs: 5_000,
+    }),
+    excludeSubscriptionSample: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:exclude-subscription-sample",
+      tag: WS_METHODS.serverExcludeSubscriptionSample,
+    }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.
     usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
