@@ -66,6 +66,37 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it("uses the saved gateway inventory in chat instead of native models or legacy custom rows", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const snapshot: ServerProvider = {
+      ...provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId }),
+      modelCatalogSource: "gateway",
+      models: ["claude-opus-4-8", "kimi-k3"].map((slug, i) => ({
+        slug,
+        name: slug,
+        isCustom: true,
+        isDefault: i === 0,
+        capabilities: null,
+      })),
+    };
+    const settings = settingsWithProviderInstances();
+    const entry = deriveProviderInstanceEntries([snapshot])[0]!;
+    expect(
+      getAppModelOptionsForInstance(settings, entry, "claude-opus-5-5").map((m) => m.slug),
+    ).toEqual(["claude-opus-4-8", "kimi-k3"]);
+    expect(
+      resolveAppModelSelectionForInstance(instanceId, settings, [snapshot], "claude-opus-5-5"),
+    ).toBe("claude-opus-4-8");
+    expect(resolveAppModelSelectionForInstance(instanceId, settings, [snapshot], "kimi-k3")).toBe(
+      "kimi-k3",
+    );
+    expect(
+      getCustomModelOptionsByInstance(settings, [snapshot])
+        .get(instanceId)
+        ?.map((m) => m.slug),
+    ).toEqual(["claude-opus-4-8", "kimi-k3"]);
+  });
+
   it("preserves server-provided legacy model metadata", () => {
     const baseProvider = provider({
       instanceId: "claudeAgent",

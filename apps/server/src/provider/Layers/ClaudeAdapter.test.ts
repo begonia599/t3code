@@ -544,6 +544,7 @@ describe("ClaudeAdapterLive", () => {
           ANTHROPIC_BASE_URL: "https://gateway.example/api",
           ANTHROPIC_AUTH_TOKEN: "fixture-gateway-key",
           ANTHROPIC_API_KEY: "",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4-8",
         },
       });
       return Effect.gen(function* () {
@@ -552,18 +553,35 @@ describe("ClaudeAdapterLive", () => {
           threadId: THREAD_ID,
           provider: ProviderDriverKind.make("claudeAgent"),
           runtimeMode: "approval-required",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
+          ),
         });
         const options = harness.getLastCreateQueryInput()?.options;
+        assert.equal(options?.model, SYNTHETIC_CLAUDE_COLLIDING_ALIAS);
         assert.deepEqual(options?.settingSources, ["user", "project", "local"]);
         assert.equal(typeof options?.settings, "string");
         if (typeof options?.settings !== "string") return;
         const settings = decodeGatewaySessionSettings(
           NodeFS.readFileSync(options.settings, "utf8"),
         );
+        assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "claude-opus-4-8");
         assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://gateway.example/api");
         assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, "fixture-gateway-key");
         assert.equal(NodeFS.statSync(options.settings).mode & 0o777, 0o600);
         assert.equal(options.settings.includes("fixture-gateway-key"), false);
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "use the configured gateway model",
+          attachments: [],
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+            [{ id: "contextWindow", value: "expanded" }],
+          ),
+        });
+        assert.deepEqual(harness.query.setModelCalls, [SYNTHETIC_CLAUDE_CAPABLE_MODEL]);
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
         Effect.provide(harness.layer),

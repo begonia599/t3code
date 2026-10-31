@@ -13,6 +13,40 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("offers gateway models and marks a previous native selection unavailable", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const config = {
+      providers: [
+        {
+          instanceId,
+          driver: "claudeAgent",
+          enabled: true,
+          installed: true,
+          auth: { status: "unknown", type: "apiKey" },
+          modelCatalogSource: "gateway",
+          models: [
+            {
+              slug: "claude-opus-4-8",
+              name: "claude-opus-4-8",
+              isCustom: true,
+              isDefault: true,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const old = { instanceId, model: "claude-opus-5-5" };
+    const options = buildModelOptions(config, old);
+    expect(options.filter((m) => !m.isUnavailable).map((m) => m.selection.model)).toEqual([
+      "claude-opus-4-8",
+    ]);
+    expect(resolveSelectableModelSelection(config, old)).toBeNull();
+    expect(
+      resolveSelectableModelSelection(config, { instanceId, model: "claude-opus-4-8" })?.model,
+    ).toBe("claude-opus-4-8");
+  });
+
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [

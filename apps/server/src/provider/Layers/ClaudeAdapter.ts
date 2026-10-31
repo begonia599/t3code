@@ -2105,9 +2105,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   options?: ClaudeAdapterLiveOptions,
 ) {
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("claudeAgent");
-  const modelCatalogEffect = (
-    options?.modelCatalog ?? Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG)
-  ).pipe(Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)));
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
@@ -2115,6 +2112,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
+  );
+  // Gateway model IDs must not acquire native aliases, option defaults or suffixes.
+  const modelCatalogEffect = (
+    options?.modelCatalog ?? Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG)
+  ).pipe(
+    Effect.map((catalog) =>
+      scopeClaudeModelCatalog(
+        claudeEnvironment.T3_GATEWAY_ACTIVE === "claude" ? { models: [] } : catalog,
+        claudeSettings.customModels,
+      ),
+    ),
   );
   const writeGatewaySettings = yield* makeClaudeGatewaySettingsWriter(claudeEnvironment);
   const claudeSdkExecutablePath = yield* resolveClaudeSdkExecutablePath(

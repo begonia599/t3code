@@ -61,7 +61,7 @@ function normalizeSelectionOptions(
       };
 }
 
-/** Whether a known Antigravity selection needs setup or a different model. */
+/** Whether a dynamic catalog no longer supports the selected model. */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null | undefined,
@@ -75,7 +75,7 @@ export function isModelSelectionUnavailable(
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
   return (
-    driver === "antigravity" &&
+    (driver === "antigravity" || provider?.modelCatalogSource === "gateway") &&
     (!provider ||
       !provider.enabled ||
       !provider.installed ||
@@ -105,6 +105,8 @@ export function resolveSelectableModelSelection(
   if (driver === "antigravity") {
     return selection;
   }
+  if (provider?.modelCatalogSource === "gateway" && isModelSelectionUnavailable(config, selection))
+    return null;
   return provider &&
     provider.enabled &&
     provider.installed &&

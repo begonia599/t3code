@@ -219,7 +219,11 @@ export const mergeProviderSnapshot = (
   return {
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
-    models: mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
+    models:
+      nextProvider.modelCatalogSource === "gateway" ||
+      previousProvider.modelCatalogSource === "gateway"
+        ? nextProvider.models
+        : mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
     ...(nextProvider.workspaceSnapshots !== undefined
       ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
       : previousProvider.workspaceSnapshots !== undefined

@@ -83,7 +83,12 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const path = yield* Path.Path;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const scopedModelCatalog = modelCatalog.pipe(
-    Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
+    Effect.map((catalog) =>
+      scopeClaudeModelCatalog(
+        claudeEnvironment.T3_GATEWAY_ACTIVE === "claude" ? { models: [] } : catalog,
+        claudeSettings.customModels,
+      ),
+    ),
   );
 
   const readStreamAsString = <E>(

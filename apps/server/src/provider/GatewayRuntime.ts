@@ -123,6 +123,7 @@ export function gatewaySnapshot(
   const { usageLimits: _limits, ...rest } = snapshot;
   return {
     ...rest,
+    modelCatalogSource: "gateway",
     auth: { status: "unknown", type: "apiKey", label: "Custom API gateway" },
     setup: { canAuthenticate: false, canInstall: snapshot.setup?.canInstall ?? false },
     // CLI account probes describe the saved subscription, not this separately configured gateway.

@@ -280,6 +280,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             ANTHROPIC_BASE_URL: "https://gateway.example/api",
             ANTHROPIC_AUTH_TOKEN: "gateway-fixture-secret",
           },
+          argsMustContain: `--model ${SYNTHETIC_CLAUDE_COLLIDING_ALIAS} --settings`,
           argsMustNotContain: "gateway-fixture-secret",
         },
         (textGeneration) =>
@@ -291,7 +292,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
               stagedPatch: "diff",
               modelSelection: createModelSelection(
                 ProviderInstanceId.make("claudeAgent"),
-                "vendor/model",
+                SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
               ),
             });
             expect(generated.subject).toBe("Gateway commit");

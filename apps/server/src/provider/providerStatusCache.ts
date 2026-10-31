@@ -69,7 +69,12 @@ export const hydrateCachedProvider = (input: {
   readonly cachedProvider: ServerProvider;
   readonly fallbackProvider: ServerProvider;
 }): ServerProvider => {
-  if (!isCachedProviderCorrelated(input)) {
+  // Gateway catalogs come from active settings, never the previous account cache.
+  if (
+    input.fallbackProvider.modelCatalogSource === "gateway" ||
+    input.cachedProvider.modelCatalogSource === "gateway" ||
+    !isCachedProviderCorrelated(input)
+  ) {
     return input.fallbackProvider;
   }
 

@@ -185,6 +185,15 @@ function getAppModelOptions(
   provider: ProviderDriverKind,
   selectedModel?: string | null,
 ): AppModelOption[] {
+  const snapshot = providers.find(
+    (candidate) => candidate.instanceId === defaultInstanceIdForDriver(provider),
+  );
+  if (snapshot?.modelCatalogSource === "gateway") {
+    return applyInstanceModelPreferences(
+      snapshot.models.map(toAppModelOption),
+      readInstanceModelPreferences(settings, snapshot.instanceId),
+    );
+  }
   const rawModels = getProviderModels(providers, provider);
   // Server-reported custom rows mirror settings and can lag a removal, so
   // only built-ins are taken from the snapshot; custom rows are rebuilt from
@@ -225,6 +234,7 @@ function getAppModelOptions(
 }
 
 /**
+ * Gateway inventories are authoritative and bypass legacy custom-model rebuilding.
  * Instance-scoped variant of {@link getAppModelOptions}. Built-in models
  * come from the instance's own `entry.models` snapshot (rather than the
  * first-matching-kind fallback in `getProviderModels`), so each custom
@@ -242,6 +252,12 @@ export function getAppModelOptionsForInstance(
   entry: ProviderInstanceEntry,
   selectedModel?: string | null,
 ): AppModelOption[] {
+  if (entry.snapshot.modelCatalogSource === "gateway") {
+    return applyInstanceModelPreferences(
+      entry.models.map(toAppModelOption),
+      readInstanceModelPreferences(settings, entry.instanceId),
+    );
+  }
   const options: AppModelOption[] = entry.models
     .filter((model) => !model.isCustom)
     .map(toAppModelOption);

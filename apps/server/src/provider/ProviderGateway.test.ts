@@ -10,9 +10,12 @@ import {
   ProviderInstanceId,
   ProviderInstanceConfig,
   type ProviderGatewayConfig,
+  ServerProvider,
 } from "@t3tools/contracts";
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import { gatewayHeaders, withoutGateway } from "@t3tools/shared/providerGateway";
+import { mergeProviderSnapshot } from "./Layers/ProviderRegistry.ts";
+import { hydrateCachedProvider } from "./providerStatusCache.ts";
 import { projectGatewayInstance, gatewaySnapshot } from "./GatewayRuntime.ts";
 import { makeClaudeGatewaySettingsWriter } from "./ClaudeGatewaySettings.ts";
 import { inspectGatewayStream, probeGateway, resolveGatewaySecrets } from "./ProviderGateway.ts";
@@ -21,6 +24,7 @@ import { redactServerSettingsForClient } from "../serverSettings.ts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 
 const decodeInstance = Schema.decodeSync(ProviderInstanceConfig);
+const decodeProviderSnapshot = Schema.decodeSync(Schema.fromJsonString(ServerProvider));
 const decodeSessionSettings = Schema.decodeSync(
   Schema.fromJsonString(
     Schema.Struct({
@@ -245,6 +249,49 @@ describe("native gateway runtime", () => {
       "vendor/small",
     ]);
     expect(snapshot.setup?.canAuthenticate).toBe(false);
+  });
+
+  it("keeps gateway catalogs authoritative through registry merging, wire decoding and restart caches", () => {
+    const native: ServerProvider = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: "2.0.0",
+      status: "ready",
+      checkedAt: "2026-10-31T00:00:00Z",
+      auth: { status: "authenticated", type: "subscription" },
+      models: ["claude-opus-5-5", "vendor/model-v2"].map((slug) => ({
+        slug,
+        name: slug,
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Effort",
+              type: "select" as const,
+              options: [{ id: "high", label: "High" }],
+            },
+          ],
+        },
+      })),
+      slashCommands: [],
+      skills: [],
+    };
+    const gateway = gatewaySnapshot(instance(), native);
+    const merged = decodeProviderSnapshot(JSON.stringify(mergeProviderSnapshot(native, gateway)));
+    expect(merged.modelCatalogSource).toBe("gateway");
+    expect(merged.models).toEqual(gateway.models);
+    expect(merged.models.every((model) => model.capabilities === null)).toBe(true);
+    expect(hydrateCachedProvider({ cachedProvider: native, fallbackProvider: gateway })).toEqual(
+      gateway,
+    );
+    expect(hydrateCachedProvider({ cachedProvider: gateway, fallbackProvider: native })).toEqual(
+      native,
+    );
+    expect(mergeProviderSnapshot(merged, native).models).toEqual(native.models);
+    expect(mergeProviderSnapshot(merged, native).modelCatalogSource).toBeUndefined();
   });
 
   it.effect(
