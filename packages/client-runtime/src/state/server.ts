@@ -970,6 +970,10 @@ export function createServerEnvironmentAtoms<R, E>(
   }) => welcomeFamily(target.environmentId);
 
   return {
+    providerGatewayProbe: createEnvironmentRpcCommand(runtime, {
+      label: "provider-gateway:probe",
+      tag: WS_METHODS.providerGatewayProbe,
+    }),
     nativeConfigList: createEnvironmentRpcCommand(runtime, {
       label: "native-config:list",
       tag: WS_METHODS.nativeConfigList,

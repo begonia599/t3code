@@ -366,6 +366,10 @@
     "./nativeConfig": {
       "types": "./src/nativeConfig.ts",
       "import": "./src/nativeConfig.ts"
+    },
+    "./providerGateway": {
+      "types": "./src/providerGateway.ts",
+      "import": "./src/providerGateway.ts"
     }
   },
   "scripts": {

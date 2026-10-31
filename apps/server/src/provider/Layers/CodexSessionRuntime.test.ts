@@ -962,6 +962,35 @@ describe("openCodexThread", () => {
     }),
   );
 
+  it.effect("explicitly selects the gateway when resuming a subscription thread", () =>
+    Effect.gen(function* () {
+      let payload: unknown;
+      yield* openCodexThread({
+        client: {
+          request: () => Effect.die("Must resume"),
+          raw: {
+            request: (_method, input) => {
+              payload = input;
+              return Effect.succeed({
+                cwd: "/tmp/project",
+                model: "vendor/model",
+                thread: { id: "saved-thread" },
+              });
+            },
+          },
+        },
+        threadId: ThreadId.make("thread-gateway"),
+        runtimeMode: "auto",
+        cwd: "/tmp/project",
+        requestedModel: "vendor/model",
+        serviceTier: undefined,
+        resumeThreadId: "saved-thread",
+        modelProvider: "t3_gateway",
+      });
+      NodeAssert.equal((payload as { modelProvider: string }).modelProvider, "t3_gateway");
+    }),
+  );
+
   it.effect("rejects malformed required resume metadata without starting a fresh thread", () =>
     Effect.gen(function* () {
       for (const invalidMetadata of [

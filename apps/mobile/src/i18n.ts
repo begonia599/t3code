@@ -5,6 +5,79 @@ import { useMemo } from "react";
 import { mobilePreferencesAtom } from "./state/preferences";
 
 const zhCN: Readonly<Record<string, string>> = {
+  "Filter models": "筛选模型",
+  "Custom API gateway": "自定义 API 网关",
+  "Configure custom gateway": "配置自定义网关",
+  "Enable custom gateway": "启用自定义网关",
+  "Native protocol": "原生协议",
+  "Use OpenRouter address": "填入 OpenRouter 地址",
+  "Gateway base URL": "网关基础地址",
+  "Gateway authentication": "网关认证方式",
+  "Gateway API key": "网关 API Key",
+  "Saved; leave unchanged to keep": "已保存；不修改则保留",
+  "Default model ID": "默认模型 ID",
+  "Load gateway models": "获取网关模型",
+  "Additional model IDs": "其他模型 ID",
+  "Choose gateway model": "选择网关模型",
+  "Claude model mapping": "Claude 模型映射",
+  "Custom request headers": "自定义请求头",
+  "Header name": "请求头名称",
+  "Header value": "请求头值",
+  "Remove header": "移除请求头",
+  "Add header": "添加请求头",
+  "Test connection": "测试连接",
+  "Save gateway": "保存网关",
+  "Remove gateway": "移除网关",
+  "Gateway saved.": "网关已保存。",
+  "Gateway removed; native instance settings restored.": "网关已移除，已恢复实例原有配置。",
+  "Could not update gateway settings.": "无法更新网关配置。",
+  models: "模型列表",
+  stream: "流式响应",
+  tools: "工具调用",
+  "Use a native Anthropic Messages gateway for Claude Code, or a Responses gateway for Codex. No protocol conversion. Existing CLI login and files are preserved.":
+    "Claude Code 使用 Anthropic Messages 网关，Codex 使用 Responses 网关，不进行协议转换。保留原有 CLI 登录和文件。",
+  "Saving rebuilds this instance and can stop its running tasks. Finish them first, or add a separate provider instance for this gateway.":
+    "保存会重建此实例，可能中断其运行中的任务。请先结束任务，或为网关新建一个提供方实例。",
+  "Tests run on the selected server and make two small, potentially billable requests. They check basic streaming and tool calls, not every agent capability.":
+    "测试由所选服务器发出，包含两次少量请求，可能产生费用。仅检查基本流式响应和工具调用，不能保证所有 Agent 功能兼容。",
+  "Base URL before /v1/messages (Claude) or /responses (Codex). Include your gateway's path prefix.":
+    "填写 /v1/messages（Claude）或 /responses（Codex）之前的基础地址，保留网关要求的路径前缀。",
+  "Model IDs are sent unchanged. Load the list or enter IDs manually, one per line. Existing chats may need a model from this gateway selected.":
+    "模型 ID 原样发送。可以获取列表，也可每行手动填入一个。已有会话可能需要重新选择此网关的模型。",
+  "Custom gateways currently support Claude Code and Codex.":
+    "自定义网关目前支持 Claude Code 和 Codex。",
+  "The gateway must support this agent's native protocol. Protocol conversion is not supported.":
+    "网关必须支持此 Agent 的原生协议；暂不支持协议转换。",
+  "Enter a valid gateway base URL.": "请填写有效的网关基础地址。",
+  "Enter a gateway API key.": "请填写网关 API Key。",
+  "Enter a default model ID.": "请填写默认模型 ID。",
+  "Select the local Codex runtime before enabling a custom gateway.":
+    "启用自定义网关前，请先选择本地 Codex 运行时。",
+  "Model list loaded.": "已获取模型列表。",
+  "Native streaming response completed.": "原生流式响应已完整结束。",
+  "Native tool call and arguments received. No tool was executed.":
+    "已收到原生工具调用及有效参数，未执行工具。",
+  "Connection failed or timed out. Check the server's route, TLS and gateway availability.":
+    "连接失败或超时，请检查服务器网络、TLS 和网关可用性。",
+  "The native stream ended without its completion event.":
+    "连接已结束，但没有收到原生流的完成事件。",
+  "The gateway did not return the requested tool call with valid arguments.":
+    "网关未返回要求的工具调用及有效参数。",
+  "The gateway stream contained no text output.": "网关流式响应中没有文本输出。",
+  "The gateway stream reported an error or an incomplete response.":
+    "网关流式响应报告错误或响应未完成。",
+  "Expected native SSE streaming, but the gateway returned a different content type.":
+    "需要原生 SSE 流，但网关返回了其他内容类型。",
+  "This gateway does not expose a compatible model list. Enter model IDs manually.":
+    "网关没有兼容的模型列表接口，请手动填写模型 ID。",
+  "No model IDs were returned. Enter them manually.": "未返回模型 ID，请手动填写。",
+  "Use an HTTP(S) base URL without credentials, query parameters or a fragment.":
+    "请使用 HTTP(S) 基础地址，不包含凭证、查询参数或片段。",
+  "Header names must be unique and must not replace authentication or protocol headers.":
+    "请求头名称不能重复，也不能覆盖认证或协议请求头。",
+  "Custom --settings launch arguments conflict with the gateway. Move those values into native settings files first.":
+    "自定义 --settings 启动参数与网关配置冲突，请先将其配置放入原生设置文件。",
+
   "Overlapping requests in one thread could not be separated": "同一会话中的重叠请求无法独立计量",
   "Untracked agent activity overlapped this interval": "期间有无法关联的代理活动",
   "Quota scope is not supported for calibration": "该额度的适用范围暂不支持校准",

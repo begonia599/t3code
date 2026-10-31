@@ -14,6 +14,8 @@ export * from "./ipc.ts";
 export * from "./terminal.ts";
 export * from "./provider.ts";
 export * from "./providerInstance.ts";
+export * from "./gatewayConfig.ts";
+export * from "./providerGateway.ts";
 export * from "./nativeConfig.ts";
 export * from "./providerSetup.ts";
 export * from "./providerRuntime.ts";

@@ -1,3 +1,4 @@
+import { ProviderGatewayEditorButton } from "./ProviderGatewayEditor";
 import { ProviderLoginSettings } from "./ProviderLoginSettings";
 import { supportsProviderLogin } from "@t3tools/client-runtime/provider-login";
 import { NativeConfigEditorButton } from "./NativeConfigEditor";
@@ -322,6 +323,24 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                             </Text>
                           ) : null}
                         </View>
+                        {config.environment.capabilities.nativeApiGateways &&
+                        (provider.driver === "codex" || provider.driver === "claudeAgent") ? (
+                          <ProviderGatewayEditorButton
+                            environmentId={environmentId}
+                            instanceId={provider.instanceId}
+                            instance={
+                              config.settings.providerInstances[provider.instanceId] ?? {
+                                driver: provider.driver,
+                                config:
+                                  provider.driver === "codex"
+                                    ? config.settings.providers.codex
+                                    : config.settings.providers.claudeAgent,
+                              }
+                            }
+                            instances={config.settings.providerInstances}
+                            readOnly={!allowed}
+                          />
+                        ) : null}
                         {provider.driver === "codex" || provider.driver === "claudeAgent" ? (
                           <NativeConfigEditorButton
                             environmentId={environmentId}
@@ -329,7 +348,9 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                             readOnly={!allowed}
                           />
                         ) : null}
-                        {supportsProviderLogin(
+                        {!config.settings.providerInstances[provider.instanceId]?.gateway
+                          ?.enabled &&
+                        supportsProviderLogin(
                           provider.driver,
                           config.settings.providerInstances[provider.instanceId]?.config ??
                             (provider.driver === "codex"

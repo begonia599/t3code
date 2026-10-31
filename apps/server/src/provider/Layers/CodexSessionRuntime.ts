@@ -180,6 +180,7 @@ export interface CodexSessionRuntimeOptions {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
+  readonly modelProvider?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
@@ -738,16 +739,20 @@ export const openCodexThread = (input: {
   readonly runtimeMode: RuntimeMode;
   readonly cwd: string;
   readonly requestedModel: string | undefined;
+  readonly modelProvider?: string;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
 }): Effect.Effect<typeof CodexThreadResumeMetadata.Type, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
-  const startParams = buildThreadStartParams({
-    cwd: input.cwd,
-    runtimeMode: input.runtimeMode,
-    model: input.requestedModel,
-    serviceTier: input.serviceTier,
-  });
+  const startParams = {
+    ...buildThreadStartParams({
+      cwd: input.cwd,
+      runtimeMode: input.runtimeMode,
+      model: input.requestedModel,
+      serviceTier: input.serviceTier,
+    }),
+    ...(input.modelProvider ? { modelProvider: input.modelProvider } : {}),
+  };
 
   if (resumeThreadId === undefined) {
     return input.client.request("thread/start", startParams);
@@ -2493,6 +2498,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        ...(options.modelProvider ? { modelProvider: options.modelProvider } : {}),
       });
 
       const providerThreadId = opened.thread.id;

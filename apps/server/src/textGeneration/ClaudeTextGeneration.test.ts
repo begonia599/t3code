@@ -44,7 +44,7 @@ function makeFakeClaudeBinary(dir: string) {
       source: [
         "const argv = process.argv.slice(2);",
         'const args = argv.join(" ");',
-        'const { realpathSync } = await import("node:fs");',
+        'const { realpathSync, readFileSync } = await import("node:fs");',
         "",
         "function fail(message, code) {",
         '  process.stderr.write(message + "\\n");',
@@ -69,10 +69,13 @@ function makeFakeClaudeBinary(dir: string) {
         '  fail("text generation must not load configured MCP servers", 9);',
         "}",
         'const settingsIndex = argv.indexOf("--settings");',
-        "if (settingsIndex === -1 || JSON.parse(argv[settingsIndex + 1]).disableAllHooks !== true) {",
+        "const settingsArg = argv[settingsIndex + 1];",
+        "const nativeSettings = JSON.parse(settingsArg.startsWith('{') ? settingsArg : readFileSync(settingsArg, 'utf8'));",
+        "if (settingsIndex === -1 || nativeSettings.disableAllHooks !== true) {",
         '  fail("text generation must disable hooks", 10);',
         "}",
-        "const contextFlag = JSON.parse(argv[settingsIndex + 1]).env?.CLAUDE_CODE_DISABLE_1M_CONTEXT;",
+        "const contextFlag = nativeSettings.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT;",
+        "if (process.env.T3_GATEWAY_ACTIVE === 'claude' && (nativeSettings.env?.ANTHROPIC_AUTH_TOKEN !== process.env.ANTHROPIC_AUTH_TOKEN || nativeSettings.env?.ANTHROPIC_BASE_URL !== process.env.ANTHROPIC_BASE_URL)) fail('gateway settings missing', 14);",
         "if (contextFlag !== undefined && process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT !== contextFlag) {",
         '  fail("native context setting must also reach the child environment", 13);',
         "}",
@@ -135,6 +138,7 @@ function withFakeClaudeEnv<A, E, R>(
     configDirMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
+    environment?: NodeJS.ProcessEnv;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -257,7 +261,7 @@ function withFakeClaudeEnv<A, E, R>(
     const config = decodeClaudeSettings(input.claudeConfig ?? {});
     const textGeneration = yield* makeClaudeTextGeneration(
       config,
-      undefined,
+      input.environment ? { ...process.env, ...input.environment } : undefined,
       Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     );
     return yield* effectFn(textGeneration);
@@ -265,6 +269,36 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
+  it.effect(
+    "uses native gateway settings for background CLI requests without exposing the key in arguments",
+    () =>
+      withFakeClaudeEnv(
+        {
+          output: JSON.stringify({ structured_output: { subject: "Gateway commit", body: "" } }),
+          environment: {
+            T3_GATEWAY_ACTIVE: "claude",
+            ANTHROPIC_BASE_URL: "https://gateway.example/api",
+            ANTHROPIC_AUTH_TOKEN: "gateway-fixture-secret",
+          },
+          argsMustNotContain: "gateway-fixture-secret",
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generateCommitMessage({
+              cwd: process.cwd(),
+              branch: "gateway",
+              stagedSummary: "1 file",
+              stagedPatch: "diff",
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("claudeAgent"),
+                "vendor/model",
+              ),
+            });
+            expect(generated.subject).toBe("Gateway commit");
+          }),
+      ),
+  );
+
   for (const [value, flag] of [
     ["200k", "1"],
     ["1m", "0"],

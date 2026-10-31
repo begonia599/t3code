@@ -310,6 +310,10 @@
     "./provider-login": {
       "types": "./src/providerLogin.ts",
       "default": "./src/providerLogin.ts"
+    },
+    "./provider-gateway": {
+      "types": "./src/provider-gateway.ts",
+      "default": "./src/provider-gateway.ts"
     }
   },
   "scripts": {

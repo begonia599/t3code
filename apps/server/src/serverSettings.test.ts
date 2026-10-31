@@ -1228,6 +1228,71 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     );
   }
 
+  it.effect(
+    "persists gateway metadata with secrets separated and restores native config on removal",
+    () =>
+      Effect.gen(function* () {
+        const settings = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const id = ProviderInstanceId.make("claude_gateway");
+        const native = { homePath: "/existing/claude", launchArgs: "--effort high" };
+        const gateway = {
+          enabled: true,
+          protocol: "anthropic" as const,
+          baseUrl: "https://router.example/api",
+          auth: "bearer" as const,
+          model: "vendor/model",
+          models: [],
+          roles: {},
+          headers: [],
+        };
+        const saved = yield* settings.updateSettings({
+          providerInstances: {
+            [id]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: native,
+              gateway,
+              environment: [
+                { name: "T3_GATEWAY_API_KEY", value: "gateway-secret", sensitive: true },
+              ],
+            },
+          },
+        });
+        const client = ServerSettingsModule.redactServerSettingsForClient(saved);
+        assert.deepEqual(client.providerInstances[id]?.gateway, gateway);
+        assert.notInclude(yield* fs.readFileString(config.settingsPath), "gateway-secret");
+        const edited = yield* settings.updateSettings({
+          providerInstances: {
+            ...client.providerInstances,
+            [id]: {
+              ...client.providerInstances[id]!,
+              gateway: { ...gateway, baseUrl: "https://other.example/api" },
+            },
+          },
+        });
+        assert.equal(edited.providerInstances[id]?.environment?.[0]?.value, "gateway-secret");
+        const disabled = yield* settings.updateSettings({
+          providerInstances: {
+            ...client.providerInstances,
+            [id]: { ...client.providerInstances[id]!, gateway: { ...gateway, enabled: false } },
+          },
+        });
+        assert.deepEqual(disabled.providerInstances[id]?.config, native);
+        const removed = yield* settings.updateSettings({
+          providerInstances: {
+            [id]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: native,
+              environment: [],
+            },
+          },
+        });
+        assert.isUndefined(removed.providerInstances[id]?.gateway);
+        assert.deepEqual(removed.providerInstances[id]?.config, native);
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

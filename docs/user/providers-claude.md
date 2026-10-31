@@ -88,37 +88,37 @@ can still be started by you. Invoke those one per message: Claude directly runs
 only the last named skill and may try to start earlier ones through its Skill
 tool, which refuses skills reserved for manual invocation.
 
-## OpenRouter
+## Custom API gateways
 
-Create a Claude instance with its own config directory, such as
-`~/.claude_openrouter`, and keep **Binary path** set to `claude`. In that instance's
-**Environment variables**, use:
+In **Settings → Providers**, select your environment and Claude instance, then
+open **Custom API gateway**. Enter the gateway base URL, authentication method,
+API key and default model ID. For OpenRouter, use **Use OpenRouter address**.
+Self-hosted gateways and other vendors work through the same form when they
+support native Anthropic Messages. There is no protocol conversion.
 
-| Variable               | Value                                     |
-| ---------------------- | ----------------------------------------- |
-| `ANTHROPIC_BASE_URL`   | `https://openrouter.ai/api`               |
-| `ANTHROPIC_AUTH_TOKEN` | Your OpenRouter API key, marked Sensitive |
-| `ANTHROPIC_API_KEY`    | An explicitly empty value                 |
+The base URL is the prefix before `/v1/messages`: OpenRouter uses
+`https://openrouter.ai/api`. Use **Load gateway models** to choose an ID, or enter
+IDs manually if the gateway does not expose a model list. IDs are sent unchanged.
+Optional Opus, Sonnet, Haiku and subagent mappings default to the main model.
+Additional request headers are stored as sensitive values.
 
-If that Claude config directory has a cached Anthropic login, run `/logout` in a
-Claude Code session using that directory before starting the router setup. Cached
-login credentials can conflict with the router token.
+**Test connection** sends two small requests from the selected server, checking
+native streaming and a tool call without executing the tool. These requests may
+be billed by the gateway. A passing test does not guarantee every Claude feature;
+the gateway must support the capabilities your model and agent use. See the
+[OpenRouter Claude Code guide](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration)
+for that service's current compatibility requirements.
 
-Select the model you want in T3 Code. For an OpenRouter model outside the built-in
-list, open that Claude instance in **Settings > Providers** and add its full model
-ID with **Add custom model**. Then select it in the chat model picker.
-`ANTHROPIC_DEFAULT_*_MODEL` variables map Claude Code aliases such as `sonnet`; they
-do not replace the explicit model ID selected in T3 Code. Custom models may have
-fewer effort, thinking, or context controls than built-in models.
+Enable and save the gateway to apply it to that instance. Saving rebuilds the
+instance and can stop its running tasks; finish them first, or add a separate
+Claude instance for the gateway. Choose one of its models in an existing chat.
+On mobile, open the environment in Settings and use **Custom API gateway** under
+Claude.
 
-Verify the model used in OpenRouter's activity dashboard. For current compatibility
-requirements, use the
-[OpenRouter Claude Code guide](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration).
-
-## Other routers
-
-A local router uses an ordinary Claude provider instance. Give it a separate
-config directory and put the router's endpoint and credential variables in that
-instance's **Environment variables**. The router must run where the environment
-can reach it. Follow the [Claude Code Router instructions](https://github.com/musistudio/claude-code-router)
-for its installation and routing configuration.
+Your saved Claude OAuth login, Skills, config directory and proxy settings stay
+intact. Gateway overrides apply only to this instance's child processes; native
+managed policy still applies. If you use custom `--settings` launch arguments,
+move those values into native settings files before enabling the gateway.
+Disable the gateway and save, or remove it, to restore the original instance
+configuration. API key fields stay masked and keep their saved value when left
+unchanged. Subscription limits are not shown for a gateway instance.

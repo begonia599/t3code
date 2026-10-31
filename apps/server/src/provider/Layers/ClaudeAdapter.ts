@@ -1,3 +1,4 @@
+import { makeClaudeGatewaySettingsWriter } from "../ClaudeGatewaySettings.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 /**
  * ClaudeAdapterLive - Scoped live implementation for the Claude Agent provider adapter.
@@ -2115,6 +2116,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
   );
+  const writeGatewaySettings = yield* makeClaudeGatewaySettingsWriter(claudeEnvironment);
   const claudeSdkExecutablePath = yield* resolveClaudeSdkExecutablePath(
     claudeSettings.binaryPath,
     claudeEnvironment,
@@ -4989,6 +4991,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? [input.cwd] : []),
         serverConfig.attachmentsDir,
       ];
+      const runtimeSettings = yield* writeGatewaySettings(settings).pipe(
+        Effect.mapError(
+          () =>
+            new ProviderAdapterValidationError({
+              provider: "claudeAgent",
+              operation: "startSession",
+              issue: "Could not prepare native gateway settings.",
+            }),
+        ),
+      );
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -5019,7 +5031,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
           : {}),
-        ...(Object.keys(settings).length > 0 ? { settings } : {}),
+        ...(Object.keys(settings).length > 0 || typeof runtimeSettings === "string"
+          ? { settings: runtimeSettings }
+          : {}),
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,

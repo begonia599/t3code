@@ -1,5 +1,7 @@
 "use client";
 
+import { isGatewayVariable } from "@t3tools/shared/providerGateway";
+
 import { Spinner } from "~/components/ui/spinner";
 
 import {
@@ -390,6 +392,7 @@ interface ProviderInstanceCardProps {
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
   readonly runtime?: ReactNode;
+  readonly gateway?: ReactNode;
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
@@ -434,6 +437,7 @@ export function ProviderInstanceCard({
   headerAction,
   setup,
   runtime,
+  gateway,
   hiddenModels,
   favoriteModels,
   modelOrder,
@@ -557,7 +561,12 @@ export function ProviderInstanceCard({
   };
 
   const updateEnvironment = (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
-    const cleaned = environment.filter((variable) => variable.name.trim().length > 0);
+    const cleaned = [
+      ...(instance.gateway
+        ? (instance.environment ?? []).filter((row) => isGatewayVariable(row.name))
+        : []),
+      ...environment.filter((variable) => variable.name.trim().length > 0),
+    ];
     const { environment: _omit, ...rest } = instance;
     onUpdate(
       cleaned.length > 0
@@ -924,6 +933,8 @@ export function ProviderInstanceCard({
         />
       </SettingsSection>
 
+      {gateway ? <SettingsSection title="Custom API gateway">{gateway}</SettingsSection> : null}
+
       {setup ? <SettingsSection title="Setup">{setup}</SettingsSection> : null}
 
       {instance.driver === "codex" && readCodexSetupMode(instance.config) === "managed" ? (
@@ -959,12 +970,14 @@ export function ProviderInstanceCard({
         className={readOnly ? "opacity-50 select-none" : undefined}
       >
         <ProviderEnvironmentSection
-          environment={instance.environment ?? []}
+          environment={(instance.environment ?? []).filter(
+            (row) => !instance.gateway || !isGatewayVariable(row.name),
+          )}
           onChange={updateEnvironment}
         />
       </SettingsSection>
 
-      {driverOption !== undefined ? (
+      {driverOption !== undefined && !instance.gateway?.enabled ? (
         <SettingsSection
           title="Models"
           inert={readOnly}

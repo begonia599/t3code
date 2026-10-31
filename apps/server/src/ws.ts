@@ -1,3 +1,4 @@
+import * as ProviderGateway from "./provider/ProviderGateway.ts";
 import * as SubscriptionEstimation from "./usage/SubscriptionEstimation.ts";
 import {
   sameUsageLimitCommandCoverage,
@@ -586,6 +587,7 @@ const makeWsRpcLayer = (
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const nativeConfig = yield* NativeConfig.NativeConfig;
+      const providerGateway = yield* ProviderGateway.ProviderGateway;
       const canReplayPersistedRange = Effect.fnUntraced(function* (
         afterSequence: number,
         headSequence: number,
@@ -3399,6 +3401,8 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.providerGatewayProbe]: (input) =>
+          observeRpcEffect(WS_METHODS.providerGatewayProbe, providerGateway.probe(input)),
         [WS_METHODS.nativeConfigList]: (input) =>
           observeRpcEffect(WS_METHODS.nativeConfigList, nativeConfig.list(input)),
         [WS_METHODS.nativeConfigRead]: (input) =>

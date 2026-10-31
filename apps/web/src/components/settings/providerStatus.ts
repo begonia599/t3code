@@ -72,6 +72,9 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
       detail: provider.message ?? "The provider failed its startup checks.",
     };
   }
+  if (provider.auth.label === "Custom API gateway") {
+    return { headline: "Custom API gateway", detail: provider.message ?? null };
+  }
   if (provider.auth.status === "authenticated") {
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {

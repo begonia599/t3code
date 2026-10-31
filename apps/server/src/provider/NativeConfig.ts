@@ -1,3 +1,4 @@
+import { CLAUDE_GATEWAY_ENV_NAMES } from "./ClaudeGatewaySettings.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeFS from "node:fs";
@@ -496,8 +497,15 @@ const make = Effect.gen(function* () {
         homePath,
         files,
         truncated,
-        hasLaunchOverrides,
-        environmentOverrides: Object.keys(environment)
+        hasLaunchOverrides: hasLaunchOverrides || Boolean(instance.gateway?.enabled),
+        environmentOverrides: [
+          ...new Set([
+            ...Object.keys(environment),
+            ...(instance.gateway?.enabled && driver === "claudeAgent"
+              ? CLAUDE_GATEWAY_ENV_NAMES
+              : []),
+          ]),
+        ]
           .filter((name) => /^(CODEX_|CLAUDE_|ANTHROPIC_|OPENAI_|BASH_|API_TIMEOUT_MS$)/.test(name))
           .sort(),
       };

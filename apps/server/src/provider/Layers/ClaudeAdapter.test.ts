@@ -165,6 +165,10 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   }
 }
 
+const decodeGatewaySessionSettings = Schema.decodeSync(
+  Schema.fromJsonString(Schema.Struct({ env: Schema.Record(Schema.String, Schema.String) })),
+);
+
 function makeHarness(config?: {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
@@ -529,6 +533,43 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect(
+    "passes a private gateway settings file to the actual SDK query while retaining native setting sources",
+    () => {
+      const harness = makeHarness({
+        environment: {
+          ...process.env,
+          T3_GATEWAY_ACTIVE: "claude",
+          ANTHROPIC_BASE_URL: "https://gateway.example/api",
+          ANTHROPIC_AUTH_TOKEN: "fixture-gateway-key",
+          ANTHROPIC_API_KEY: "",
+        },
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "approval-required",
+        });
+        const options = harness.getLastCreateQueryInput()?.options;
+        assert.deepEqual(options?.settingSources, ["user", "project", "local"]);
+        assert.equal(typeof options?.settings, "string");
+        if (typeof options?.settings !== "string") return;
+        const settings = decodeGatewaySessionSettings(
+          NodeFS.readFileSync(options.settings, "utf8"),
+        );
+        assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://gateway.example/api");
+        assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, "fixture-gateway-key");
+        assert.equal(NodeFS.statSync(options.settings).mode & 0o777, 0o600);
+        assert.equal(options.settings.includes("fixture-gateway-key"), false);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 
   it.effect("uses bypass permissions for full-access claude sessions", () => {
     const harness = makeHarness();

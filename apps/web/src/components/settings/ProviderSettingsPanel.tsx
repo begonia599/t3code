@@ -1,3 +1,5 @@
+import { ProviderGatewayEditor } from "./ProviderGatewayEditor";
+import { gatewayEditorKey } from "@t3tools/client-runtime/provider-gateway";
 import { ProviderLoginSection } from "./ProviderLoginSection";
 import { supportsProviderLogin } from "@t3tools/client-runtime/provider-login";
 import { NativeConfigEditorButton } from "./NativeConfigEditor";
@@ -597,6 +599,9 @@ export function EnvironmentProviderSettings({
   readonly readOnly?: boolean;
 }) {
   const settings = useEnvironmentSettings(environmentId);
+  const supportsGateways =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities
+      .nativeApiGateways === true;
   // Provider instances hold per-machine credentials and binaries, so this
   // page always edits exactly the environment it displays.
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
@@ -954,8 +959,21 @@ export function EnvironmentProviderSettings({
             />
           ) : undefined
         }
+        gateway={
+          mode === "editor" && supportsGateways ? (
+            <ProviderGatewayEditor
+              key={`${environmentId}:${row.instanceId}:${gatewayEditorKey(row.instance)}`}
+              environmentId={environmentId}
+              instanceId={row.instanceId}
+              instance={row.instance}
+              instances={settings.providerInstances}
+              readOnly={readOnly}
+            />
+          ) : undefined
+        }
         setup={
-          mode === "editor" && row.driver === "antigravity" ? (
+          row.instance.gateway?.enabled ? null : mode === "editor" &&
+            row.driver === "antigravity" ? (
             <ProviderSetupSection
               environmentId={environmentId}
               environmentLabel={environmentLabel}

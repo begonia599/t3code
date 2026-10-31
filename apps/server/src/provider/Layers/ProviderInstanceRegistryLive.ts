@@ -1,3 +1,5 @@
+import { ProviderGatewayError } from "@t3tools/contracts";
+import { projectGatewayInstance, withGatewayInstance } from "../GatewayRuntime.ts";
 /**
  * ProviderInstanceRegistryLive — runtime implementation of
  * `ProviderInstanceRegistry` plus its sibling mutator.
@@ -83,6 +85,8 @@ interface RegistryState {
   readonly changes: PubSub.PubSub<void>;
 }
 
+const isGatewayError = Schema.is(ProviderGatewayError);
+
 /**
  * Structural equality on `ProviderInstanceConfig` envelopes. Used by
  * `reconcile` to skip rebuilds when settings arrive unchanged. Config
@@ -142,8 +146,29 @@ const buildEntry = <R>(input: {
       };
     }
 
+    const projected = yield* Effect.try({
+      try: () => projectGatewayInstance(entry),
+      catch: (cause) =>
+        isGatewayError(cause)
+          ? cause.detail
+          : "Invalid custom gateway configuration. Check the URL, native protocol and credentials.",
+    }).pipe(Effect.result);
+    if (projected._tag === "Failure")
+      return {
+        kind: "unavailable" as const,
+        snapshot: yield* buildUnavailableProviderSnapshot({
+          driverKind: entry.driver,
+          instanceId,
+          displayName: entry.displayName,
+          accentColor: entry.accentColor,
+          reason: projected.failure,
+        }),
+      };
+    const runtimeEntry = projected.success;
     const decoder = Schema.decodeUnknownEffect(driver.configSchema);
-    const decodeResult = yield* decoder(entry.config ?? driver.defaultConfig()).pipe(Effect.result);
+    const decodeResult = yield* decoder(runtimeEntry.config ?? driver.defaultConfig()).pipe(
+      Effect.result,
+    );
     if (decodeResult._tag === "Failure") {
       const issue = decodeResult.failure;
       const detail = issue.message ?? String(issue);
@@ -178,7 +203,7 @@ const buildEntry = <R>(input: {
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
-        environment: entry.environment ?? [],
+        environment: runtimeEntry.environment ?? [],
         enabled: resolveEntryEnabled(entry, typedConfig),
         config: typedConfig,
       })
@@ -205,7 +230,7 @@ const buildEntry = <R>(input: {
     return {
       kind: "live" as const,
       live: {
-        instance: createResult.success,
+        instance: withGatewayInstance(entry, createResult.success),
         scope: childScope,
         entry,
       },

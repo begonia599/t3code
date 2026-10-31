@@ -2320,6 +2320,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(options?.models ? { models: options.models } : {}),
           binaryPath: effectiveConfig.binaryPath,
           launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, effectiveEnvironment),
+          ...(effectiveEnvironment?.T3_GATEWAY_ACTIVE === "codex"
+            ? { modelProvider: "t3_gateway" }
+            : {}),
           ...(effectiveEnvironment ? { environment: effectiveEnvironment } : {}),
           ...(effectiveConfig.homePath ? { homePath: effectiveConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)

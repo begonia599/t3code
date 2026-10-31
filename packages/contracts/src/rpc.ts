@@ -1,4 +1,9 @@
 import {
+  ProviderGatewayProbeInput,
+  ProviderGatewayProbeResult,
+  ProviderGatewayError,
+} from "./providerGateway.ts";
+import {
   SubscriptionEstimationReadInput,
   SubscriptionEstimationReport,
   SubscriptionEstimationExcludeInput,
@@ -309,6 +314,7 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsListEntries: "projects.listEntries",
   projectsReadFile: "projects.readFile",
+  providerGatewayProbe: "providerGateway.probe",
   nativeConfigList: "nativeConfig.list",
   nativeConfigRead: "nativeConfig.read",
   nativeConfigPreview: "nativeConfig.preview",
@@ -1022,6 +1028,12 @@ const WsProjectsListEntriesRpc = Rpc.make(WS_METHODS.projectsListEntries, {
   error: Schema.Union([ProjectListEntriesError, EnvironmentAuthorizationError]),
 });
 
+const WsProviderGatewayProbeRpc = Rpc.make(WS_METHODS.providerGatewayProbe, {
+  payload: ProviderGatewayProbeInput,
+  success: ProviderGatewayProbeResult,
+  error: Schema.Union([ProviderGatewayError, EnvironmentAuthorizationError]),
+});
+
 const WsNativeConfigListRpc = Rpc.make(WS_METHODS.nativeConfigList, {
   payload: NativeConfigTarget,
   success: NativeConfigList,
@@ -1595,6 +1607,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeProjectClonesRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
+  WsProviderGatewayProbeRpc,
   WsNativeConfigListRpc,
   WsNativeConfigReadRpc,
   WsNativeConfigPreviewRpc,
