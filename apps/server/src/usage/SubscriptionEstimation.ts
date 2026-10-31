@@ -34,6 +34,8 @@ type PendingItem = {
   rate: ModelRate | null;
   fast: boolean;
   turnId?: string;
+  costUsd: number;
+  usage?: TurnTokenUsage;
 };
 type Group = {
   sample: SubscriptionEstimationSample;
@@ -107,6 +109,39 @@ const make = Effect.gen(function* () {
   }
   const safe = <A, E>(effect: Effect.Effect<A, E>) =>
     effect.pipe(Effect.ignoreCause({ log: true }));
+  const recordUsage = (group: Group, item: PendingItem, usage?: TurnTokenUsage) => {
+    if (usage) item.usage = usage;
+    if (!usage || usage.usageStatus !== "complete" || usage.hasSubagents)
+      group.sample = withIssue(group.sample, "incompleteUsage");
+    if (!item.rate) group.sample = withIssue(group.sample, "unpriced");
+    if (usage?.inputTokens === undefined || usage.outputTokens === undefined || !item.rate) return;
+    const cached = usage.cachedInputTokens ?? 0;
+    const created = usage.cacheCreationTokens ?? 0;
+    if (cached + created > usage.inputTokens) {
+      group.sample = withIssue(group.sample, "invalidTokens");
+      return;
+    }
+    const { costUsd } = priceUsage(
+      new Map([[item.model, item.rate]]),
+      {
+        model: item.model,
+        fast: item.fast,
+        reportedCostUsd: null,
+        totals: {
+          uncachedInputTokens: usage.inputTokens - cached - created,
+          cachedInputTokens: cached,
+          cacheCreationTokens: created,
+          outputTokens: usage.outputTokens,
+          reasoningTokens: usage.reasoningTokens ?? 0,
+        },
+      },
+      new Map([[item.model, item.rate]]),
+    );
+    // Progress and completion both contain cumulative turn totals. Replace this
+    // call's contribution so duplicates and the final event cannot double bill.
+    group.sample = { ...group.sample, costUsd: group.sample.costUsd + costUsd - item.costUsd };
+    item.costUsd = costUsd;
+  };
   const fresh = (instanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
       const instance = yield* registry.getInstance(instanceId);
@@ -219,6 +254,7 @@ const make = Effect.gen(function* () {
           };
           if (input.background) group.sample = withIssue(group.sample, "backgroundUsageIncomplete");
           group.pending.set(input.runKey, {
+            costUsd: 0,
             instanceId: input.instanceId,
             model,
             rate: quote?.rate ?? null,
@@ -241,34 +277,7 @@ const make = Effect.gen(function* () {
           if (!group || !item) return;
           runs.delete(runKey);
           group.pending.delete(runKey);
-          if (!usage || usage.usageStatus !== "complete" || usage.hasSubagents)
-            group.sample = withIssue(group.sample, "incompleteUsage");
-          if (!item.rate) group.sample = withIssue(group.sample, "unpriced");
-          if (usage?.inputTokens !== undefined && usage.outputTokens !== undefined && item.rate) {
-            const cached = usage.cachedInputTokens ?? 0;
-            const created = usage.cacheCreationTokens ?? 0;
-            if (cached + created > usage.inputTokens)
-              group.sample = withIssue(group.sample, "invalidTokens");
-            else {
-              const cost = priceUsage(
-                new Map([[item.model, item.rate]]),
-                {
-                  model: item.model,
-                  fast: item.fast,
-                  reportedCostUsd: null,
-                  totals: {
-                    uncachedInputTokens: usage.inputTokens - cached - created,
-                    cachedInputTokens: cached,
-                    cacheCreationTokens: created,
-                    outputTokens: usage.outputTokens,
-                    reasoningTokens: usage.reasoningTokens ?? 0,
-                  },
-                },
-                new Map([[item.model, item.rate]]),
-              );
-              group.sample = { ...group.sample, costUsd: group.sample.costUsd + cost.costUsd };
-            }
-          }
+          recordUsage(group, item, usage);
           if (group.pending.size === 0) {
             const snapshot = yield* fresh(group.instanceId);
             group.sample = {
@@ -318,6 +327,33 @@ const make = Effect.gen(function* () {
       );
     if (e.type === "turn.started" && item && e.turnId && !item.turnId) return bind(key, e.turnId);
     if (item?.turnId && e.turnId && item.turnId !== e.turnId) return Effect.void;
+    if (
+      (e.type === "thread.token-usage.updated" && e.payload.turnUsage) ||
+      e.type === "account.rate-limits.updated"
+    )
+      return safe(
+        lock.withPermit(
+          Effect.gen(function* () {
+            if (!group || !item || !runs.has(key)) return;
+            if (e.type === "thread.token-usage.updated") {
+              recordUsage(group, item, e.payload.turnUsage);
+            } else if (e.type === "account.rate-limits.updated") {
+              if (group.sample.observedAt && e.createdAt < group.sample.observedAt) return;
+              group.sample = {
+                ...group.sample,
+                observedAt: e.createdAt,
+                after: [
+                  ...group.sample.after.filter(
+                    (w) => !e.payload.limits.windows.some((next) => next.id === w.id),
+                  ),
+                  ...e.payload.limits.windows,
+                ],
+              };
+            }
+            yield* persist(group.sample);
+          }),
+        ),
+      );
     if (e.type === "turn.completed") return finish(key, e.payload.tokenUsage);
     if (e.type === "turn.aborted")
       return finish(
@@ -341,11 +377,19 @@ const make = Effect.gen(function* () {
   };
   const read = (before?: string, beforeId?: string) =>
     Effect.gen(function* () {
+      const readSample = (row: { payload_json: string }) => {
+        const sample = decode(row.payload_json);
+        const group = groups.get(sample.accountKey);
+        return group?.sample.id === sample.id &&
+          [...group.pending.values()].some((item) => !item.usage)
+          ? withIssue(sample, "pendingUsage")
+          : sample;
+      };
       // Limit the response, never delete source observations. Pagination retains old cycles.
       const rows = yield* sql<{
         payload_json: string;
       }>`SELECT payload_json FROM subscription_estimation_samples WHERE started_at < ${before ?? "9999"} OR (started_at = ${before ?? "9999"} AND id < ${beforeId ?? ""}) ORDER BY started_at DESC, id DESC LIMIT 101`;
-      const samples = rows.slice(0, 100).map((row) => decode(row.payload_json));
+      const samples = rows.slice(0, 100).map(readSample);
       const ids = [...new Set(samples.flatMap((sample) => Object.values(sample.cycleKeys)))];
       const cycleRows = ids.length
         ? yield* sql<{
@@ -353,7 +397,7 @@ const make = Effect.gen(function* () {
           }>`SELECT payload_json FROM subscription_estimation_samples WHERE EXISTS (SELECT 1 FROM json_each(payload_json, '$.cycleKeys') cycle WHERE ${sql.in("cycle.value", ids)})`
         : [];
       return {
-        cycles: estimateSubscriptionCycles(cycleRows.map((row) => decode(row.payload_json))),
+        cycles: estimateSubscriptionCycles(cycleRows.map(readSample)),
         samples,
         hasMore: rows.length > 100,
       };

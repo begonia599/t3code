@@ -47,7 +47,7 @@ export function SubscriptionEstimates({
       </Text>
       <Text className="text-xs text-muted-foreground">
         {t(
-          "Estimates need 3 complete samples covering at least 5 percentage points. Reference API rates are saved when each task starts; incomplete usage is excluded from calibration.",
+          "A one-point quota change can give a preliminary estimate. Codex running tasks update as usage arrives. Missing usage is shown separately as a known-cost reference, not a full allowance.",
         )}
       </Text>
       {button("Refresh", query.refresh)}
@@ -73,14 +73,28 @@ export function SubscriptionEstimates({
               ? t(
                   c.scope === "unsupported"
                     ? "Quota scope is not supported for calibration"
-                    : "Collecting samples",
+                    : c.knownCostTotalUsd != null
+                      ? "Complete usage unavailable; see known-cost reference below"
+                      : "Waiting for a measurable quota change with usable token costs",
                 )
               : formatUsd(c.estimatedTotalUsd)}
           </Text>
+          {c.estimatedTotalUsd !== null && c.preliminary ? (
+            <Text>{t("Preliminary estimate; task still running or sample coverage is small")}</Text>
+          ) : null}
           <Text>
             {t("Estimated remaining at last observation")}:{" "}
             {c.estimatedRemainingUsd === null ? "—" : formatUsd(c.estimatedRemainingUsd)}
           </Text>
+          {c.estimatedTotalUsd === null && c.knownCostTotalUsd != null ? (
+            <Text>
+              {t("Known-cost reference only; missing usage is not included")}: {t("Full cycle")}{" "}
+              {formatUsd(c.knownCostTotalUsd)} · {t("Remaining")}{" "}
+              {formatUsd(c.knownCostRemainingUsd ?? 0)}
+              {" · "}
+              {t("Observed quota change")}: {c.knownCostPercentagePoints?.toFixed(2)}%
+            </Text>
+          ) : null}
         </View>
       ))}
       {button("Sample records and external activity", () => setExpanded(!expanded))}
@@ -98,10 +112,15 @@ export function SubscriptionEstimates({
                 {s.before
                   .map(
                     (w) =>
-                      `${w.label}: ${w.usedPercent}% → ${s.after.find((a) => a.id === w.id)?.usedPercent ?? "—"}%`,
+                      `${w.label} (${t("Used quota")}): ${w.usedPercent}% → ${s.after.find((a) => a.id === w.id)?.usedPercent ?? "—"}%`,
                   )
                   .join(" · ")}
               </Text>
+              {!s.endedAt && s.observedAt ? (
+                <Text>
+                  {t("Last observation")}: {new Date(s.observedAt).toLocaleString()}
+                </Text>
+              ) : null}
               <Text>
                 {s.excluded
                   ? t("Excluded: external activity")

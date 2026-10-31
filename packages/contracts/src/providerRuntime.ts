@@ -280,11 +280,6 @@ export const ThreadTokenUsageSnapshot = Schema.Struct({
 });
 export type ThreadTokenUsageSnapshot = typeof ThreadTokenUsageSnapshot.Type;
 
-const ThreadTokenUsageUpdatedPayload = Schema.Struct({
-  usage: ThreadTokenUsageSnapshot,
-});
-export type ThreadTokenUsageUpdatedPayload = typeof ThreadTokenUsageUpdatedPayload.Type;
-
 const ThreadRealtimeStartedPayload = Schema.Struct({
   realtimeSessionId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
@@ -344,6 +339,14 @@ export const TurnTokenUsage = Schema.Union([
   }),
 ]);
 export type TurnTokenUsage = typeof TurnTokenUsage.Type;
+
+const ThreadTokenUsageUpdatedPayload = Schema.Struct({
+  usage: ThreadTokenUsageSnapshot,
+  // Cumulative usage for this turn through the latest provider response, not
+  // the context-window size or the lifetime total of a resumed thread.
+  turnUsage: Schema.optional(TurnTokenUsage),
+});
+export type ThreadTokenUsageUpdatedPayload = typeof ThreadTokenUsageUpdatedPayload.Type;
 
 const TurnCompletedPayload = Schema.Struct({
   state: RuntimeTurnState,

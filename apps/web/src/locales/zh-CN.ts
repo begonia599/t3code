@@ -4,8 +4,22 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Untracked agent activity overlapped this interval": "期间有无法关联的代理活动",
   "Quota scope is not supported for calibration": "该额度的适用范围暂不支持校准",
 
-  "Estimates need 3 complete samples covering at least 5 percentage points. Reference API rates are saved when each task starts; incomplete usage is excluded from calibration.":
-    "至少需要 3 个完整样本，累计覆盖 5 个百分点，才会显示估值。每次任务开始时保存 API 参考单价；不完整用量不参与校准。",
+  "A one-point quota change can give a preliminary estimate. Codex running tasks update as usage arrives. Missing usage is shown separately as a known-cost reference, not a full allowance.":
+    "额度变化达到 1 个百分点即可给出初步估算。Codex 长任务随用量更新，不必等整轮结束。缺少部分用量时单独显示已知费用折算参考，不当作完整额度。",
+  "Preliminary estimate; task still running or sample coverage is small":
+    "初步估算：任务仍在运行或样本覆盖较少",
+  "Known-cost reference only; missing usage is not included":
+    "仅按已记录费用折算（未包含缺失用量）",
+  "Waiting for a measurable quota change with usable token costs":
+    "等待额度变化及可计价用量；可查看下方采样原因",
+  "Waiting for usage from an active task": "仍有执行中任务尚未报告用量",
+  "Used quota": "已用额度",
+  "Complete usage unavailable; see known-cost reference below":
+    "用量尚不完整，请看下方已知费用折算参考",
+  "Observed quota change": "已观测额度变化",
+  "Last observation": "最近观测",
+  "Full cycle": "整周期",
+  Remaining: "剩余",
   "Subscription API-equivalent estimates": "订阅额度 API 等值估算",
   "Only T3 activity is recorded. Concurrent use elsewhere cannot be ruled out. Estimates depend on the observed model mix, not an official balance.":
     "仅记录 T3 发起的工作，无法完全排除同时在其他客户端的消耗。估值取决于观测到的模型组合，并非官方余额。",

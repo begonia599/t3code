@@ -30,6 +30,7 @@ import {
   type TurnTokenUsage,
   ProviderApprovalDecision,
   ThreadId,
+  TurnId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -586,14 +587,12 @@ function accumulateCodexTurnTokenUsage(
   }
 }
 
-function completeCodexTurnTokenUsage(
+function readCodexTurnTokenUsage(
   state: CodexTurnTokenUsageState,
   turnId: string,
   completed: boolean,
 ): TurnTokenUsage {
   const usage = state.byTurnId.get(turnId);
-  state.byTurnId.delete(turnId);
-  if (state.activeTurnId === turnId) state.activeTurnId = undefined;
   if (!usage) {
     return {
       usageStatus: "unavailable",
@@ -625,6 +624,17 @@ function completeCodexTurnTokenUsage(
     reasoningTokens: Math.min(usage.outputTokens, usage.reasoningTokens),
     hasSubagents: usage.hasSubagents,
   };
+}
+
+function completeCodexTurnTokenUsage(
+  state: CodexTurnTokenUsageState,
+  turnId: string,
+  completed: boolean,
+): TurnTokenUsage {
+  const usage = readCodexTurnTokenUsage(state, turnId, completed);
+  state.byTurnId.delete(turnId);
+  if (state.activeTurnId === turnId) state.activeTurnId = undefined;
+  return usage;
 }
 
 function toTurnStatus(
@@ -2392,7 +2402,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 event.method === "collabAgent/started" ||
                 (event.method === "collabAgent/activity" &&
                   collabPayload?.activityKind === "started");
-              if (isCollabSpawn && event.turnId === turnTokenUsage.activeTurnId) {
+              if (
+                isCollabSpawn &&
+                (!event.turnId || event.turnId === turnTokenUsage.activeTurnId)
+              ) {
                 getCodexTurnAccumulator(turnTokenUsage, turnTokenUsage.activeTurnId).hasSubagents =
                   true;
               }
@@ -2458,6 +2471,22 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             }
 
             const mappedEvents = mapToRuntimeEvents(event, event.threadId).map((runtimeEvent) => {
+              if (runtimeEvent.type === "thread.token-usage.updated") {
+                const payload = readPayload(
+                  EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,
+                  event.payload,
+                );
+                if (payload && payload.turnId === turnTokenUsage.activeTurnId) {
+                  return {
+                    ...runtimeEvent,
+                    turnId: TurnId.make(payload.turnId),
+                    payload: {
+                      ...runtimeEvent.payload,
+                      turnUsage: readCodexTurnTokenUsage(turnTokenUsage, payload.turnId, true),
+                    },
+                  } satisfies ProviderRuntimeEvent;
+                }
+              }
               if (managedError && runtimeEvent.type === "runtime.error")
                 return {
                   ...runtimeEvent,

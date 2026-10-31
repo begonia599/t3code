@@ -220,7 +220,12 @@ it.layer(storage)("subscription observation storage", (it) => {
           yield* run(2);
           let report = yield* service.read();
           assert.equal(report.cycles.length, 2);
-          assert.isNull(report.cycles.find((c) => c.id !== first.id)!.estimatedTotalUsd);
+          assert.closeTo(
+            report.cycles.find((c) => c.id !== first.id)!.estimatedTotalUsd!,
+            53,
+            0.0001,
+          );
+          assert.isTrue(report.cycles.find((c) => c.id !== first.id)!.preliminary);
           h.setUsed(0); // Manual credit reset even with an unchanged advertised reset date.
           yield* run(2);
           assert.equal((yield* service.read()).cycles.length, 3);
@@ -370,6 +375,81 @@ it.layer(storage)("subscription observation storage", (it) => {
         assert.isFalse(second.hasMore);
         assert.equal(second.cycles[0]!.samples, 102);
         assert.equal(new Set([...first.samples, ...second.samples].map((s) => s.id)).size, 102);
+      }).pipe(Effect.provide(Estimation.layer.pipe(Layer.provide(h.deps))));
+    }),
+  );
+  it.effect("prices running turn totals without double counting and exposes live quota", () =>
+    Effect.gen(function* () {
+      const h = yield* setup;
+      yield* Effect.gen(function* () {
+        const service = yield* Estimation.SubscriptionEstimation;
+        const threadId = ThreadId.make("long-task");
+        const base = {
+          eventId: EventId.make("live-event"),
+          threadId,
+          turnId: TurnId.make("long-turn"),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: instanceId,
+          createdAt: "1970-01-01T00:00:00.000Z",
+        };
+        yield* service.begin({
+          instanceId,
+          runKey: `turn:${threadId}`,
+          selection: { instanceId, model: "test-model" },
+        });
+        yield* service.bind(`turn:${threadId}`, "long-turn");
+        const progress: ProviderRuntimeEvent = {
+          ...base,
+          type: "thread.token-usage.updated",
+          payload: { usage: { usedTokens: 120 }, turnUsage: tokens },
+        };
+        yield* service.event(progress);
+        yield* service.event(progress);
+        yield* service.event({
+          ...progress,
+          turnId: TurnId.make("old-turn"),
+          payload: { usage: { usedTokens: 120 }, turnUsage: { ...tokens, inputTokens: 10000 } },
+        });
+        yield* service.event({
+          ...base,
+          type: "account.rate-limits.updated",
+          payload: {
+            limits: {
+              windows: [
+                {
+                  id: "weekly",
+                  kind: "weekly",
+                  label: "Weekly",
+                  usedPercent: 25,
+                  resetsAt: "2099-01-01T00:00:00.000Z",
+                },
+              ],
+            },
+          },
+        });
+        let report = yield* service.read();
+        assert.isNull(report.samples[0]!.endedAt);
+        assert.closeTo(report.samples[0]!.costUsd, 1.06, 0.00001);
+        assert.equal(report.samples[0]!.after[0]!.usedPercent, 25);
+        assert.equal(report.cycles[0]!.usedPercentagePoints, 15);
+        assert.closeTo(report.cycles[0]!.estimatedTotalUsd!, (1.06 * 100) / 15, 0.00001);
+        assert.isTrue(report.cycles[0]!.preliminary);
+        yield* service.begin({
+          instanceId,
+          runKey: "concurrent",
+          selection: { instanceId, model: "test-model" },
+        });
+        report = yield* service.read();
+        assert.include(report.samples[0]!.issues, "pendingUsage");
+        assert.isNull(report.cycles[0]!.estimatedTotalUsd);
+        assert.isAbove(report.cycles[0]!.knownCostTotalUsd!, 0);
+        yield* service.finish("concurrent", tokens);
+        h.setUsed(25);
+        yield* service.finish(`turn:${threadId}`, tokens);
+        report = yield* service.read();
+        assert.deepEqual(report.samples[0]!.issues, []);
+        assert.closeTo(report.samples[0]!.costUsd, 2.12, 0.00001);
+        assert.equal(h.refreshes(), 2); // Progress consumes native events, no extra probes.
       }).pipe(Effect.provide(Estimation.layer.pipe(Layer.provide(h.deps))));
     }),
   );

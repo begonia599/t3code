@@ -1098,6 +1098,7 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:subscription-estimation",
       tag: WS_METHODS.serverGetSubscriptionEstimation,
       staleTimeMs: 5_000,
+      refreshIntervalMs: 15_000,
     }),
     excludeSubscriptionSample: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:exclude-subscription-sample",

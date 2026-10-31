@@ -68,6 +68,58 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("subscription estimates controls", () => {
+  it("shows live preliminary values and distinguishes references with missing child usage", () => {
+    state.report = {
+      ...state.report,
+      cycles: [
+        {
+          id: "cycle",
+          label: "Codex",
+          windowLabel: "Weekly",
+          scope: "general",
+          resetsAt: "2099-01-01T00:00:00.000Z",
+          samples: 1,
+          observedCostUsd: 30,
+          calibrationCostUsd: 30,
+          usedPercentagePoints: 15,
+          remainingPercent: 56,
+          estimatedTotalUsd: 200,
+          estimatedRemainingUsd: 112,
+          preliminary: true,
+        },
+      ],
+    };
+    act(() => {
+      renderer = create(<SubscriptionEstimates environmentId={environmentId} label="Server one" />);
+    });
+    let rendered = JSON.stringify(renderer!.toJSON());
+    expect(rendered).toContain("$200");
+    expect(rendered).toContain("$112");
+    expect(rendered).toContain(
+      "Preliminary estimate; task still running or sample coverage is small",
+    );
+    state.report = {
+      ...state.report,
+      cycles: state.report.cycles.map((c) => ({
+        ...c,
+        estimatedTotalUsd: null,
+        estimatedRemainingUsd: null,
+        knownCostTotalUsd: 200,
+        knownCostRemainingUsd: 112,
+        knownCostPercentagePoints: 15,
+      })),
+    };
+    act(() =>
+      renderer!.update(<SubscriptionEstimates environmentId={environmentId} label="Server one" />),
+    );
+    rendered = JSON.stringify(renderer!.toJSON());
+    expect(rendered).toContain("$200");
+    expect(rendered).toContain("Known-cost reference only; missing usage is not included");
+    expect(rendered).toContain("15.00");
+    expect(rendered).not.toContain(
+      "Preliminary estimate; task still running or sample coverage is small",
+    );
+  });
   it("excludes and restores observations in the selected environment", async () => {
     act(() => {
       renderer = create(<SubscriptionEstimates environmentId={environmentId} label="Server one" />);

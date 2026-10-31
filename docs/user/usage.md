@@ -117,10 +117,14 @@ reset cycle has its own calibration; a reset starts fresh. Session and weekly es
 different limits on the same subscription and should not be added together. Connected environments
 keep separate observations, even when they use the same subscription.
 
-After at least three complete intervals covering five percentage points, the estimate is:
+Once usable observations cover one percentage point, a preliminary estimate is:
 `recorded API-equivalent cost ÷ quota fraction consumed`. Remaining value uses the last observed
-remaining percentage. These thresholds reduce noise from rounded readings; they do not guarantee
-accuracy. A different model mix, delayed quota updates, or a changing allowance can change the result.
+remaining percentage. Codex reports cumulative costs and quota during long-running turns, so it
+does not have to finish the entire turn before showing a reference. While the Usage page is open,
+observations refresh every 15 seconds. Sample percentages are labelled **Used quota**, whereas
+the limit cards show the remaining percentage. An estimate stays preliminary while a contributing
+task is running, or until three complete intervals cover five percentage points. Rounded or delayed
+readings, a different model mix, or a changing allowance can change the result.
 Amounts use the reference API rates, including any custom prices, saved when each task starts.
 They are estimates, not an official balance or an invoice; service tiers and long-context premiums
 may differ from these reference rates.
@@ -128,9 +132,11 @@ may differ from these reference rates.
 Only T3-started work is recorded here. Simultaneous use in another client cannot be reliably
 separated from the quota delta. Expand the sample records and exclude affected intervals; you
 can restore them later. Each record retains its initial and final readings and known cost.
-Intervals with missing readings, unknown prices, account changes, or incomplete token totals
-do not calibrate the allowance. This includes subagents and background tasks when their complete
-usage is unavailable. Their known cost may still appear, so recorded costs can be incomplete.
+Intervals with missing readings or account changes do not calibrate the allowance. If some token
+totals or prices are missing (including subagents and background tasks), a separate **known-cost
+reference** can show the recorded cost divided by the observed quota change. This omits missing
+costs and is not an estimate of the full allowance. It is never silently substituted for a complete
+cost estimate. Excluding a sample removes it from both calculations.
 Codex, Claude Code, and OpenCode turns can calibrate when their account reports subscription
 limits and their token totals are complete. Grok, Cursor, and Antigravity currently lack the
 complete turn-level usage needed here: quota observations alone do not produce an estimate.

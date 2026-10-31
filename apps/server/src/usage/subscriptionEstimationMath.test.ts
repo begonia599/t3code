@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, type SubscriptionEstimationSample } from "@t3tools/contracts";
 import { estimateSubscriptionCycles } from "./subscriptionEstimationMath.ts";
 const reset = "2099-01-08T00:00:00.000Z";
@@ -51,7 +51,8 @@ describe("subscription estimates", () => {
     const [cycle] = estimateSubscriptionCycles(samples);
     expect(cycle?.observedCostUsd).toBeCloseTo(1.2);
     expect(cycle?.calibrationCostUsd).toBeCloseTo(0.8);
-    expect(cycle?.estimatedTotalUsd).toBeNull();
+    expect(cycle?.estimatedTotalUsd).toBeCloseTo(20);
+    expect(cycle?.preliminary).toBe(true);
     expect(
       estimateSubscriptionCycles([sample(0), sample(1), sample(2)])[0]?.estimatedTotalUsd,
     ).toBeCloseTo(20);
@@ -61,11 +62,11 @@ describe("subscription estimates", () => {
       sample(0),
       sample(1),
       sample(2),
-      sample(3, { cycleKeys: { weekly: "week-2" } }),
+      sample(3, { cycleKeys: { weekly: "week-2" }, costUsd: 1.4 }),
     ];
     expect(
       estimateSubscriptionCycles(samples).find((c) => c.id === "week-2")?.estimatedTotalUsd,
-    ).toBeNull();
+    ).toBeCloseTo(70);
     expect(estimateSubscriptionCycles(samples).find((c) => c.id === "week-1")?.samples).toBe(3);
   });
   it("rejects missing ends, incomplete usage, resets and negative quota deltas", () => {
@@ -76,6 +77,38 @@ describe("subscription estimates", () => {
       sample(3, { after: [{ ...sample(3).after[0]!, usedPercent: 0 }] }),
     ];
     expect(estimateSubscriptionCycles(bad)[0]?.samples).toBe(0);
+  });
+  it("shows an ongoing 71% to 56% remaining interval before the turn ends", () => {
+    const running = sample(0, {
+      endedAt: null,
+      observedAt: "2099-01-01T03:00:00.000Z",
+      before: [{ ...sample(0).before[0]!, usedPercent: 29 }],
+      after: [{ ...sample(0).after[0]!, usedPercent: 44 }],
+      costUsd: 30,
+    });
+    const [cycle] = estimateSubscriptionCycles([running]);
+    expect(cycle?.estimatedTotalUsd).toBe(200);
+    expect(cycle?.estimatedRemainingUsd).toBe(112);
+    expect(cycle?.preliminary).toBe(true);
+    const [partial] = estimateSubscriptionCycles([{ ...running, issues: ["incompleteUsage"] }]);
+    expect(partial?.estimatedTotalUsd).toBeNull();
+    expect(partial?.knownCostTotalUsd).toBe(200);
+    expect(partial?.knownCostRemainingUsd).toBe(112);
+    expect(
+      estimateSubscriptionCycles([{ ...running, excluded: true }])[0]?.knownCostTotalUsd,
+    ).toBeUndefined();
+  });
+  it("does not turn mismatched accounts, interrupted work or resets into partial references", () => {
+    for (const issues of [
+      ["accountChanged"],
+      ["missingBefore"],
+      ["interrupted"],
+      ["modelChanged"],
+    ]) {
+      const [cycle] = estimateSubscriptionCycles([sample(0, { issues })]);
+      expect(cycle?.estimatedTotalUsd).toBeNull();
+      expect(cycle?.knownCostTotalUsd).toBeUndefined();
+    }
   });
   it("never charges mixed-model or unknown scopes against a model-specific allowance", () => {
     const scoped = [0, 1, 2].map((n) =>

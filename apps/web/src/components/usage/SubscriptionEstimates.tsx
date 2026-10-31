@@ -40,7 +40,7 @@ export function SubscriptionEstimates({
       </p>
       <p className="text-xs text-muted-foreground">
         {t(
-          "Estimates need 3 complete samples covering at least 5 percentage points. Reference API rates are saved when each task starts; incomplete usage is excluded from calibration.",
+          "A one-point quota change can give a preliminary estimate. Codex running tasks update as usage arrives. Missing usage is shown separately as a known-cost reference, not a full allowance.",
         )}
       </p>
       {query.error || error ? (
@@ -71,16 +71,32 @@ export function SubscriptionEstimates({
                   ? t(
                       cycle.scope === "unsupported"
                         ? "Quota scope is not supported for calibration"
-                        : "Collecting samples",
+                        : cycle.knownCostTotalUsd != null
+                          ? "Complete usage unavailable; see known-cost reference below"
+                          : "Waiting for a measurable quota change with usable token costs",
                     )
                   : formatUsd(cycle.estimatedTotalUsd)}
               </span>
+              {cycle.estimatedTotalUsd !== null && cycle.preliminary ? (
+                <span>
+                  {t("Preliminary estimate; task still running or sample coverage is small")}
+                </span>
+              ) : null}
               <span>
                 {t("Estimated remaining at last observation")}:{" "}
                 {cycle.estimatedRemainingUsd === null
                   ? "—"
                   : formatUsd(cycle.estimatedRemainingUsd)}
               </span>
+              {cycle.estimatedTotalUsd === null && cycle.knownCostTotalUsd != null ? (
+                <span>
+                  {t("Known-cost reference only; missing usage is not included")}: {t("Full cycle")}{" "}
+                  {formatUsd(cycle.knownCostTotalUsd)} · {t("Remaining")}{" "}
+                  {formatUsd(cycle.knownCostRemainingUsd ?? 0)}
+                  {" · "}
+                  {t("Observed quota change")}: {cycle.knownCostPercentagePoints?.toFixed(2)}%
+                </span>
+              ) : null}
             </div>
           ))}
           <details>
@@ -102,10 +118,15 @@ export function SubscriptionEstimates({
                     {sample.before
                       .map(
                         (w) =>
-                          `${w.label}: ${w.usedPercent}% → ${sample.after.find((a) => a.id === w.id)?.usedPercent ?? "—"}%`,
+                          `${w.label} (${t("Used quota")}): ${w.usedPercent}% → ${sample.after.find((a) => a.id === w.id)?.usedPercent ?? "—"}%`,
                       )
                       .join(" · ")}
                   </span>
+                  {!sample.endedAt && sample.observedAt ? (
+                    <span>
+                      {t("Last observation")}: {new Date(sample.observedAt).toLocaleString()}
+                    </span>
+                  ) : null}
                   <span>
                     {sample.excluded
                       ? t("Excluded: external activity")

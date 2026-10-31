@@ -718,6 +718,65 @@ function codexTurnEvent(method: "turn/started" | "turn/completed", turnId: strin
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect(
+    "publishes cumulative live costs even when the notification envelope omits turnId",
+    () =>
+      Effect.gen(function* () {
+        const { adapter, runtime } = yield* startLifecycleRuntime();
+        const updates = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.type === "thread.token-usage.updated"),
+          Stream.take(3),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* runtime.emit(codexTurnEvent("turn/started", "live"));
+        const first = codexTokenUsageEvent({
+          id: "live-1",
+          turnId: "live",
+          inputTokens: 100,
+          cachedInputTokens: 40,
+          cacheCreationTokens: 10,
+          outputTokens: 20,
+          reasoningTokens: 8,
+        });
+        const { turnId: _turnId, ...withoutEnvelopeTurn } = first;
+        yield* runtime.emit(withoutEnvelopeTurn);
+        yield* runtime.emit({ ...withoutEnvelopeTurn, id: asEventId("duplicate") });
+        yield* runtime.emit({
+          id: asEventId("live-child"),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-1"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          method: "collabAgent/started",
+          payload: { agentThreadId: "child" },
+        });
+        yield* runtime.emit(
+          codexTokenUsageEvent({
+            id: "live-2",
+            turnId: "live",
+            inputTokens: 150,
+            cachedInputTokens: 60,
+            cacheCreationTokens: 15,
+            outputTokens: 30,
+            reasoningTokens: 12,
+          }),
+        );
+        const events = yield* Fiber.join(updates);
+        NodeAssert.deepStrictEqual(
+          events.map((e) =>
+            e.type === "thread.token-usage.updated" ? e.payload.turnUsage?.inputTokens : undefined,
+          ),
+          [100, 100, 150],
+        );
+        NodeAssert.equal(events[0]?.turnId, "live");
+        NodeAssert.equal(
+          events[2]?.type === "thread.token-usage.updated" &&
+            events[2].payload.turnUsage?.hasSubagents,
+          true,
+        );
+      }),
+  );
   it.effect("calculates one Codex turn total from cumulative counters", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

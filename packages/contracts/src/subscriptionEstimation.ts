@@ -10,6 +10,7 @@ export const SubscriptionEstimationSample = Schema.Struct({
   driver: ProviderDriverKind,
   startedAt: IsoDateTime,
   endedAt: Schema.NullOr(IsoDateTime),
+  observedAt: Schema.optional(IsoDateTime),
   before: Schema.Array(ServerProviderUsageWindow),
   after: Schema.Array(ServerProviderUsageWindow),
   cycleKeys: Schema.Record(Schema.String, Schema.String),
@@ -34,6 +35,10 @@ export const SubscriptionEstimationCycle = Schema.Struct({
   remainingPercent: Schema.Number,
   estimatedTotalUsd: Schema.NullOr(Schema.Number),
   estimatedRemainingUsd: Schema.NullOr(Schema.Number),
+  preliminary: Schema.optional(Schema.Boolean),
+  knownCostTotalUsd: Schema.optional(Schema.NullOr(Schema.Number)),
+  knownCostRemainingUsd: Schema.optional(Schema.NullOr(Schema.Number)),
+  knownCostPercentagePoints: Schema.optional(Schema.Number),
 });
 export type SubscriptionEstimationCycle = typeof SubscriptionEstimationCycle.Type;
 export const SubscriptionEstimationReport = Schema.Struct({
@@ -73,4 +78,5 @@ export const subscriptionEstimationIssueLabels: Readonly<Record<string, string>>
   accountChanged: "Account changed during execution",
   unknownCycle: "Reset cycle is unavailable",
   modelChanged: "Model changed during execution",
+  pendingUsage: "Waiting for usage from an active task",
 };
