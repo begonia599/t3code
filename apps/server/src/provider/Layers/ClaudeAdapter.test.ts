@@ -538,6 +538,9 @@ describe("ClaudeAdapterLive", () => {
     "passes a private gateway settings file to the actual SDK query while retaining native setting sources",
     () => {
       const harness = makeHarness({
+        claudeConfig: {
+          customModels: [SYNTHETIC_CLAUDE_COLLIDING_ALIAS, SYNTHETIC_CLAUDE_CAPABLE_MODEL],
+        },
         environment: {
           ...process.env,
           T3_GATEWAY_ACTIVE: "claude",
@@ -556,10 +559,16 @@ describe("ClaudeAdapterLive", () => {
           modelSelection: createModelSelection(
             ProviderInstanceId.make("claudeAgent"),
             SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
+            [
+              { id: "effort", value: "max" },
+              { id: "contextWindow", value: "200k" },
+            ],
           ),
         });
         const options = harness.getLastCreateQueryInput()?.options;
         assert.equal(options?.model, SYNTHETIC_CLAUDE_COLLIDING_ALIAS);
+        assert.equal(options?.effort, "max");
+        assert.equal(options?.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "1");
         assert.deepEqual(options?.settingSources, ["user", "project", "local"]);
         assert.equal(typeof options?.settings, "string");
         if (typeof options?.settings !== "string") return;
@@ -569,6 +578,7 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "claude-opus-4-8");
         assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://gateway.example/api");
         assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, "fixture-gateway-key");
+        assert.equal(settings.env.CLAUDE_CODE_DISABLE_1M_CONTEXT, "1");
         assert.equal(NodeFS.statSync(options.settings).mode & 0o777, 0o600);
         assert.equal(options.settings.includes("fixture-gateway-key"), false);
         yield* adapter.sendTurn({
@@ -581,7 +591,9 @@ describe("ClaudeAdapterLive", () => {
             [{ id: "contextWindow", value: "expanded" }],
           ),
         });
-        assert.deepEqual(harness.query.setModelCalls, [SYNTHETIC_CLAUDE_CAPABLE_MODEL]);
+        assert.deepEqual(harness.query.setModelCalls, [
+          `${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`,
+        ]);
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
         Effect.provide(harness.layer),
@@ -630,60 +642,74 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect(
-    "isolates native context caps between conversations and reverses them on resume",
-    () => {
-      const environment = {
-        ...process.env,
-        CLAUDE_CODE_DISABLE_1M_CONTEXT: "1",
-        HTTPS_PROXY: "http://proxy.invalid:3128",
-      };
-      const harness = makeHarness({ environment, getSessionMessages: async () => [] });
-      return Effect.gen(function* () {
-        const adapter = yield* ClaudeAdapter;
-        const start = (threadId: ThreadId, value: string, resume = false) =>
-          adapter.startSession({
-            threadId,
-            provider: ProviderDriverKind.make("claudeAgent"),
-            modelSelection: createModelSelection(
-              ProviderInstanceId.make("claudeAgent"),
-              SYNTHETIC_CLAUDE_NATIVE_1M_MODEL,
-              [{ id: "contextWindow", value }],
-            ),
-            runtimeMode: "full-access",
-            ...(resume ? { resumeCursor: { sessionId: CLAUDE_ORIGINAL_SESSION_ID } } : {}),
-          });
-        yield* start(THREAD_ID, "200k");
-        const small = harness.getLastCreateQueryInput()!.options;
-        assert.equal(small.model, SYNTHETIC_CLAUDE_NATIVE_1M_MODEL);
-        assert.equal(small.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "1");
-        assert.deepEqual(small.settings, {
-          showThinkingSummaries: true,
-          env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" },
+  for (const gateway of [false, true]) {
+    it.effect(
+      `isolates ${gateway ? "gateway" : "native"} context caps between conversations and reverses them on resume`,
+      () => {
+        const environment = {
+          ...process.env,
+          ...(gateway ? { T3_GATEWAY_ACTIVE: "claude" } : {}),
+          CLAUDE_CODE_DISABLE_1M_CONTEXT: "1",
+          HTTPS_PROXY: "http://proxy.invalid:3128",
+        };
+        const harness = makeHarness({
+          environment,
+          getSessionMessages: async () => [],
+          claudeConfig: { customModels: gateway ? [SYNTHETIC_CLAUDE_NATIVE_1M_MODEL] : [] },
         });
+        const readSettings = (settings: unknown) =>
+          typeof settings === "string"
+            ? decodeGatewaySessionSettings(NodeFS.readFileSync(settings, "utf8"))
+            : settings;
+        return Effect.gen(function* () {
+          const adapter = yield* ClaudeAdapter;
+          const start = (threadId: ThreadId, value: string, resume = false) =>
+            adapter.startSession({
+              threadId,
+              provider: ProviderDriverKind.make("claudeAgent"),
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("claudeAgent"),
+                SYNTHETIC_CLAUDE_NATIVE_1M_MODEL,
+                [{ id: "contextWindow", value }],
+              ),
+              runtimeMode: "full-access",
+              ...(resume ? { resumeCursor: { sessionId: CLAUDE_ORIGINAL_SESSION_ID } } : {}),
+            });
+          yield* start(THREAD_ID, "200k");
+          const small = harness.getLastCreateQueryInput()!.options;
+          assert.equal(small.model, SYNTHETIC_CLAUDE_NATIVE_1M_MODEL);
+          assert.equal(small.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "1");
+          assert.equal(
+            (readSettings(small.settings) as { env: Record<string, string> }).env
+              .CLAUDE_CODE_DISABLE_1M_CONTEXT,
+            "1",
+          );
 
-        yield* start(RESUME_THREAD_ID, "1m");
-        const large = harness.getLastCreateQueryInput()!.options;
-        assert.equal(large.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "0");
-        assert.equal(small.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "1");
-        assert.equal(small.env?.HTTPS_PROXY, environment.HTTPS_PROXY);
-        assert.equal(large.env?.HTTPS_PROXY, environment.HTTPS_PROXY);
-        assert.equal(environment.CLAUDE_CODE_DISABLE_1M_CONTEXT, "1");
+          yield* start(RESUME_THREAD_ID, "1m");
+          const large = harness.getLastCreateQueryInput()!.options;
+          assert.equal(large.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "0");
+          assert.equal(small.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "1");
+          assert.equal(small.env?.HTTPS_PROXY, environment.HTTPS_PROXY);
+          assert.equal(large.env?.HTTPS_PROXY, environment.HTTPS_PROXY);
+          assert.equal(environment.CLAUDE_CODE_DISABLE_1M_CONTEXT, "1");
 
-        yield* start(THREAD_ID, "1m", true);
-        const resumed = harness.getLastCreateQueryInput()!.options;
-        assert.equal(resumed.resume, CLAUDE_ORIGINAL_SESSION_ID);
-        assert.equal(resumed.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "0");
-        assert.deepEqual(resumed.settings, {
-          showThinkingSummaries: true,
-          env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
-        });
-      }).pipe(
-        Effect.provideService(Random.Random, makeDeterministicRandomService()),
-        Effect.provide(harness.layer),
-      );
-    },
-  );
+          yield* start(THREAD_ID, "1m", true);
+          const resumed = harness.getLastCreateQueryInput()!.options;
+          assert.equal(resumed.resume, CLAUDE_ORIGINAL_SESSION_ID);
+          assert.equal(resumed.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "0");
+          assert.equal(
+            (readSettings(resumed.settings) as { env: Record<string, string> }).env
+              .CLAUDE_CODE_DISABLE_1M_CONTEXT,
+            "0",
+          );
+          assert.equal(resumed.model, SYNTHETIC_CLAUDE_NATIVE_1M_MODEL);
+        }).pipe(
+          Effect.provideService(Random.Random, makeDeterministicRandomService()),
+          Effect.provide(harness.layer),
+        );
+      },
+    );
+  }
 
   it.effect("forwards claude effort levels into query options", () => {
     const harness = makeHarness();

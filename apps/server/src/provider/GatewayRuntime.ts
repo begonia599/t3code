@@ -13,6 +13,10 @@ import {
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import type { ProviderInstance } from "./ProviderDriver.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  scopeClaudeGatewayModelCatalog,
+} from "./ClaudeModelCatalog.ts";
 
 const quoteArgument = (value: string) => JSON.stringify(value);
 
@@ -121,6 +125,12 @@ export function gatewaySnapshot(
 ): ServerProvider {
   if (!entry.gateway?.enabled) return snapshot;
   const { usageLimits: _limits, ...rest } = snapshot;
+  const models = gatewayModels(entry.gateway);
+  const claudeModels =
+    entry.driver === "claudeAgent"
+      ? scopeClaudeGatewayModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, models).models
+      : [];
+  const codexFallback = snapshot.models.find((model) => model.capabilities)?.capabilities;
   return {
     ...rest,
     modelCatalogSource: "gateway",
@@ -137,12 +147,17 @@ export function gatewaySnapshot(
       snapshot.status === "error" && snapshot.message
         ? snapshot.message
         : "Custom API gateway configured. Use Test connection to verify inference.",
-    models: gatewayModels(entry.gateway).map((model) => ({
+    models: models.map((model) => ({
       slug: model,
       name: model,
       isCustom: true,
       isDefault: model === entry.gateway!.model,
-      capabilities: null,
+      capabilities:
+        entry.driver === "claudeAgent"
+          ? claudeModels.find((entry) => entry.model.slug === model)!.model.capabilities
+          : (snapshot.models.find((entry) => entry.slug === model)?.capabilities ??
+            codexFallback ??
+            null),
     })),
   };
 }

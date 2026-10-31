@@ -108,6 +108,69 @@ export function resolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeMo
 
 export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(BUNDLED_MODEL_MANIFEST);
 
+const GATEWAY_CLAUDE_CAPABILITIES: ModelCapabilities = {
+  optionDescriptors: [
+    {
+      id: "effort",
+      label: "Reasoning",
+      type: "select",
+      description: "Request an effort level supported by the gateway model.",
+      options: [
+        { id: "default", label: "Default", isDefault: true },
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+        { id: "xhigh", label: "Extra High" },
+        { id: "max", label: "Max" },
+      ],
+    },
+    {
+      id: "contextWindow",
+      label: "Context Window",
+      type: "select",
+      description: "Choose the context window supported by the gateway model.",
+      options: [
+        { id: "default", label: "Default", isDefault: true },
+        { id: "200k", label: "200k" },
+        { id: "1m", label: "1M" },
+      ],
+    },
+  ],
+};
+
+/** Keep gateway IDs literal, but retain the CLI controls and their runtime mappings. */
+export function scopeClaudeGatewayModelCatalog(
+  catalog: ClaudeModelCatalog,
+  customModels: ReadonlyArray<CustomModelSetting>,
+): ClaudeModelCatalog {
+  return {
+    models: readCustomModelEntries(customModels).map((entry) => {
+      // Only exact IDs match: a gateway's "opus" may name a completely different model.
+      const known =
+        catalog.models.find((candidate) => candidate.model.slug === entry.slug) ??
+        BUNDLED_CLAUDE_MODEL_CATALOG.models.find(
+          (candidate) => candidate.model.slug === entry.slug,
+        );
+      return {
+        model: {
+          slug: entry.slug,
+          name: entry.name,
+          isCustom: true,
+          capabilities:
+            entry.capabilities ?? known?.model.capabilities ?? GATEWAY_CLAUDE_CAPABILITIES,
+        },
+        runtime: known?.runtime ?? {
+          effortMap: { default: null },
+          contextWindowTokens: { "200k": 200_000, "1m": 1_000_000 },
+          // [1m] is Claude Code's native context selector, not a gateway model alias.
+          modelSuffixes: /\[1m\]$/iu.test(entry.slug) ? {} : { contextWindow: { "1m": "[1m]" } },
+        },
+        compatibility: {},
+      };
+    }),
+  };
+}
+
 /**
  * Scope the catalog to one instance's settings: custom model slugs stay opaque
  * (a built-in alias they shadow is dropped, canonical slugs and capabilities

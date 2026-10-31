@@ -107,6 +107,7 @@ import {
   resolveClaudeCatalogEffort,
   resolveClaudeModelSlug,
   scopeClaudeModelCatalog,
+  scopeClaudeGatewayModelCatalog,
 } from "../ClaudeModelCatalog.ts";
 import {
   ProviderAdapterProcessError,
@@ -2113,15 +2114,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
   );
-  // Gateway model IDs must not acquire native aliases, option defaults or suffixes.
+  // Gateway IDs stay literal while their selected CLI controls remain available.
   const modelCatalogEffect = (
     options?.modelCatalog ?? Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG)
   ).pipe(
     Effect.map((catalog) =>
-      scopeClaudeModelCatalog(
-        claudeEnvironment.T3_GATEWAY_ACTIVE === "claude" ? { models: [] } : catalog,
-        claudeSettings.customModels,
-      ),
+      claudeEnvironment.T3_GATEWAY_ACTIVE === "claude"
+        ? scopeClaudeGatewayModelCatalog(catalog, claudeSettings.customModels)
+        : scopeClaudeModelCatalog(catalog, claudeSettings.customModels),
     ),
   );
   const writeGatewaySettings = yield* makeClaudeGatewaySettingsWriter(claudeEnvironment);

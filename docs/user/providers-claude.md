@@ -98,7 +98,12 @@ support native Anthropic Messages. There is no protocol conversion.
 
 The base URL is the prefix before `/v1/messages`: OpenRouter uses
 `https://openrouter.ai/api`. Use **Load gateway models** to choose an ID, or enter
-IDs manually if the gateway does not expose a model list. IDs are sent unchanged.
+IDs manually if the gateway does not expose a model list. T3 keeps those IDs instead
+of substituting the official model catalog. The chat's reasoning and context controls
+remain available: known models keep their native options, while other IDs offer
+manual effort and context choices with **Default** leaving the choice to Claude Code.
+Selecting 1M uses Claude Code's native context setting (including `[1m]` where required).
+The selected model and gateway must support the requested effort and window size.
 **Advanced settings** contains authentication, additional model IDs, optional
 Opus/Sonnet/Haiku/subagent mappings, request headers and connection testing.
 Bearer authentication is the default; model mappings fall back to the main model.

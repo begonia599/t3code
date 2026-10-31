@@ -50,6 +50,7 @@ import {
   resolveClaudeCatalogEffort,
   resolveClaudeModelSlug,
   scopeClaudeModelCatalog,
+  scopeClaudeGatewayModelCatalog,
 } from "../provider/ClaudeModelCatalog.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 
@@ -84,10 +85,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) =>
-      scopeClaudeModelCatalog(
-        claudeEnvironment.T3_GATEWAY_ACTIVE === "claude" ? { models: [] } : catalog,
-        claudeSettings.customModels,
-      ),
+      claudeEnvironment.T3_GATEWAY_ACTIVE === "claude"
+        ? scopeClaudeGatewayModelCatalog(catalog, claudeSettings.customModels)
+        : scopeClaudeModelCatalog(catalog, claudeSettings.customModels),
     ),
   );
 

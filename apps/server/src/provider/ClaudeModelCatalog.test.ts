@@ -14,6 +14,7 @@ import {
   resolveClaudeModelsForVersion,
   resolveClaudeModelSlug,
   scopeClaudeModelCatalog,
+  scopeClaudeGatewayModelCatalog,
 } from "./ClaudeModelCatalog.ts";
 
 /**
@@ -69,6 +70,54 @@ const manifest = (): ModelManifestData => ({
 });
 
 describe("Claude model catalog", () => {
+  it("keeps gateway model IDs literal while preserving known controls and native runtime mappings", () => {
+    const catalog = scopeClaudeGatewayModelCatalog(resolveClaudeModelCatalog(manifest()), [
+      "claude-synthetic-next",
+      "synthetic",
+      "vendor/private",
+    ]);
+    assert.deepStrictEqual(
+      catalog.models.map((entry) => entry.model.slug),
+      ["claude-synthetic-next", "synthetic", "vendor/private"],
+    );
+    const selection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-synthetic-next",
+      options: [
+        { id: "effort", value: "extreme" },
+        { id: "contextWindow", value: "large" },
+      ],
+    };
+    assert.strictEqual(resolveClaudeCatalogEffort(catalog, selection.model, "extreme"), "extreme");
+    assert.strictEqual(normalizeClaudeCatalogEffort(catalog, "extreme", selection.model), "high");
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(catalog, selection),
+      "claude-synthetic-next[large]",
+    );
+    assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "synthetic");
+    for (const model of ["synthetic", "vendor/private"]) {
+      const base = { instanceId: selection.instanceId, model };
+      assert.strictEqual(resolveClaudeCatalogApiModelId(catalog, base), model);
+      assert.strictEqual(normalizeClaudeCatalogEffort(catalog, "default", model), undefined);
+      assert.deepStrictEqual(resolveClaudeCatalogContextEnvironment(catalog, base), {});
+      assert.strictEqual(resolveClaudeCatalogEffort(catalog, model, "max"), "max");
+      for (const [value, tokens, flag] of [
+        ["200k", 200_000, "1"],
+        ["1m", 1_000_000, "0"],
+      ] as const) {
+        const selected = { ...base, options: [{ id: "contextWindow", value }] };
+        assert.strictEqual(resolveClaudeCatalogContextWindowTokens(catalog, selected), tokens);
+        assert.deepStrictEqual(resolveClaudeCatalogContextEnvironment(catalog, selected), {
+          CLAUDE_CODE_DISABLE_1M_CONTEXT: flag,
+        });
+        assert.strictEqual(
+          resolveClaudeCatalogApiModelId(catalog, selected),
+          value === "1m" ? `${model}[1m]` : model,
+        );
+      }
+    }
+  });
+
   it("adds working context choices to remote native 1M profiles without changing their model ID", () => {
     const source = manifest();
     const catalog = resolveClaudeModelCatalog({

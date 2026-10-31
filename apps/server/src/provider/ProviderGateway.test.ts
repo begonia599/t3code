@@ -283,7 +283,12 @@ describe("native gateway runtime", () => {
     const merged = decodeProviderSnapshot(JSON.stringify(mergeProviderSnapshot(native, gateway)));
     expect(merged.modelCatalogSource).toBe("gateway");
     expect(merged.models).toEqual(gateway.models);
-    expect(merged.models.every((model) => model.capabilities === null)).toBe(true);
+    for (const model of merged.models) {
+      expect(model.capabilities?.optionDescriptors?.map((option) => option.id)).toEqual([
+        "effort",
+        "contextWindow",
+      ]);
+    }
     expect(hydrateCachedProvider({ cachedProvider: native, fallbackProvider: gateway })).toEqual(
       gateway,
     );
@@ -292,6 +297,31 @@ describe("native gateway runtime", () => {
     );
     expect(mergeProviderSnapshot(merged, native).models).toEqual(native.models);
     expect(mergeProviderSnapshot(merged, native).modelCatalogSource).toBeUndefined();
+
+    const reasoning = {
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select" as const,
+          options: [
+            { id: "high", label: "High" },
+            { id: "xhigh", label: "Extra High" },
+          ],
+        },
+      ],
+    };
+    const codex = gatewaySnapshot(instance("responses"), {
+      ...native,
+      driver: ProviderDriverKind.make("codex"),
+      models: [
+        { slug: "vendor/model-v2", name: "Gateway model", isCustom: true, capabilities: reasoning },
+      ],
+    });
+    expect(codex.models.map((model) => model.slug)).toEqual(
+      gateway.models.map((model) => model.slug),
+    );
+    expect(codex.models.every((model) => model.capabilities === reasoning)).toBe(true);
   });
 
   it.effect(

@@ -30,7 +30,25 @@ describe("mobile model options", () => {
               name: "claude-opus-4-8",
               isCustom: true,
               isDefault: true,
-              capabilities: null,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "effort",
+                    label: "Reasoning",
+                    type: "select",
+                    options: [{ id: "max", label: "Max" }],
+                  },
+                  {
+                    id: "contextWindow",
+                    label: "Context Window",
+                    type: "select",
+                    options: [
+                      { id: "200k", label: "200k" },
+                      { id: "1m", label: "1M" },
+                    ],
+                  },
+                ],
+              },
             },
           ],
         },
@@ -42,6 +60,16 @@ describe("mobile model options", () => {
       "claude-opus-4-8",
     ]);
     expect(resolveSelectableModelSelection(config, old)).toBeNull();
+    const selection = {
+      instanceId,
+      model: "claude-opus-4-8",
+      options: [
+        { id: "effort", value: "max" },
+        { id: "contextWindow", value: "200k" },
+      ],
+    };
+    expect(resolveSelectableModelSelection(config, selection)).toEqual(selection);
+    expect(buildModelOptions(config, selection)[0]?.selection).toEqual(selection);
     expect(
       resolveSelectableModelSelection(config, { instanceId, model: "claude-opus-4-8" })?.model,
     ).toBe("claude-opus-4-8");

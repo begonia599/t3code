@@ -76,11 +76,45 @@ describe("instance-scoped model selection", () => {
         name: slug,
         isCustom: true,
         isDefault: i === 0,
-        capabilities: null,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select",
+              options: [
+                { id: "high", label: "High" },
+                { id: "max", label: "Max" },
+              ],
+            },
+            {
+              id: "contextWindow",
+              label: "Context Window",
+              type: "select",
+              options: [
+                { id: "200k", label: "200k" },
+                { id: "1m", label: "1M" },
+              ],
+            },
+          ],
+        },
       })),
     };
     const settings = settingsWithProviderInstances();
     const entry = deriveProviderInstanceEntries([snapshot])[0]!;
+    const selectedOptions = [
+      { id: "effort", value: "max" },
+      { id: "contextWindow", value: "200k" },
+    ];
+    expect(
+      getComposerProviderState({
+        provider: snapshot.driver,
+        model: "claude-opus-4-8",
+        models: entry.models,
+        modelOptions: selectedOptions,
+        planModeEnabled: false,
+      }).modelOptionsForDispatch,
+    ).toEqual(selectedOptions);
     expect(
       getAppModelOptionsForInstance(settings, entry, "claude-opus-5-5").map((m) => m.slug),
     ).toEqual(["claude-opus-4-8", "kimi-k3"]);
