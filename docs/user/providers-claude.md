@@ -91,15 +91,17 @@ tool, which refuses skills reserved for manual invocation.
 ## Custom API gateways
 
 In **Settings → Providers**, select your environment and Claude instance, then
-open **Custom API gateway**. Enter the gateway base URL, authentication method,
-API key and default model ID. For OpenRouter, use **Use OpenRouter address**.
+open **Custom API gateway**. Enter the gateway base URL, API key and
+default model ID, then **Save and use gateway**. Saving applies it immediately.
 Self-hosted gateways and other vendors work through the same form when they
 support native Anthropic Messages. There is no protocol conversion.
 
 The base URL is the prefix before `/v1/messages`: OpenRouter uses
 `https://openrouter.ai/api`. Use **Load gateway models** to choose an ID, or enter
 IDs manually if the gateway does not expose a model list. IDs are sent unchanged.
-Optional Opus, Sonnet, Haiku and subagent mappings default to the main model.
+**Advanced settings** contains authentication, additional model IDs, optional
+Opus/Sonnet/Haiku/subagent mappings, request headers and connection testing.
+Bearer authentication is the default; model mappings fall back to the main model.
 Additional request headers are stored as sensitive values.
 
 **Test connection** sends two small requests from the selected server, checking
@@ -109,9 +111,8 @@ the gateway must support the capabilities your model and agent use. See the
 [OpenRouter Claude Code guide](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration)
 for that service's current compatibility requirements.
 
-Enable and save the gateway to apply it to that instance. Saving rebuilds the
-instance and can stop its running tasks; finish them first, or add a separate
-Claude instance for the gateway. Choose one of its models in an existing chat.
+Saving rebuilds the instance and can stop its running tasks; finish them first,
+or add a separate Claude instance for the gateway. Choose one of its models in an existing chat.
 On mobile, open the environment in Settings and use **Custom API gateway** under
 Claude.
 
@@ -119,6 +120,6 @@ Your saved Claude OAuth login, Skills, config directory and proxy settings stay
 intact. Gateway overrides apply only to this instance's child processes; native
 managed policy still applies. If you use custom `--settings` launch arguments,
 move those values into native settings files before enabling the gateway.
-Disable the gateway and save, or remove it, to restore the original instance
-configuration. API key fields stay masked and keep their saved value when left
-unchanged. Subscription limits are not shown for a gateway instance.
+Select **Use original configuration** to remove the gateway overrides and restore
+the original instance configuration. API key fields stay masked and keep their
+saved value when left unchanged. Subscription limits are not shown for a gateway instance.

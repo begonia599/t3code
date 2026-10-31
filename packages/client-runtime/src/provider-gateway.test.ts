@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vite-plus/test";
 import { ProviderDriverKind, type ProviderInstanceConfig } from "@t3tools/contracts";
+import { withoutGateway } from "@t3tools/shared/providerGateway";
 import { addGatewayHeader, buildGatewayInstance, createGatewayDraft } from "./provider-gateway.ts";
 
 const instance: ProviderInstanceConfig = {
@@ -12,17 +13,17 @@ const instance: ProviderInstanceConfig = {
 };
 
 describe("gateway editor", () => {
-  it("keeps a saved key and unrelated fields when editing gateway values", () => {
+  it("applies the gateway on save while keeping a saved key and unrelated fields", () => {
     const draft = createGatewayDraft(instance);
     draft.gateway = {
       ...draft.gateway,
-      enabled: true,
       baseUrl: "https://router.example/api/",
       model: "vendor/main",
     };
     draft.modelText = "vendor/a\nvendor/a, vendor/b";
     const next = buildGatewayInstance(instance, draft);
     expect(next.gateway).toMatchObject({
+      enabled: true,
       baseUrl: "https://router.example/api",
       models: ["vendor/a", "vendor/b"],
       protocol: "anthropic",
@@ -62,5 +63,44 @@ describe("gateway editor", () => {
     draft.key = { ...draft.key, value: "key" };
     draft.gateway = { ...draft.gateway, protocol: "responses" };
     expect(() => buildGatewayInstance(instance, draft)).toThrow(/native protocol/);
+  });
+  it("applies a previously disabled gateway without resetting advanced settings", () => {
+    const draft = createGatewayDraft(instance);
+    const existing = {
+      ...instance,
+      gateway: {
+        ...draft.gateway,
+        enabled: false,
+        baseUrl: "https://gateway.example",
+        model: "main",
+        auth: "api-key" as const,
+        roles: { haiku: "small" },
+      },
+    };
+    const next = buildGatewayInstance(existing, createGatewayDraft(existing));
+    expect(next.gateway).toEqual({ ...existing.gateway, enabled: true });
+    expect(existing.gateway.enabled).toBe(false);
+    const restored = withoutGateway(next);
+    expect(restored.gateway).toBeUndefined();
+    expect(restored.config).toEqual(instance.config);
+    expect(restored.environment).toEqual([instance.environment![1]]);
+  });
+  it("validates the address and model before applying and still rejects managed Codex", () => {
+    const draft = createGatewayDraft(instance);
+    expect(() => buildGatewayInstance(instance, draft)).toThrow(/base URL/);
+    draft.gateway = { ...draft.gateway, baseUrl: "https://gateway.example" };
+    expect(() => buildGatewayInstance(instance, draft)).toThrow(/default model/);
+    const managed = {
+      ...instance,
+      driver: ProviderDriverKind.make("codex"),
+      config: { setupMode: "managed" },
+    };
+    const codexDraft = createGatewayDraft(managed);
+    codexDraft.gateway = {
+      ...codexDraft.gateway,
+      baseUrl: "https://gateway.example/v1",
+      model: "main",
+    };
+    expect(() => buildGatewayInstance(managed, codexDraft)).toThrow(/local Codex runtime/);
   });
 });

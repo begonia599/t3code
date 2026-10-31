@@ -7,10 +7,7 @@ import { mobilePreferencesAtom } from "./state/preferences";
 const zhCN: Readonly<Record<string, string>> = {
   "Filter models": "筛选模型",
   "Custom API gateway": "自定义 API 网关",
-  "Configure custom gateway": "配置自定义网关",
-  "Enable custom gateway": "启用自定义网关",
   "Native protocol": "原生协议",
-  "Use OpenRouter address": "填入 OpenRouter 地址",
   "Gateway base URL": "网关基础地址",
   "Gateway authentication": "网关认证方式",
   "Gateway API key": "网关 API Key",
@@ -26,22 +23,23 @@ const zhCN: Readonly<Record<string, string>> = {
   "Remove header": "移除请求头",
   "Add header": "添加请求头",
   "Test connection": "测试连接",
-  "Save gateway": "保存网关",
-  "Remove gateway": "移除网关",
-  "Gateway saved.": "网关已保存。",
+  "Save and use gateway": "保存并使用",
+  "Advanced settings": "高级设置",
+  "Use original configuration": "恢复原有配置",
+  "Gateway saved and applied.": "网关已保存并生效。",
   "Gateway removed; native instance settings restored.": "网关已移除，已恢复实例原有配置。",
   "Could not update gateway settings.": "无法更新网关配置。",
   models: "模型列表",
   stream: "流式响应",
   tools: "工具调用",
-  "Use a native Anthropic Messages gateway for Claude Code, or a Responses gateway for Codex. No protocol conversion. Existing CLI login and files are preserved.":
-    "Claude Code 使用 Anthropic Messages 网关，Codex 使用 Responses 网关，不进行协议转换。保留原有 CLI 登录和文件。",
-  "Saving rebuilds this instance and can stop its running tasks. Finish them first, or add a separate provider instance for this gateway.":
-    "保存会重建此实例，可能中断其运行中的任务。请先结束任务，或为网关新建一个提供方实例。",
+  "Saving applies this gateway to the instance and can stop its running tasks.":
+    "保存后此实例将使用该网关，可能中断其运行中的任务。",
   "Tests run on the selected server and make two small, potentially billable requests. They check basic streaming and tool calls, not every agent capability.":
     "测试由所选服务器发出，包含两次少量请求，可能产生费用。仅检查基本流式响应和工具调用，不能保证所有 Agent 功能兼容。",
-  "Base URL before /v1/messages (Claude) or /responses (Codex). Include your gateway's path prefix.":
-    "填写 /v1/messages（Claude）或 /responses（Codex）之前的基础地址，保留网关要求的路径前缀。",
+  "Base URL before /v1/messages. Include your gateway's path prefix.":
+    "填写 /v1/messages 之前的基础地址，保留网关要求的路径前缀。",
+  "Base URL before /responses. Include your gateway's path prefix.":
+    "填写 /responses 之前的基础地址，保留网关要求的路径前缀。",
   "Model IDs are sent unchanged. Load the list or enter IDs manually, one per line. Existing chats may need a model from this gateway selected.":
     "模型 ID 原样发送。可以获取列表，也可每行手动填入一个。已有会话可能需要重新选择此网关的模型。",
   "Custom gateways currently support Claude Code and Codex.":

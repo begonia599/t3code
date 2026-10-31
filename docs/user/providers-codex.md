@@ -39,10 +39,11 @@ gateway must support the native Responses protocol; Chat Completions alone is
 not sufficient and T3 does not convert protocols. T3-managed ChatGPT accounts
 remain a separate setup mode.
 
-Fetch the model list or enter IDs manually. Model IDs are sent unchanged. Bearer
-and `x-api-key` authentication and additional sensitive request headers are
-supported. Test connection checks streaming and a tool call from the selected
-server with two small, potentially billable requests; it does not execute tools
+Fetch the model list or enter IDs manually, then **Save and use gateway** to
+apply it immediately. Model IDs are sent unchanged. **Advanced settings** contains
+authentication, additional model IDs, request headers and connection testing.
+Bearer authentication is the default; `x-api-key` is also supported. Test connection
+checks streaming and a tool call from the selected server with two small, potentially billable requests; it does not execute tools
 or guarantee every Codex capability.
 
 Saving rebuilds the instance and can stop its tasks. Finish them first, or create
@@ -50,8 +51,9 @@ a separate Codex instance for the gateway, then select a gateway model in chat.
 On mobile, the same editor is under the environment's provider settings.
 
 Gateway overrides use Codex's native per-process configuration. They preserve
-`CODEX_HOME`, saved OAuth credentials, Skills and network settings. Disable and
-save, or remove the gateway, to return to the previous instance configuration.
+`CODEX_HOME`, saved OAuth credentials, Skills and network settings. Use
+**Use original configuration** to remove the gateway overrides and return to
+the previous instance configuration.
 Gateway instances do not show the saved ChatGPT account's subscription limits.
 
 ## Use multiple accounts

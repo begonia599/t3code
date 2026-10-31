@@ -38,7 +38,6 @@ export function ProviderGatewayEditor({
   const t = useT();
   const id = useId();
   const [draft, updateDraft] = useState(() => createGatewayDraft(instance));
-  const [expanded, setExpanded] = useState(Boolean(instance.gateway));
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,7 +89,7 @@ export function ProviderGatewayEditor({
         setNotice(
           action === "remove"
             ? "Gateway removed; native instance settings restored."
-            : "Gateway saved.",
+            : "Gateway saved and applied.",
         );
       } else {
         const response = await probe({
@@ -120,65 +119,12 @@ export function ProviderGatewayEditor({
         {t("Custom gateways currently support Claude Code and Codex.")}
       </p>
     );
-  if (!expanded)
-    return (
-      <div className="px-3 py-3 sm:px-4">
-        <Button variant="outline" size="sm" onClick={() => setExpanded(true)}>
-          {t("Configure custom gateway")}
-        </Button>
-      </div>
-    );
   return (
     <div className="grid gap-3 px-3 py-3 sm:px-4">
-      <p className="text-xs text-muted-foreground">{t(gatewayLabels.help)}</p>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={draft.gateway.enabled}
-          disabled={disabled}
-          onChange={(event) =>
-            setDraft({ ...draft, gateway: { ...draft.gateway, enabled: event.target.checked } })
-          }
-        />
-        {t("Enable custom gateway")}
-      </label>
-      <p className="text-xs">
-        {t("Native protocol")}:{" "}
-        {draft.gateway.protocol === "anthropic" ? "Anthropic Messages" : "OpenAI Responses"}
-      </p>
-      {instance.driver === "claudeAgent" ? (
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          onClick={() =>
-            setDraft({
-              ...draft,
-              gateway: { ...draft.gateway, baseUrl: "https://openrouter.ai/api", auth: "bearer" },
-            })
-          }
-        >
-          {t("Use OpenRouter address")}
-        </Button>
-      ) : null}
       {field("baseUrl", "Gateway base URL", "https://gateway.example/api")}
-      <p className="text-xs text-muted-foreground">{t(gatewayLabels.baseHelp)}</p>
-      <Select
-        value={draft.gateway.auth}
-        disabled={disabled}
-        onValueChange={(value) => {
-          if (value === "bearer" || value === "api-key")
-            setDraft({ ...draft, gateway: { ...draft.gateway, auth: value } });
-        }}
-      >
-        <SelectTrigger aria-label={t("Gateway authentication")}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectPopup>
-          <SelectItem value="bearer">Bearer token</SelectItem>
-          <SelectItem value="api-key">x-api-key</SelectItem>
-        </SelectPopup>
-      </Select>
+      <p className="text-xs text-muted-foreground">
+        {t(gatewayLabels.baseHelp[draft.gateway.protocol])}
+      </p>
       <label className="grid gap-1 text-xs" htmlFor={`${id}-key`}>
         {t("Gateway API key")}
         <Input
@@ -220,115 +166,140 @@ export function ProviderGatewayEditor({
           </SelectPopup>
         </Select>
       ) : null}
-      <label className="grid gap-1 text-xs" htmlFor={`${id}-models`}>
-        {t("Additional model IDs")}
-        <Textarea
-          id={`${id}-models`}
-          value={draft.modelText}
-          disabled={disabled}
-          onChange={(event) => setDraft({ ...draft, modelText: event.target.value })}
-          rows={4}
-        />
-      </label>
-      <p className="text-xs text-muted-foreground">{t(gatewayLabels.modelsHelp)}</p>
-      {instance.driver === "claudeAgent" ? (
-        <details>
-          <summary className="cursor-pointer text-sm">{t("Claude model mapping")}</summary>
-          <div className="mt-3 grid gap-2">
-            {(["opus", "sonnet", "haiku", "subagent"] as const).map((role) => (
-              <label key={role} className="grid gap-1 text-xs" htmlFor={`${id}-${role}`}>
-                {role}
-                <Input
-                  id={`${id}-${role}`}
-                  disabled={disabled}
-                  value={draft.gateway.roles[role] ?? ""}
-                  placeholder={draft.gateway.model}
-                  onChange={(event) => {
-                    const roles = { ...draft.gateway.roles };
-                    if (event.target.value.trim()) roles[role] = event.target.value.trim();
-                    else delete roles[role];
-                    setDraft({ ...draft, gateway: { ...draft.gateway, roles } });
-                  }}
-                />
-              </label>
-            ))}
-          </div>
-        </details>
-      ) : null}
       <details>
-        <summary className="cursor-pointer text-sm">{t("Custom request headers")}</summary>
-        <div className="mt-3 grid gap-2">
-          {draft.headers.map((header, index) => (
-            <div key={header.credential.name} className="grid gap-2">
-              <Input
-                aria-label={t("Header name")}
-                placeholder="X-Custom-Header"
-                value={header.name}
-                disabled={disabled}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    headers: draft.headers.map((item, i) =>
-                      i === index ? { ...item, name: event.target.value } : item,
-                    ),
-                  })
-                }
-              />
-              <Input
-                aria-label={t("Header value")}
-                type="password"
-                autoComplete="new-password"
-                value={header.credential.value}
-                placeholder={
-                  header.credential.valueRedacted
-                    ? t("Saved; leave unchanged to keep")
-                    : t("Header value")
-                }
-                disabled={disabled}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    headers: draft.headers.map((item, i) =>
-                      i === index
-                        ? {
-                            ...item,
-                            credential: {
-                              ...item.credential,
-                              value: event.target.value,
-                              valueRedacted: false,
-                            },
-                          }
-                        : item,
-                    ),
-                  })
-                }
-              />
+        <summary className="cursor-pointer text-sm">{t("Advanced settings")}</summary>
+        <div className="mt-3 grid gap-3">
+          <p className="text-xs">
+            {t("Native protocol")}:{" "}
+            {draft.gateway.protocol === "anthropic" ? "Anthropic Messages" : "OpenAI Responses"}
+          </p>
+          <Select
+            value={draft.gateway.auth}
+            disabled={disabled}
+            onValueChange={(value) => {
+              if (value === "bearer" || value === "api-key")
+                setDraft({ ...draft, gateway: { ...draft.gateway, auth: value } });
+            }}
+          >
+            <SelectTrigger aria-label={t("Gateway authentication")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectPopup>
+              <SelectItem value="bearer">Bearer token</SelectItem>
+              <SelectItem value="api-key">x-api-key</SelectItem>
+            </SelectPopup>
+          </Select>
+          <label className="grid gap-1 text-xs" htmlFor={`${id}-models`}>
+            {t("Additional model IDs")}
+            <Textarea
+              id={`${id}-models`}
+              value={draft.modelText}
+              disabled={disabled}
+              onChange={(event) => setDraft({ ...draft, modelText: event.target.value })}
+              rows={4}
+            />
+          </label>
+          <p className="text-xs text-muted-foreground">{t(gatewayLabels.modelsHelp)}</p>
+          {instance.driver === "claudeAgent" ? (
+            <section>
+              <h4 className="text-sm">{t("Claude model mapping")}</h4>
+              <div className="mt-3 grid gap-2">
+                {(["opus", "sonnet", "haiku", "subagent"] as const).map((role) => (
+                  <label key={role} className="grid gap-1 text-xs" htmlFor={`${id}-${role}`}>
+                    {role}
+                    <Input
+                      id={`${id}-${role}`}
+                      disabled={disabled}
+                      value={draft.gateway.roles[role] ?? ""}
+                      placeholder={draft.gateway.model}
+                      onChange={(event) => {
+                        const roles = { ...draft.gateway.roles };
+                        if (event.target.value.trim()) roles[role] = event.target.value.trim();
+                        else delete roles[role];
+                        setDraft({ ...draft, gateway: { ...draft.gateway, roles } });
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+            </section>
+          ) : null}
+          <section>
+            <h4 className="text-sm">{t("Custom request headers")}</h4>
+            <div className="mt-3 grid gap-2">
+              {draft.headers.map((header, index) => (
+                <div key={header.credential.name} className="grid gap-2">
+                  <Input
+                    aria-label={t("Header name")}
+                    placeholder="X-Custom-Header"
+                    value={header.name}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      setDraft({
+                        ...draft,
+                        headers: draft.headers.map((item, i) =>
+                          i === index ? { ...item, name: event.target.value } : item,
+                        ),
+                      })
+                    }
+                  />
+                  <Input
+                    aria-label={t("Header value")}
+                    type="password"
+                    autoComplete="new-password"
+                    value={header.credential.value}
+                    placeholder={
+                      header.credential.valueRedacted
+                        ? t("Saved; leave unchanged to keep")
+                        : t("Header value")
+                    }
+                    disabled={disabled}
+                    onChange={(event) =>
+                      setDraft({
+                        ...draft,
+                        headers: draft.headers.map((item, i) =>
+                          i === index
+                            ? {
+                                ...item,
+                                credential: {
+                                  ...item.credential,
+                                  value: event.target.value,
+                                  valueRedacted: false,
+                                },
+                              }
+                            : item,
+                        ),
+                      })
+                    }
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={disabled}
+                    onClick={() =>
+                      setDraft({ ...draft, headers: draft.headers.filter((_, i) => i !== index) })
+                    }
+                  >
+                    {t("Remove header")}
+                  </Button>
+                </div>
+              ))}
               <Button
                 variant="outline"
                 size="sm"
-                disabled={disabled}
-                onClick={() =>
-                  setDraft({ ...draft, headers: draft.headers.filter((_, i) => i !== index) })
-                }
+                disabled={disabled || draft.headers.length >= 20}
+                onClick={() => setDraft(addGatewayHeader(draft))}
               >
-                {t("Remove header")}
+                {t("Add header")}
               </Button>
             </div>
-          ))}
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={disabled || draft.headers.length >= 20}
-            onClick={() => setDraft(addGatewayHeader(draft))}
-          >
-            {t("Add header")}
+          </section>
+          <p className="text-xs text-muted-foreground">{t(gatewayLabels.testHelp)}</p>
+          <Button variant="outline" size="sm" disabled={disabled} onClick={() => void run("test")}>
+            {busy ? t("Working…") : t("Test connection")}
           </Button>
         </div>
       </details>
-      <p className="text-xs text-muted-foreground">{t(gatewayLabels.testHelp)}</p>
-      <Button variant="outline" size="sm" disabled={disabled} onClick={() => void run("test")}>
-        {busy ? t("Working…") : t("Test connection")}
-      </Button>
       {result ? (
         <ul className="text-xs" aria-live="polite">
           {result.checks.map((check) => (
@@ -341,7 +312,7 @@ export function ProviderGatewayEditor({
       <p className="text-xs text-muted-foreground">{t(gatewayLabels.saveHelp)}</p>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" disabled={disabled} onClick={() => void run("save")}>
-          {t("Save gateway")}
+          {t("Save and use gateway")}
         </Button>
         {instance.gateway ? (
           <Button
@@ -350,7 +321,7 @@ export function ProviderGatewayEditor({
             disabled={disabled}
             onClick={() => void run("remove")}
           >
-            {t("Remove gateway")}
+            {t("Use original configuration")}
           </Button>
         ) : null}
       </div>

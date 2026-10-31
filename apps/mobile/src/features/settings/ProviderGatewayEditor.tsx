@@ -15,7 +15,7 @@ import type {
 } from "@t3tools/contracts";
 import { withoutGateway } from "@t3tools/shared/providerGateway";
 import { useRef, useState } from "react";
-import { Modal, ScrollView, Switch, View } from "react-native";
+import { Modal, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { MaterialButton } from "../../components/MaterialButton";
@@ -65,6 +65,7 @@ function GatewayEditor({
   const insets = useSafeAreaInsets();
   const [draft, updateDraft] = useState(() => createGatewayDraft(instance));
   const [modelQuery, setModelQuery] = useState("");
+  const [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -165,55 +166,12 @@ function GatewayEditor({
           <Text className="text-xl font-t3-semibold text-foreground">
             {t("Custom API gateway")}
           </Text>
-          <Text className="text-sm text-foreground-muted">{t(gatewayLabels.help)}</Text>
-          <View className="flex-row items-center justify-between">
-            <Text className="text-foreground">{t("Enable custom gateway")}</Text>
-            <Switch
-              accessibilityLabel={t("Enable custom gateway")}
-              disabled={disabled}
-              value={draft.gateway.enabled}
-              onValueChange={(enabled) =>
-                setDraft({ ...draft, gateway: { ...draft.gateway, enabled } })
-              }
-            />
-          </View>
-          <Text className="text-sm text-foreground">
-            {t("Native protocol")}:{" "}
-            {draft.gateway.protocol === "anthropic" ? "Anthropic Messages" : "OpenAI Responses"}
-          </Text>
-          {instance.driver === "claudeAgent" ? (
-            <MaterialButton
-              label={t("Use OpenRouter address")}
-              disabled={disabled}
-              onPress={() =>
-                setDraft({
-                  ...draft,
-                  gateway: {
-                    ...draft.gateway,
-                    baseUrl: "https://openrouter.ai/api",
-                    auth: "bearer",
-                  },
-                })
-              }
-            />
-          ) : null}
           {field("Gateway base URL", draft.gateway.baseUrl, (baseUrl) =>
             setDraft({ ...draft, gateway: { ...draft.gateway, baseUrl } }),
           )}
-          <Text className="text-sm text-foreground-muted">{t(gatewayLabels.baseHelp)}</Text>
-          <Text className="text-sm text-foreground">
-            {t("Gateway authentication")}: {draft.gateway.auth}
+          <Text className="text-sm text-foreground-muted">
+            {t(gatewayLabels.baseHelp[draft.gateway.protocol])}
           </Text>
-          <View className="flex-row gap-2">
-            {(["bearer", "api-key"] as const).map((auth) => (
-              <MaterialButton
-                key={auth}
-                label={auth === "bearer" ? "Bearer token" : "x-api-key"}
-                disabled={disabled}
-                onPress={() => setDraft({ ...draft, gateway: { ...draft.gateway, auth } })}
-              />
-            ))}
-          </View>
           {field(
             "Gateway API key",
             draft.key.value,
@@ -241,83 +199,117 @@ function GatewayEditor({
                 onPress={() => setDraft({ ...draft, gateway: { ...draft.gateway, model } })}
               />
             ))}
-          {field(
-            "Additional model IDs",
-            draft.modelText,
-            (modelText) => setDraft({ ...draft, modelText }),
-            false,
-            "",
-            true,
-          )}
-          <Text className="text-sm text-foreground-muted">{t(gatewayLabels.modelsHelp)}</Text>
-          {instance.driver === "claudeAgent" ? (
-            <View className="gap-3">
-              <Text className="text-foreground">{t("Claude model mapping")}</Text>
-              {(["opus", "sonnet", "haiku", "subagent"] as const).map((role) => (
-                <View key={role}>
-                  {field(
-                    role,
-                    draft.gateway.roles[role] ?? "",
-                    (value) => {
-                      const roles = { ...draft.gateway.roles };
-                      if (value.trim()) roles[role] = value.trim();
-                      else delete roles[role];
-                      setDraft({ ...draft, gateway: { ...draft.gateway, roles } });
-                    },
-                    false,
-                    draft.gateway.model,
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: advanced }}
+            onPress={() => setAdvanced(!advanced)}
+            className="py-2"
+          >
+            <Text className="text-sm text-foreground">
+              {advanced ? "▾ " : "▸ "}
+              {t("Advanced settings")}
+            </Text>
+          </Pressable>
+          {advanced ? (
+            <View className="gap-4">
+              <Text className="text-sm text-foreground">
+                {t("Native protocol")}:{" "}
+                {draft.gateway.protocol === "anthropic" ? "Anthropic Messages" : "OpenAI Responses"}
+              </Text>
+              <Text className="text-sm text-foreground">
+                {t("Gateway authentication")}: {draft.gateway.auth}
+              </Text>
+              <View className="flex-row gap-2">
+                {(["bearer", "api-key"] as const).map((auth) => (
+                  <MaterialButton
+                    key={auth}
+                    label={auth === "bearer" ? "Bearer token" : "x-api-key"}
+                    disabled={disabled}
+                    onPress={() => setDraft({ ...draft, gateway: { ...draft.gateway, auth } })}
+                  />
+                ))}
+              </View>
+              {field(
+                "Additional model IDs",
+                draft.modelText,
+                (modelText) => setDraft({ ...draft, modelText }),
+                false,
+                "",
+                true,
+              )}
+              <Text className="text-sm text-foreground-muted">{t(gatewayLabels.modelsHelp)}</Text>
+              {instance.driver === "claudeAgent" ? (
+                <View className="gap-3">
+                  <Text className="text-foreground">{t("Claude model mapping")}</Text>
+                  {(["opus", "sonnet", "haiku", "subagent"] as const).map((role) => (
+                    <View key={role}>
+                      {field(
+                        role,
+                        draft.gateway.roles[role] ?? "",
+                        (value) => {
+                          const roles = { ...draft.gateway.roles };
+                          if (value.trim()) roles[role] = value.trim();
+                          else delete roles[role];
+                          setDraft({ ...draft, gateway: { ...draft.gateway, roles } });
+                        },
+                        false,
+                        draft.gateway.model,
+                      )}
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+              <Text className="text-foreground">{t("Custom request headers")}</Text>
+              {draft.headers.map((header, index) => (
+                <View key={header.credential.name} className="gap-2">
+                  {field("Header name", header.name, (name) =>
+                    setDraft({
+                      ...draft,
+                      headers: draft.headers.map((item, i) =>
+                        i === index ? { ...item, name } : item,
+                      ),
+                    }),
                   )}
+                  {field(
+                    "Header value",
+                    header.credential.value,
+                    (value) =>
+                      setDraft({
+                        ...draft,
+                        headers: draft.headers.map((item, i) =>
+                          i === index
+                            ? {
+                                ...item,
+                                credential: { ...item.credential, value, valueRedacted: false },
+                              }
+                            : item,
+                        ),
+                      }),
+                    true,
+                    header.credential.valueRedacted ? t("Saved; leave unchanged to keep") : "",
+                  )}
+                  <MaterialButton
+                    label={t("Remove header")}
+                    disabled={disabled}
+                    onPress={() =>
+                      setDraft({ ...draft, headers: draft.headers.filter((_, i) => i !== index) })
+                    }
+                  />
                 </View>
               ))}
-            </View>
-          ) : null}
-          <Text className="text-foreground">{t("Custom request headers")}</Text>
-          {draft.headers.map((header, index) => (
-            <View key={header.credential.name} className="gap-2">
-              {field("Header name", header.name, (name) =>
-                setDraft({
-                  ...draft,
-                  headers: draft.headers.map((item, i) => (i === index ? { ...item, name } : item)),
-                }),
-              )}
-              {field(
-                "Header value",
-                header.credential.value,
-                (value) =>
-                  setDraft({
-                    ...draft,
-                    headers: draft.headers.map((item, i) =>
-                      i === index
-                        ? {
-                            ...item,
-                            credential: { ...item.credential, value, valueRedacted: false },
-                          }
-                        : item,
-                    ),
-                  }),
-                true,
-                header.credential.valueRedacted ? t("Saved; leave unchanged to keep") : "",
-              )}
               <MaterialButton
-                label={t("Remove header")}
+                label={t("Add header")}
+                disabled={disabled || draft.headers.length >= 20}
+                onPress={() => setDraft(addGatewayHeader(draft))}
+              />
+              <Text className="text-sm text-foreground-muted">{t(gatewayLabels.testHelp)}</Text>
+              <MaterialButton
+                label={t("Test connection")}
                 disabled={disabled}
-                onPress={() =>
-                  setDraft({ ...draft, headers: draft.headers.filter((_, i) => i !== index) })
-                }
+                onPress={() => void run("test")}
               />
             </View>
-          ))}
-          <MaterialButton
-            label={t("Add header")}
-            disabled={disabled || draft.headers.length >= 20}
-            onPress={() => setDraft(addGatewayHeader(draft))}
-          />
-          <Text className="text-sm text-foreground-muted">{t(gatewayLabels.testHelp)}</Text>
-          <MaterialButton
-            label={t("Test connection")}
-            disabled={disabled}
-            onPress={() => void run("test")}
-          />
+          ) : null}
           {result?.checks.map((check) => (
             <Text key={check.name} className="text-sm text-foreground">
               {check.ok ? "✓" : "✗"} {t(check.name)}: {t(check.detail)}
@@ -325,13 +317,13 @@ function GatewayEditor({
           ))}
           <Text className="text-sm text-foreground-muted">{t(gatewayLabels.saveHelp)}</Text>
           <MaterialButton
-            label={t("Save gateway")}
+            label={t("Save and use gateway")}
             disabled={disabled}
             onPress={() => void run("save")}
           />
           {instance.gateway ? (
             <MaterialButton
-              label={t("Remove gateway")}
+              label={t("Use original configuration")}
               disabled={disabled}
               onPress={() => void run("remove")}
             />
