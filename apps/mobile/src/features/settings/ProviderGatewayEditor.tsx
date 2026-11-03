@@ -4,6 +4,7 @@ import {
   createGatewayDraft,
   gatewayEditorKey,
   gatewayLabels,
+  restoreNativeProviderLogin,
 } from "@t3tools/client-runtime/provider-gateway";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -13,7 +14,6 @@ import type {
   ProviderInstanceConfigMap,
   ProviderGatewayProbeResult,
 } from "@t3tools/contracts";
-import { withoutGateway } from "@t3tools/shared/providerGateway";
 import { useRef, useState } from "react";
 import { Modal, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -39,7 +39,7 @@ export function ProviderGatewayEditorButton(props: Props) {
     <>
       <SettingsActionRow
         icon="slider.horizontal.3"
-        label={t("Custom API gateway")}
+        label={t("Connection and sign-in")}
         onPress={() => setOpen(true)}
       />
       {open ? (
@@ -104,7 +104,7 @@ function GatewayEditor({
       />
     </View>
   );
-  async function run(action: "models" | "test" | "save" | "remove") {
+  async function run(action: "models" | "test" | "save" | "native" | "resume") {
     if (pending.current || readOnly) return;
     pending.current = true;
     setBusy(true);
@@ -116,8 +116,13 @@ function GatewayEditor({
           ? { ...draft, gateway: { ...draft.gateway, model: "model-list" } }
           : draft;
       const next =
-        action === "remove" ? withoutGateway(instance) : buildGatewayInstance(instance, forAction);
-      if (action === "save" || action === "remove") {
+        action === "native"
+          ? restoreNativeProviderLogin(instance)
+          : buildGatewayInstance(
+              instance,
+              action === "resume" ? createGatewayDraft(instance) : forAction,
+            );
+      if (action === "save" || action === "native" || action === "resume") {
         const response = await update({
           environmentId,
           input: { patch: { providerInstances: { ...instances, [instanceId]: next } } },
@@ -164,8 +169,37 @@ function GatewayEditor({
       >
         <View className="gap-4">
           <Text className="text-xl font-t3-semibold text-foreground">
-            {t("Custom API gateway")}
+            {t("Connection and sign-in")}
           </Text>
+          <Text accessibilityLiveRegion="polite" className="text-foreground">
+            {t("Current connection")}:{" "}
+            {t(instance.gateway?.enabled ? "Custom API gateway" : "CLI account login")}
+          </Text>
+          {instance.gateway?.enabled ? (
+            <MaterialButton
+              label={t(
+                instance.driver === "claudeAgent"
+                  ? "Use Claude subscription"
+                  : "Use ChatGPT subscription",
+              )}
+              disabled={disabled}
+              onPress={() => void run("native")}
+            />
+          ) : (
+            <>
+              <Text className="text-sm text-foreground-muted">{t(gatewayLabels.nativeHelp)}</Text>
+              {instance.gateway ? (
+                <MaterialButton
+                  label={t("Use saved gateway")}
+                  disabled={disabled}
+                  onPress={() => void run("resume")}
+                />
+              ) : null}
+            </>
+          )}
+          {instance.gateway ? (
+            <Text className="text-sm text-foreground-muted">{t(gatewayLabels.switchHelp)}</Text>
+          ) : null}
           {field("Gateway base URL", draft.gateway.baseUrl, (baseUrl) =>
             setDraft({ ...draft, gateway: { ...draft.gateway, baseUrl } }),
           )}
@@ -321,13 +355,6 @@ function GatewayEditor({
             disabled={disabled}
             onPress={() => void run("save")}
           />
-          {instance.gateway ? (
-            <MaterialButton
-              label={t("Use original configuration")}
-              disabled={disabled}
-              onPress={() => void run("remove")}
-            />
-          ) : null}
           {error ? (
             <Text accessibilityRole="alert" className="text-sm text-danger-foreground">
               {t(error)}

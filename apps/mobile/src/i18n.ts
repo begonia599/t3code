@@ -7,6 +7,18 @@ import { mobilePreferencesAtom } from "./state/preferences";
 const zhCN: Readonly<Record<string, string>> = {
   "Filter models": "筛选模型",
   "Custom API gateway": "自定义 API 网关",
+  "Connection and sign-in": "连接与登录",
+  "Current connection": "当前连接",
+  "CLI account login": "原生 CLI 账号登录",
+  "Use Claude subscription": "使用 Claude 订阅登录",
+  "Use ChatGPT subscription": "使用 ChatGPT 订阅登录",
+  "Use saved gateway": "切回已保存的网关",
+  "CLI login restored; gateway settings kept.": "已恢复 CLI 账号登录，网关配置已保留。",
+  "Uses your saved CLI login. Open the account section if authorization is needed.":
+    "使用原有 CLI 登录凭证；如需授权，请在账号区域登录。",
+  "Switch connections without deleting saved gateway settings or CLI credentials. Running tasks may stop; thread history is kept.":
+    "切换会保留网关配置与 CLI 登录凭证，可能停止当前实例的任务，但保留会话历史。",
+
   "Native protocol": "原生协议",
   "Gateway base URL": "网关基础地址",
   "Gateway authentication": "网关认证方式",

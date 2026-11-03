@@ -3,6 +3,7 @@ import {
   buildGatewayInstance,
   createGatewayDraft,
   gatewayLabels,
+  restoreNativeProviderLogin,
 } from "@t3tools/client-runtime/provider-gateway";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -12,7 +13,6 @@ import type {
   ProviderInstanceConfigMap,
   ProviderGatewayProbeResult,
 } from "@t3tools/contracts";
-import { withoutGateway } from "@t3tools/shared/providerGateway";
 import { useId, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { serverEnvironment } from "../../state/server";
@@ -66,7 +66,7 @@ export function ProviderGatewayEditor({
       />
     </label>
   );
-  async function run(action: "models" | "test" | "save" | "remove") {
+  async function run(action: "models" | "test" | "save" | "native" | "resume") {
     if (pending.current || readOnly) return;
     pending.current = true;
     setBusy(true);
@@ -79,16 +79,21 @@ export function ProviderGatewayEditor({
           ? { ...draft, gateway: { ...draft.gateway, model: "model-list" } }
           : draft;
       const next =
-        action === "remove" ? withoutGateway(instance) : buildGatewayInstance(instance, forAction);
-      if (action === "save" || action === "remove") {
+        action === "native"
+          ? restoreNativeProviderLogin(instance)
+          : buildGatewayInstance(
+              instance,
+              action === "resume" ? createGatewayDraft(instance) : forAction,
+            );
+      if (action === "save" || action === "native" || action === "resume") {
         const response = await update({
           environmentId,
           input: { patch: { providerInstances: { ...instances, [instanceId]: next } } },
         });
         if (response._tag === "Failure") throw squashAtomCommandFailure(response);
         setNotice(
-          action === "remove"
-            ? "Gateway removed; native instance settings restored."
+          action === "native"
+            ? "CLI login restored; gateway settings kept."
             : "Gateway saved and applied.",
         );
       } else {
@@ -121,6 +126,40 @@ export function ProviderGatewayEditor({
     );
   return (
     <div className="grid gap-3 px-3 py-3 sm:px-4">
+      <p className="text-sm" role="status">
+        {t("Current connection")}:{" "}
+        {t(instance.gateway?.enabled ? "Custom API gateway" : "CLI account login")}
+      </p>
+      {instance.gateway?.enabled ? (
+        <div>
+          <Button size="sm" disabled={disabled} onClick={() => void run("native")}>
+            {t(
+              instance.driver === "claudeAgent"
+                ? "Use Claude subscription"
+                : "Use ChatGPT subscription",
+            )}
+          </Button>
+        </div>
+      ) : (
+        <>
+          <p className="text-xs text-muted-foreground">{t(gatewayLabels.nativeHelp)}</p>
+          {instance.gateway ? (
+            <div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={disabled}
+                onClick={() => void run("resume")}
+              >
+                {t("Use saved gateway")}
+              </Button>
+            </div>
+          ) : null}
+        </>
+      )}
+      {instance.gateway ? (
+        <p className="text-xs text-muted-foreground">{t(gatewayLabels.switchHelp)}</p>
+      ) : null}
       {field("baseUrl", "Gateway base URL", "https://gateway.example/api")}
       <p className="text-xs text-muted-foreground">
         {t(gatewayLabels.baseHelp[draft.gateway.protocol])}
@@ -314,16 +353,6 @@ export function ProviderGatewayEditor({
         <Button size="sm" disabled={disabled} onClick={() => void run("save")}>
           {t("Save and use gateway")}
         </Button>
-        {instance.gateway ? (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={disabled}
-            onClick={() => void run("remove")}
-          >
-            {t("Use original configuration")}
-          </Button>
-        ) : null}
       </div>
       {error ? (
         <p className="text-xs text-destructive" role="alert">

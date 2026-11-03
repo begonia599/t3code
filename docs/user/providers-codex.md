@@ -33,7 +33,7 @@ cancellation and account changes.
 ## Custom API gateways
 
 Open **Settings → Providers**, select the environment and a **local** Codex
-instance, then open **Custom API gateway**. Enter the base URL before `/responses`
+instance, then open **Connection and sign-in**. Enter the base URL before `/responses`
 (for example, `https://gateway.example/v1`), API key and default model ID. The
 gateway must support the native Responses protocol; Chat Completions alone is
 not sufficient and T3 does not convert protocols. T3-managed ChatGPT accounts
@@ -52,8 +52,8 @@ On mobile, the same editor is under the environment's provider settings.
 
 Gateway overrides use Codex's native per-process configuration. They preserve
 `CODEX_HOME`, saved OAuth credentials, Skills and network settings. Use
-**Use original configuration** to remove the gateway overrides and return to
-the previous instance configuration.
+**Use ChatGPT subscription** to return to the saved CLI login. Gateway settings
+and keys remain saved; **Use saved gateway** switches back without re-entering them.
 Gateway instances do not show the saved ChatGPT account's subscription limits.
 
 ## Use multiple accounts

@@ -933,9 +933,9 @@ export function ProviderInstanceCard({
         />
       </SettingsSection>
 
-      {gateway ? <SettingsSection title="Custom API gateway">{gateway}</SettingsSection> : null}
-
       {setup ? <SettingsSection title="Setup">{setup}</SettingsSection> : null}
+
+      {gateway ? <SettingsSection title="Connection and sign-in">{gateway}</SettingsSection> : null}
 
       {instance.driver === "codex" && readCodexSetupMode(instance.config) === "managed" ? (
         <div

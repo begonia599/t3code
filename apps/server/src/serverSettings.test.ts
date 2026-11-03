@@ -1279,6 +1279,21 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         });
         assert.deepEqual(disabled.providerInstances[id]?.config, native);
+        assert.equal(disabled.providerInstances[id]?.environment?.[0]?.value, "gateway-secret");
+        const resumed = yield* settings.updateSettings({
+          providerInstances: {
+            ...ServerSettingsModule.redactServerSettingsForClient(disabled).providerInstances,
+            [id]: {
+              ...ServerSettingsModule.redactServerSettingsForClient(disabled).providerInstances[
+                id
+              ]!,
+              gateway: { ...gateway, enabled: true },
+            },
+          },
+        });
+        assert.equal(resumed.providerInstances[id]?.environment?.[0]?.value, "gateway-secret");
+        assert.deepEqual(resumed.providerInstances[id]?.config, native);
+        assert.notInclude(yield* fs.readFileString(config.settingsPath), "gateway-secret");
         const removed = yield* settings.updateSettings({
           providerInstances: {
             [id]: {

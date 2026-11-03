@@ -22,6 +22,7 @@ import { inspectGatewayStream, probeGateway, resolveGatewaySecrets } from "./Pro
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
 import { redactServerSettingsForClient } from "../serverSettings.ts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { supportsClaudeBrowserLogin } from "./cliProviderAuthSupport.ts";
 
 const decodeInstance = Schema.decodeSync(ProviderInstanceConfig);
 const decodeProviderSnapshot = Schema.decodeSync(Schema.fromJsonString(ServerProvider));
@@ -181,6 +182,24 @@ describe("native gateway runtime", () => {
     const original = instance();
     const disabled = { ...original, gateway: { ...original.gateway!, enabled: false } };
     expect(projectGatewayInstance(disabled)).toBe(disabled);
+    const base = {
+      ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+      HTTPS_PROXY: "http://existing-proxy",
+    };
+    const gatewayEnv = mergeProviderInstanceEnvironment(
+      projectGatewayInstance(original, base).environment,
+      base,
+    );
+    const nativeEnv = mergeProviderInstanceEnvironment(
+      projectGatewayInstance(disabled, base).environment,
+      base,
+    );
+    expect(supportsClaudeBrowserLogin(gatewayEnv)).toBe(false);
+    expect(supportsClaudeBrowserLogin(nativeEnv)).toBe(true);
+    expect(nativeEnv.ANTHROPIC_BASE_URL).toBe(base.ANTHROPIC_BASE_URL);
+    expect(nativeEnv.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(nativeEnv.HTTPS_PROXY).toBe(base.HTTPS_PROXY);
+    expect(projectGatewayInstance(disabled, base).config).toEqual(original.config);
     const removed = withoutGateway(original);
     expect(removed.gateway).toBeUndefined();
     expect(removed.config).toEqual(original.config);

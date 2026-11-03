@@ -91,6 +91,15 @@ export function addGatewayHeader(draft: GatewayDraft): GatewayDraft {
   };
 }
 
+/** Switching back to CLI login retains the saved gateway and its secret references. */
+export function restoreNativeProviderLogin(
+  instance: ProviderInstanceConfig,
+): ProviderInstanceConfig {
+  return instance.gateway
+    ? { ...instance, gateway: { ...instance.gateway, enabled: false } }
+    : instance;
+}
+
 export const gatewayEditorKey = (instance: ProviderInstanceConfig) =>
   JSON.stringify([
     instance.gateway,
@@ -98,6 +107,9 @@ export const gatewayEditorKey = (instance: ProviderInstanceConfig) =>
   ]);
 
 export const gatewayLabels = {
+  nativeHelp: "Uses your saved CLI login. Open the account section if authorization is needed.",
+  switchHelp:
+    "Switch connections without deleting saved gateway settings or CLI credentials. Running tasks may stop; thread history is kept.",
   saveHelp: "Saving applies this gateway to the instance and can stop its running tasks.",
   testHelp:
     "Tests run on the selected server and make two small, potentially billable requests. They check basic streaming and tool calls, not every agent capability.",

@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vite-plus/test";
 import { ProviderDriverKind, type ProviderInstanceConfig } from "@t3tools/contracts";
 import { withoutGateway } from "@t3tools/shared/providerGateway";
-import { addGatewayHeader, buildGatewayInstance, createGatewayDraft } from "./provider-gateway.ts";
+import {
+  addGatewayHeader,
+  buildGatewayInstance,
+  createGatewayDraft,
+  restoreNativeProviderLogin,
+} from "./provider-gateway.ts";
 
 const instance: ProviderInstanceConfig = {
   driver: ProviderDriverKind.make("claudeAgent"),
@@ -13,6 +18,32 @@ const instance: ProviderInstanceConfig = {
 };
 
 describe("gateway editor", () => {
+  it.each(["claudeAgent", "codex"])(
+    "switches %s back to CLI login and resumes the saved gateway without losing credentials",
+    (driver) => {
+      const original = { ...instance, driver: ProviderDriverKind.make(driver) };
+      let draft = createGatewayDraft(original);
+      draft.gateway = {
+        ...draft.gateway,
+        baseUrl: "https://router.example/api",
+        model: "vendor/main",
+        roles: { haiku: "vendor/small" },
+      };
+      draft = addGatewayHeader(draft);
+      draft.headers[0] = {
+        name: "X-Tenant",
+        credential: { ...draft.headers[0]!.credential, value: "", valueRedacted: true },
+      };
+      const active = buildGatewayInstance(original, draft);
+      const native = restoreNativeProviderLogin(active);
+      expect(native.gateway).toEqual({ ...active.gateway, enabled: false });
+      expect(native.environment).toEqual(active.environment);
+      expect(native.config).toEqual(original.config);
+      expect(active.gateway?.enabled).toBe(true);
+      expect(buildGatewayInstance(native, createGatewayDraft(native))).toEqual(active);
+      expect(restoreNativeProviderLogin(original)).toBe(original);
+    },
+  );
   it("applies the gateway on save while keeping a saved key and unrelated fields", () => {
     const draft = createGatewayDraft(instance);
     draft.gateway = {

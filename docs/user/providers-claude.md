@@ -91,7 +91,7 @@ tool, which refuses skills reserved for manual invocation.
 ## Custom API gateways
 
 In **Settings → Providers**, select your environment and Claude instance, then
-open **Custom API gateway**. Enter the gateway base URL, API key and
+open **Connection and sign-in**. Enter the gateway base URL, API key and
 default model ID, then **Save and use gateway**. Saving applies it immediately.
 Self-hosted gateways and other vendors work through the same form when they
 support native Anthropic Messages. There is no protocol conversion.
@@ -118,13 +118,15 @@ for that service's current compatibility requirements.
 
 Saving rebuilds the instance and can stop its running tasks; finish them first,
 or add a separate Claude instance for the gateway. Choose one of its models in an existing chat.
-On mobile, open the environment in Settings and use **Custom API gateway** under
+On mobile, open the environment in Settings and use **Connection and sign-in** under
 Claude.
 
 Your saved Claude OAuth login, Skills, config directory and proxy settings stay
 intact. Gateway overrides apply only to this instance's child processes; native
 managed policy still applies. If you use custom `--settings` launch arguments,
 move those values into native settings files before enabling the gateway.
-Select **Use original configuration** to remove the gateway overrides and restore
-the original instance configuration. API key fields stay masked and keep their
+Select **Use Claude subscription** at the top of **Connection and sign-in** to
+restore the original CLI login. The account section reappears; a valid saved login
+is reused, otherwise sign in there. The gateway address, models and API key stay
+saved. **Use saved gateway** switches back without re-entering them. API key fields stay masked and keep their
 saved value when left unchanged. Subscription limits are not shown for a gateway instance.
