@@ -96,6 +96,10 @@ export const zhCN: Readonly<Record<string, string>> = {
   Weekly: "每周",
   Used: "已用",
   "per cycle": "/ 周期",
+  "Too little data": "样本不足",
+  "Quota is reported in whole percent; the range narrows as tasks add up":
+    "额度只精确到 1%，任务累积后区间会收窄",
+  "Reset early": "已提前重置",
   Preliminary: "初步",
   "Left:": "剩余",
   Resets: "重置于",

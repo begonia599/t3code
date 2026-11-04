@@ -40,6 +40,9 @@ export function estimateSubscriptionCycles(
   // Used quota never falls inside one window except after a credit reset that keeps the
   // advertised reset time; start a new segment there instead of mixing two allowances.
   const segments = new Map<string, { generation: number; used: number }>();
+  // A provider may reset a window early (Codex moved a weekly reset forward by days);
+  // only the cycle seen by the newest task is live for each account window.
+  const latestByWindow = new Map<string, string>();
   const partialIssues = new Set([
     "incompleteUsage",
     "backgroundUsageIncomplete",
@@ -112,13 +115,14 @@ export function estimateSubscriptionCycles(
       // Keep the latest label and reset time; jittered resets must not reorder cards.
       row.label = sample.label;
       row.windowLabel = before.label;
-      row.resetsAt = isoAt(
-        Math.round(Date.parse(before.resetsAt) / 60_000) * 60_000,
-      );
+      row.resetsAt = isoAt(Math.round(Date.parse(before.resetsAt) / 60_000) * 60_000);
       cycles.set(id, row);
+      latestByWindow.set(`${sample.accountKey}\u0000${before.id}`, id);
     }
   }
+  const live = new Set(latestByWindow.values());
   for (const [id, row] of cycles) {
+    if (!live.has(id)) row.superseded = true;
     // Show useful early evidence, explicitly provisional, instead of hiding a
     // multi-hour task until three entire turns finish. Zero deltas still divide by nothing.
     if (row.usedPercentagePoints >= 1 && row.calibrationCostUsd > 0) {

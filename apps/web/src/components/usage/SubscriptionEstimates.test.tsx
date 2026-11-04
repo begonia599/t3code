@@ -136,6 +136,7 @@ describe("subscription estimates controls", () => {
       cycles: [
         base,
         { ...base, id: "past", resetsAt: "2000-01-01T00:00:00.000Z", estimatedTotalUsd: 5 },
+        { ...base, id: "early", superseded: true, estimatedTotalUsd: 7 },
       ],
     };
     act(() => {
@@ -156,6 +157,43 @@ describe("subscription estimates controls", () => {
     expect(JSON.stringify(cards)).toContain("$9.00");
     expect(JSON.stringify(cards)).not.toContain("$5.00");
     expect(JSON.stringify(past)).toContain("$5.00");
+    expect(JSON.stringify(cards)).not.toContain("$7.00");
+    expect(JSON.stringify(past)).toContain("Reset early");
+  });
+  it("shows a range instead of a point when quota barely moved", () => {
+    const base = {
+      id: "cycle",
+      label: "Claude",
+      windowLabel: "Session",
+      scope: "general",
+      resetsAt: "2099-01-01T00:00:00.000Z",
+      samples: 1,
+      observedCostUsd: 0.27,
+      calibrationCostUsd: 0.27,
+      usedPercentagePoints: 1,
+      remainingPercent: 99,
+      estimatedTotalUsd: 27,
+      estimatedRemainingUsd: 26.73,
+      preliminary: true,
+    };
+    state.report = { ...state.report, cycles: [base] };
+    act(() => {
+      renderer = create(<SubscriptionEstimates environmentId={environmentId} label="Server one" />);
+    });
+    let rendered = JSON.stringify(renderer!.toJSON());
+    expect(rendered).toContain("≥ $13.50");
+    expect(rendered).toContain("Too little data");
+    expect(rendered).not.toContain("$27.00");
+    expect(rendered).not.toContain("$26.73");
+    state.report = {
+      ...state.report,
+      cycles: [{ ...base, calibrationCostUsd: 0.8, usedPercentagePoints: 4 }],
+    };
+    act(() =>
+      renderer!.update(<SubscriptionEstimates environmentId={environmentId} label="Server one" />),
+    );
+    rendered = JSON.stringify(renderer!.toJSON());
+    expect(rendered).toContain("$16.00 – $26.67");
   });
   it("excludes and restores observations in the selected environment", async () => {
     act(() => {

@@ -72,6 +72,10 @@ describe("subscription estimates", () => {
     const cycles = estimateSubscriptionCycles(samples);
     expect(cycles.find((c) => c.resetsAt === nextReset)?.estimatedTotalUsd).toBeCloseTo(70);
     expect(cycles.find((c) => c.resetsAt === reset)?.samples).toBe(3);
+    // An early reset moves the window; the old cycle is no longer live even though
+    // its advertised reset time is still in the future.
+    expect(cycles.find((c) => c.resetsAt === reset)?.superseded).toBe(true);
+    expect(cycles.find((c) => c.resetsAt === nextReset)?.superseded).toBeUndefined();
   });
   it("merges one window whose reset time jitters by a second", () => {
     const jitter = "2099-01-07T23:59:59.000Z";

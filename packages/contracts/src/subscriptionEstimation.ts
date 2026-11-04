@@ -38,6 +38,7 @@ export const SubscriptionEstimationCycle = Schema.Struct({
   estimatedTotalUsd: Schema.NullOr(Schema.Number),
   estimatedRemainingUsd: Schema.NullOr(Schema.Number),
   preliminary: Schema.optional(Schema.Boolean),
+  superseded: Schema.optional(Schema.Boolean),
   knownCostTotalUsd: Schema.optional(Schema.NullOr(Schema.Number)),
   knownCostRemainingUsd: Schema.optional(Schema.NullOr(Schema.Number)),
   knownCostPercentagePoints: Schema.optional(Schema.Number),

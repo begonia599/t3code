@@ -28,11 +28,37 @@ const byAccountThenWindow = (a: SubscriptionEstimationCycle, b: SubscriptionEsti
   windowOrder(a.windowId) - windowOrder(b.windowId) ||
   a.resetsAt.localeCompare(b.resetsAt);
 
+// Quota is reported in whole percent, so the summed change is only known to about
+// ±1 point. Below this many points a single figure would be mostly rounding noise.
+const precisePoints = 5;
+/** Plausible totals for `cost` spent over `points` whole-percent quota change. */
+export function estimateRange(cost: number, points: number) {
+  return {
+    low: (cost * 100) / (points + 1),
+    high: points > 1 ? (cost * 100) / (points - 1) : null,
+  };
+}
+
 function CycleCard({ cycle }: { cycle: SubscriptionEstimationCycle }) {
   const t = useT();
   const used = Math.round(100 - cycle.remainingPercent);
   const estimated = cycle.estimatedTotalUsd !== null;
   const lowerBound = !estimated && cycle.knownCostTotalUsd != null;
+  const points = estimated ? cycle.usedPercentagePoints : (cycle.knownCostPercentagePoints ?? 0);
+  const cost = estimated
+    ? cycle.calibrationCostUsd
+    : ((cycle.knownCostTotalUsd ?? 0) * points) / 100;
+  const imprecise = (estimated || lowerBound) && points < precisePoints;
+  const range = estimateRange(cost, points);
+  const headline = !(estimated || lowerBound)
+    ? "—"
+    : imprecise
+      ? lowerBound || range.high === null
+        ? `≥ ${formatUsd(range.low)}`
+        : `${formatUsd(range.low)} – ${formatUsd(range.high)}`
+      : estimated
+        ? `≈ ${formatUsd(cycle.estimatedTotalUsd!)}`
+        : `≥ ${formatUsd(cycle.knownCostTotalUsd!)}`;
   return (
     <div className="grid gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
       <div className="flex items-baseline justify-between gap-2">
@@ -43,32 +69,32 @@ function CycleCard({ cycle }: { cycle: SubscriptionEstimationCycle }) {
           {t("Used")} {used}%
         </span>
       </div>
-      <div className="flex items-baseline gap-2">
-        <span className="text-2xl font-semibold tabular-nums">
-          {estimated
-            ? `≈ ${formatUsd(cycle.estimatedTotalUsd!)}`
-            : lowerBound
-              ? `≥ ${formatUsd(cycle.knownCostTotalUsd!)}`
-              : "—"}
-        </span>
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="text-2xl font-semibold tabular-nums">{headline}</span>
         <span className="text-xs text-muted-foreground">{t("per cycle")}</span>
-        {estimated && cycle.preliminary ? (
+        {imprecise ? (
+          <span className="rounded bg-warning-surface px-1.5 py-0.5 text-xs text-warning-foreground">
+            {t("Too little data")}
+          </span>
+        ) : estimated && cycle.preliminary ? (
           <span className="rounded bg-warning-surface px-1.5 py-0.5 text-xs text-warning-foreground">
             {t("Preliminary")}
           </span>
         ) : null}
       </div>
       <div className="text-xs text-muted-foreground">
-        {estimated
-          ? `${t("Left:")} ≈ ${formatUsd(cycle.estimatedRemainingUsd ?? 0)} · `
-          : lowerBound
-            ? `${t("Some task usage was incomplete; this is a lower bound")} · `
-            : ""}
+        {imprecise
+          ? `${t("Quota is reported in whole percent; the range narrows as tasks add up")} · `
+          : estimated
+            ? `${t("Left:")} ≈ ${formatUsd(cycle.estimatedRemainingUsd ?? 0)} · `
+            : lowerBound
+              ? `${t("Some task usage was incomplete; this is a lower bound")} · `
+              : ""}
         {t("Resets")} {shortDate(cycle.resetsAt)}
       </div>
       <div className="text-xs text-muted-foreground">
         {estimated || lowerBound
-          ? `${t("Based on")} ${cycle.samples} ${t("tasks")} · ${formatUsd(cycle.calibrationCostUsd || cycle.observedCostUsd)} · ${t("quota moved")} ${Math.round(estimated ? cycle.usedPercentagePoints : (cycle.knownCostPercentagePoints ?? 0))} ${t("points")}`
+          ? `${t("Based on")} ${cycle.samples} ${t("tasks")} · ${formatUsd(cycle.calibrationCostUsd || cycle.observedCostUsd)} · ${t("quota moved")} ${Math.round(points)} ${t("points")}`
           : cycle.scope === "unsupported"
             ? t("This quota window cannot be estimated")
             : `${t("Recorded")} ${formatUsd(cycle.observedCostUsd)} · ${t("quota has not moved measurably yet")}`}
@@ -145,9 +171,12 @@ export function SubscriptionEstimates({
   // Captured once per mount; cards re-split on refresh, which remounts query data.
   const [now] = useState(() => Date.now());
   const cycles = [...(report?.cycles ?? [])].toSorted(byAccountThenWindow);
-  const current = cycles.filter((c) => Date.parse(c.resetsAt) > now);
+  // Superseded cycles were reset early by the provider; they are history too.
+  const isCurrent = (c: SubscriptionEstimationCycle) =>
+    !c.superseded && Date.parse(c.resetsAt) > now;
+  const current = cycles.filter(isCurrent);
   const past = cycles
-    .filter((c) => Date.parse(c.resetsAt) <= now)
+    .filter((c) => !isCurrent(c))
     .toSorted((a, b) => b.resetsAt.localeCompare(a.resetsAt));
   const toggle = async (sample: SubscriptionEstimationSample) => {
     setPending(sample.id);
@@ -215,8 +244,9 @@ export function SubscriptionEstimates({
                     className="flex justify-between gap-3 border-t border-border py-1.5"
                   >
                     <span>
-                      {cycle.label} · {t(cycle.windowLabel)} · {t("Reset")}{" "}
-                      {shortDate(cycle.resetsAt)}
+                      {cycle.label} · {t(cycle.windowLabel)} ·{" "}
+                      {cycle.superseded ? t("Reset early") : t("Reset")}{" "}
+                      {cycle.superseded ? "" : shortDate(cycle.resetsAt)}
                     </span>
                     <span className="tabular-nums text-muted-foreground">
                       {cycle.estimatedTotalUsd === null
