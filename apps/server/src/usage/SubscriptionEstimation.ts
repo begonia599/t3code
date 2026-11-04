@@ -20,7 +20,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import * as UsageService from "./UsageService.ts";
 import { type ModelRate, priceUsage } from "./usagePricing.ts";
-import { estimateSubscriptionCycles } from "./subscriptionEstimationMath.ts";
+import { estimateSubscriptionCycles, isoAt } from "./subscriptionEstimationMath.ts";
 
 type BeginInput = {
   instanceId: ProviderInstanceId;
@@ -390,14 +390,18 @@ const make = Effect.gen(function* () {
         payload_json: string;
       }>`SELECT payload_json FROM subscription_estimation_samples WHERE started_at < ${before ?? "9999"} OR (started_at = ${before ?? "9999"} AND id < ${beforeId ?? ""}) ORDER BY started_at DESC, id DESC LIMIT 101`;
       const samples = rows.slice(0, 100).map(readSample);
-      const ids = [...new Set(samples.flatMap((sample) => Object.values(sample.cycleKeys)))];
-      const cycleRows = ids.length
+      // Cycles are derived from account/window/reset, so read every sample that can share a
+      // window with this page (longest supported window is monthly).
+      const span = 32 * 24 * 60 * 60 * 1000;
+      const times = samples.map((sample) => Date.parse(sample.startedAt));
+      const cycleRows = samples.length
         ? yield* sql<{
             payload_json: string;
-          }>`SELECT payload_json FROM subscription_estimation_samples WHERE EXISTS (SELECT 1 FROM json_each(payload_json, '$.cycleKeys') cycle WHERE ${sql.in("cycle.value", ids)})`
+          }>`SELECT payload_json FROM subscription_estimation_samples WHERE started_at >= ${isoAt(Math.min(...times) - span)} AND started_at <= ${isoAt(Math.max(...times) + span)} AND ${sql.in("account_key", [...new Set(samples.map((sample) => sample.accountKey))])} ORDER BY started_at DESC, rowid DESC LIMIT 5000`
         : [];
       return {
-        cycles: estimateSubscriptionCycles(cycleRows.map(readSample)),
+        // Oldest first: equal timestamps must keep insertion order for reset detection.
+        cycles: estimateSubscriptionCycles(cycleRows.toReversed().map(readSample)),
         samples,
         hasMore: rows.length > 100,
       };

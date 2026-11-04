@@ -451,13 +451,6 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
-            {selectedEnvironments.map((environment) => (
-              <SubscriptionEstimates
-                key={environment.environmentId}
-                environmentId={environment.environmentId}
-                label={environment.label}
-              />
-            ))}
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0
@@ -465,21 +458,31 @@ export function UsagePage() {
                   : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
             ) : showingLimits ? (
-              <UsageLimitsSection
-                selectedEnvironmentIds={selectedEnvironmentIds}
-                now={limitsNow}
-                cursorPrompt={
-                  cursorAccessEnvironments.length > 0 ? (
-                    <CursorEnableLimits
-                      environments={cursorAccessEnvironments}
-                      onEnabled={() => {
-                        void refresh();
-                        void refreshLimits(false, true);
-                      }}
-                    />
-                  ) : null
-                }
-              />
+              <>
+                <UsageLimitsSection
+                  selectedEnvironmentIds={selectedEnvironmentIds}
+                  now={limitsNow}
+                  cursorPrompt={
+                    cursorAccessEnvironments.length > 0 ? (
+                      <CursorEnableLimits
+                        environments={cursorAccessEnvironments}
+                        onEnabled={() => {
+                          void refresh();
+                          void refreshLimits(false, true);
+                        }}
+                      />
+                    ) : null
+                  }
+                />
+                {selectedEnvironments.map((environment) => (
+                  <SubscriptionEstimates
+                    key={environment.environmentId}
+                    environmentId={environment.environmentId}
+                    label={environment.label}
+                    showLabel={selectedEnvironments.length > 1}
+                  />
+                ))}
+              </>
             ) : isPending ? (
               <UsageSkeleton />
             ) : (

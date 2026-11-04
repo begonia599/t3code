@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, type SubscriptionEstimationSample } from "@t3tools/contracts";
 import { estimateSubscriptionCycles } from "./subscriptionEstimationMath.ts";
 const reset = "2099-01-08T00:00:00.000Z";
+const nextReset = "2099-01-15T00:00:00.000Z";
 const sample = (
   n: number,
   patch: Partial<SubscriptionEstimationSample> = {},
@@ -62,12 +63,34 @@ describe("subscription estimates", () => {
       sample(0),
       sample(1),
       sample(2),
-      sample(3, { cycleKeys: { weekly: "week-2" }, costUsd: 1.4 }),
+      sample(3, {
+        costUsd: 1.4,
+        before: [{ ...sample(3).before[0]!, resetsAt: nextReset }],
+        after: [{ ...sample(3).after[0]!, resetsAt: nextReset }],
+      }),
     ];
-    expect(
-      estimateSubscriptionCycles(samples).find((c) => c.id === "week-2")?.estimatedTotalUsd,
-    ).toBeCloseTo(70);
-    expect(estimateSubscriptionCycles(samples).find((c) => c.id === "week-1")?.samples).toBe(3);
+    const cycles = estimateSubscriptionCycles(samples);
+    expect(cycles.find((c) => c.resetsAt === nextReset)?.estimatedTotalUsd).toBeCloseTo(70);
+    expect(cycles.find((c) => c.resetsAt === reset)?.samples).toBe(3);
+  });
+  it("merges one window whose reset time jitters by a second", () => {
+    const jitter = "2099-01-07T23:59:59.000Z";
+    const samples = [
+      sample(0),
+      sample(1, {
+        before: [{ ...sample(1).before[0]!, resetsAt: jitter }],
+        after: [{ ...sample(1).after[0]!, resetsAt: reset }],
+      }),
+      sample(2, {
+        before: [{ ...sample(2).before[0]!, resetsAt: jitter }],
+        after: [{ ...sample(2).after[0]!, resetsAt: jitter }],
+      }),
+    ];
+    const cycles = estimateSubscriptionCycles(samples);
+    expect(cycles).toHaveLength(1);
+    expect(cycles[0]?.samples).toBe(3);
+    expect(cycles[0]?.usedPercentagePoints).toBe(6);
+    expect(cycles[0]?.resetsAt).toBe(reset);
   });
   it("rejects missing ends, incomplete usage, resets and negative quota deltas", () => {
     const bad = [

@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import type { SubscriptionEstimationCycle, SubscriptionEstimationSample } from "@t3tools/contracts";
 
 const generalWindows = new Set([
@@ -18,6 +19,15 @@ function scopeFor(id: string): string {
   return "unsupported";
 }
 
+// Providers jitter reset timestamps (Claude alternates 15:59:59 and 16:00:00), so
+// equality would split one window into many single-sample cycles.
+export const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+const resetBucketMs = 5 * 60 * 1000;
+const resetBucket = (resetsAt: string) =>
+  Math.round(Date.parse(resetsAt) / resetBucketMs) * resetBucketMs;
+export const subscriptionCycleId = (accountKey: string, windowId: string, resetsAt: string) =>
+  `${accountKey}:${windowId}:${isoAt(resetBucket(resetsAt))}`;
+
 /** Each account window is independent: session and weekly amounts never add. */
 export function estimateSubscriptionCycles(
   samples: ReadonlyArray<SubscriptionEstimationSample>,
@@ -27,6 +37,9 @@ export function estimateSubscriptionCycles(
     { -readonly [K in keyof SubscriptionEstimationCycle]: SubscriptionEstimationCycle[K] }
   >();
   const references = new Map<string, { cost: number; delta: number }>();
+  // Used quota never falls inside one window except after a credit reset that keeps the
+  // advertised reset time; start a new segment there instead of mixing two allowances.
+  const segments = new Map<string, { generation: number; used: number }>();
   const partialIssues = new Set([
     "incompleteUsage",
     "backgroundUsageIncomplete",
@@ -35,9 +48,17 @@ export function estimateSubscriptionCycles(
   ]);
   for (const sample of [...samples].sort((a, b) => a.startedAt.localeCompare(b.startedAt))) {
     for (const before of sample.before) {
-      const id = sample.cycleKeys[before.id];
-      if (!id || !before.resetsAt) continue;
+      if (!before.resetsAt || Date.parse(before.resetsAt) <= Date.parse(sample.startedAt)) continue;
+      const base = subscriptionCycleId(sample.accountKey, before.id, before.resetsAt);
       const after = sample.after.find((w) => w.id === before.id);
+      const sameWindow =
+        !!after?.resetsAt && resetBucket(after.resetsAt) === resetBucket(before.resetsAt);
+      const segment = segments.get(base) ?? { generation: 0, used: before.usedPercent };
+      if (before.usedPercent < segment.used - 1) segment.generation++;
+      segment.used =
+        after && sameWindow ? Math.max(before.usedPercent, after.usedPercent) : before.usedPercent;
+      segments.set(base, segment);
+      const id = segment.generation ? `${base}#${segment.generation}` : base;
       const scope = scopeFor(before.id);
       const eligible =
         scope === "general" ||
@@ -46,6 +67,8 @@ export function estimateSubscriptionCycles(
           sample.models.every((model) => model.toLowerCase().includes(scope)));
       const row = cycles.get(id) ?? {
         id,
+        accountKey: sample.accountKey,
+        windowId: before.id,
         label: sample.label,
         windowLabel: before.label,
         scope,
@@ -60,7 +83,6 @@ export function estimateSubscriptionCycles(
       };
       if (eligible) row.observedCostUsd += sample.costUsd;
       row.remainingPercent = Math.min(row.remainingPercent, 100 - before.usedPercent);
-      const sameWindow = after?.resetsAt === before.resetsAt;
       if (after && sameWindow && after.usedPercent >= before.usedPercent)
         row.remainingPercent = Math.min(row.remainingPercent, 100 - after.usedPercent);
       const delta = after ? after.usedPercent - before.usedPercent : -1;
@@ -87,6 +109,12 @@ export function estimateSubscriptionCycles(
           references.set(id, reference);
         }
       }
+      // Keep the latest label and reset time; jittered resets must not reorder cards.
+      row.label = sample.label;
+      row.windowLabel = before.label;
+      row.resetsAt = isoAt(
+        Math.round(Date.parse(before.resetsAt) / 60_000) * 60_000,
+      );
       cycles.set(id, row);
     }
   }

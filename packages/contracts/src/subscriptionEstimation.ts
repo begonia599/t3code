@@ -24,6 +24,8 @@ export const SubscriptionEstimationSample = Schema.Struct({
 export type SubscriptionEstimationSample = typeof SubscriptionEstimationSample.Type;
 export const SubscriptionEstimationCycle = Schema.Struct({
   id: Schema.String,
+  accountKey: Schema.optional(Schema.String),
+  windowId: Schema.optional(Schema.String),
   label: Schema.String,
   windowLabel: Schema.String,
   scope: Schema.String,

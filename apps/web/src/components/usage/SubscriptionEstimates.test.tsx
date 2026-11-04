@@ -95,9 +95,7 @@ describe("subscription estimates controls", () => {
     let rendered = JSON.stringify(renderer!.toJSON());
     expect(rendered).toContain("$200");
     expect(rendered).toContain("$112");
-    expect(rendered).toContain(
-      "Preliminary estimate; task still running or sample coverage is small",
-    );
+    expect(rendered).toContain("Preliminary");
     state.report = {
       ...state.report,
       cycles: state.report.cycles.map((c) => ({
@@ -114,18 +112,57 @@ describe("subscription estimates controls", () => {
     );
     rendered = JSON.stringify(renderer!.toJSON());
     expect(rendered).toContain("$200");
-    expect(rendered).toContain("Known-cost reference only; missing usage is not included");
-    expect(rendered).toContain("15.00");
-    expect(rendered).not.toContain(
-      "Preliminary estimate; task still running or sample coverage is small",
-    );
+    expect(rendered).toContain("≥ $200");
+    expect(rendered).toContain("Some task usage was incomplete; this is a lower bound");
+    expect(rendered).not.toContain("Preliminary");
+  });
+  it("shows only unexpired windows as cards and folds past cycles away", () => {
+    const base = {
+      id: "current",
+      label: "Claude",
+      windowLabel: "Session",
+      scope: "general",
+      resetsAt: "2099-01-01T00:00:00.000Z",
+      samples: 10,
+      observedCostUsd: 6.66,
+      calibrationCostUsd: 6.66,
+      usedPercentagePoints: 74,
+      remainingPercent: 23,
+      estimatedTotalUsd: 9,
+      estimatedRemainingUsd: 2.07,
+    };
+    state.report = {
+      ...state.report,
+      cycles: [
+        base,
+        { ...base, id: "past", resetsAt: "2000-01-01T00:00:00.000Z", estimatedTotalUsd: 5 },
+      ],
+    };
+    act(() => {
+      renderer = create(<SubscriptionEstimates environmentId={environmentId} label="Server one" />);
+    });
+    const rendered = JSON.stringify(renderer!.toJSON());
+    expect(rendered).toContain("≈ $9.00");
+    expect(rendered).toContain("Past cycles");
+    const tree = renderer!.toJSON() as any;
+    const find = (n: any, pred: (n: any) => boolean): any =>
+      n && typeof n === "object"
+        ? pred(n)
+          ? n
+          : (n.children ?? []).map((c: any) => find(c, pred)).find(Boolean)
+        : undefined;
+    const cards = find(tree, (n) => n.props?.className?.includes("sm:grid-cols-2"));
+    const past = find(tree, (n) => n.type === "details");
+    expect(JSON.stringify(cards)).toContain("$9.00");
+    expect(JSON.stringify(cards)).not.toContain("$5.00");
+    expect(JSON.stringify(past)).toContain("$5.00");
   });
   it("excludes and restores observations in the selected environment", async () => {
     act(() => {
       renderer = create(<SubscriptionEstimates environmentId={environmentId} label="Server one" />);
     });
     await act(async () => {
-      await button("Exclude: used elsewhere during this interval").props.onClick();
+      await button("Exclude").props.onClick();
     });
     expect(state.exclude).toHaveBeenLastCalledWith({
       environmentId,
@@ -160,7 +197,7 @@ describe("subscription estimates controls", () => {
       renderer = create(<SubscriptionEstimates environmentId={environmentId} label="Server one" />);
     });
     await act(async () => {
-      await button("Exclude: used elsewhere during this interval").props.onClick();
+      await button("Exclude").props.onClick();
     });
     expect(renderer!.root.findByProps({ role: "alert" }).children).toContain(
       "Could not update subscription estimates.",
@@ -173,6 +210,6 @@ describe("subscription estimates controls", () => {
     act(() =>
       renderer!.update(<SubscriptionEstimates environmentId={environmentId} label="Server one" />),
     );
-    expect(button("Exclude: used elsewhere during this interval").props.disabled).toBe(true);
+    expect(button("Exclude").props.disabled).toBe(true);
   });
 });
