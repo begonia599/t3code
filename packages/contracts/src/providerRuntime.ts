@@ -321,6 +321,8 @@ const TurnTokenUsageCommonFields = {
   usageScope: Schema.Literal("main_agent"),
   cachedInputTokens: Schema.optional(NonNegativeInt),
   cacheCreationTokens: Schema.optional(NonNegativeInt),
+  /** Subset of cacheCreationTokens written with a 1-hour TTL (billed above 5-minute writes). */
+  cacheCreation1hTokens: Schema.optional(NonNegativeInt),
   reasoningTokens: Schema.optional(NonNegativeInt),
   hasSubagents: Schema.Boolean,
 };

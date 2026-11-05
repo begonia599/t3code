@@ -12,9 +12,12 @@ import {
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
@@ -95,6 +98,18 @@ const make = Effect.gen(function* () {
   const lock = yield* Semaphore.make(1);
   const groups = new Map<string, Group>();
   const runs = new Map<string, Group>();
+  // Last selection per thread, so turns the provider starts on its own (task
+  // notifications, continuation after compaction) can be priced and sampled.
+  const selections = new Map<
+    string,
+    { instanceId: ProviderInstanceId; selection: ModelSelection }
+  >();
+  // Provider-started turns we could not track; their quota use is invisible.
+  const untracked = new Map<string, ProviderInstanceId>();
+  // Provider-started turns whose begin() is still in flight.
+  const starting = new Map<string, Deferred.Deferred<void>>();
+  const startScope = yield* Scope.make("parallel");
+  yield* Effect.addFinalizer(() => Scope.close(startScope, Exit.void));
   const persist = (s: SubscriptionEstimationSample) => sql`
     INSERT INTO subscription_estimation_samples (id, account_key, started_at, ended_at, payload_json)
     VALUES (${s.id}, ${s.accountKey}, ${s.startedAt}, ${s.endedAt}, ${encodeJson(s)})
@@ -131,6 +146,7 @@ const make = Effect.gen(function* () {
           uncachedInputTokens: usage.inputTokens - cached - created,
           cachedInputTokens: cached,
           cacheCreationTokens: created,
+          cacheCreation1hTokens: usage.cacheCreation1hTokens ?? 0,
           outputTokens: usage.outputTokens,
           reasoningTokens: usage.reasoningTokens ?? 0,
         },
@@ -166,6 +182,12 @@ const make = Effect.gen(function* () {
     safe(
       lock.withPermit(
         Effect.gen(function* () {
+          if (input.selection && !input.background)
+            selections.set(input.runKey, {
+              instanceId: input.instanceId,
+              selection: input.selection,
+            });
+          untracked.delete(input.runKey);
           const existing = runs.get(input.runKey);
           if (existing) {
             existing.sample = withIssue(existing.sample, "overlappingThread");
@@ -230,6 +252,9 @@ const make = Effect.gen(function* () {
                 issues: [
                   ...(!snapshot || before.length === 0 ? ["missingBefore"] : []),
                   ...(!account.known ? ["unknownAccount"] : []),
+                  ...([...untracked.values()].includes(input.instanceId)
+                    ? ["untrackedActivity"]
+                    : []),
                 ],
               };
               group = { sample, pending: new Map(), instanceId: input.instanceId };
@@ -303,11 +328,58 @@ const make = Effect.gen(function* () {
     });
   const event = (e: ProviderRuntimeEvent) => {
     const key = `turn:${e.threadId}`;
+    const inFlight = starting.get(key);
+    return inFlight ? Deferred.await(inFlight).pipe(Effect.andThen(handle(e))) : handle(e);
+  };
+  const handle = (e: ProviderRuntimeEvent): Effect.Effect<void> => {
+    const key = `turn:${e.threadId}`;
     const group = runs.get(key);
     const item = group?.pending.get(key);
     if (item && e.providerInstanceId && item.instanceId !== e.providerInstanceId)
       return Effect.void;
-    if (group && Date.parse(e.createdAt) < Date.parse(group.sample.startedAt)) return Effect.void;
+    // A turn started by the provider is sampled from after its first event, so
+    // its own events may predate the sample; only drop stale events of other turns.
+    const ownTurn = item?.turnId !== undefined && e.turnId === item.turnId;
+    if (group && !ownTurn && Date.parse(e.createdAt) < Date.parse(group.sample.startedAt))
+      return Effect.void;
+    const remembered = selections.get(key);
+    if (
+      e.type === "turn.started" &&
+      !item &&
+      e.turnId &&
+      remembered &&
+      remembered.instanceId === e.providerInstanceId
+    ) {
+      // Provider-started turn on a thread T3 has driven: sample it like a sent
+      // turn. begin() may refresh limits, so run it off the event stream and
+      // hold later events for this thread until it lands.
+      const turnId = e.turnId;
+      const done = Deferred.makeUnsafe<void>();
+      starting.set(key, done);
+      return begin({
+        instanceId: remembered.instanceId,
+        runKey: key,
+        selection: remembered.selection,
+      }).pipe(
+        Effect.andThen(bind(key, turnId)),
+        Effect.ensuring(
+          Effect.sync(() => starting.delete(key)).pipe(
+            Effect.andThen(Deferred.succeed(done, undefined)),
+          ),
+        ),
+        Effect.forkIn(startScope),
+        Effect.asVoid,
+      );
+    }
+    if (!item && e.providerInstanceId) {
+      if (e.type === "turn.started") untracked.set(key, e.providerInstanceId);
+      else if (
+        e.type === "turn.completed" ||
+        e.type === "turn.aborted" ||
+        e.type === "session.exited"
+      )
+        untracked.delete(key);
+    }
     if (e.type === "turn.started" && !item)
       return safe(
         lock.withPermit(

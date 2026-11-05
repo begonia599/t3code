@@ -109,6 +109,40 @@ describe("usage pricing", () => {
     }
   });
 
+  it("prices 1-hour cache writes at their own rate and the rest as 5-minute writes", () => {
+    const table = parseRateTable({
+      "claude-opus-5-5": {
+        input_cost_per_token: 4e-6,
+        output_cost_per_token: 2e-5,
+        cache_read_input_token_cost: 4e-7,
+        cache_creation_input_token_cost: 5e-6,
+        cache_creation_input_token_cost_above_1hr: 8e-6,
+      },
+      "claude-legacy": { ...rate(1e-6), cache_creation_input_token_cost: 1.25e-6 },
+    });
+    const cost = (model: string, oneHour?: number) =>
+      priceUsage(table, {
+        model,
+        reportedCostUsd: null,
+        fast: false,
+        totals: {
+          uncachedInputTokens: 0,
+          cachedInputTokens: 0,
+          cacheCreationTokens: 1_000_000,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          ...(oneHour === undefined ? {} : { cacheCreation1hTokens: oneHour }),
+        },
+      }).costUsd;
+
+    expect(cost("claude-opus-5-5")).toBeCloseTo(5);
+    expect(cost("claude-opus-5-5", 1_000_000)).toBeCloseTo(8);
+    expect(cost("claude-opus-5-5", 250_000)).toBeCloseTo(0.75 * 5 + 0.25 * 8);
+    // Never bills more 1-hour writes than writes, and falls back to the 5-minute rate.
+    expect(cost("claude-opus-5-5", 5_000_000)).toBeCloseTo(8);
+    expect(cost("claude-legacy", 1_000_000)).toBeCloseTo(1.25);
+  });
+
   it("prices fast-mode requests at the model's published fast multiple", () => {
     const table = parseRateTable({
       "claude-opus-5-5": { ...rate(4e-6, 2e-7), provider_specific_entry: { fast: 2, us: 1.1 } },

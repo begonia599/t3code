@@ -87,6 +87,7 @@ const setup = Effect.gen(function* () {
             outputCostPerToken: 0.02,
             cacheReadCostPerToken: 0.001,
             cacheCreationCostPerToken: 0.012,
+            cacheCreation1hCostPerToken: 0.02,
             fastMultiplier: 2,
           },
           pricing: {
@@ -450,6 +451,108 @@ it.layer(storage)("subscription observation storage", (it) => {
         assert.deepEqual(report.samples[0]!.issues, []);
         assert.closeTo(report.samples[0]!.costUsd, 2.12, 0.00001);
         assert.equal(h.refreshes(), 2); // Progress consumes native events, no extra probes.
+      }).pipe(Effect.provide(Estimation.layer.pipe(Layer.provide(h.deps))));
+    }),
+  );
+  it.effect("samples provider-started turns and prices 1-hour cache writes", () =>
+    Effect.gen(function* () {
+      const h = yield* setup;
+      yield* Effect.gen(function* () {
+        const service = yield* Estimation.SubscriptionEstimation;
+        const threadId = ThreadId.make("synthetic");
+        const base = {
+          eventId: EventId.make("synthetic-event"),
+          threadId,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: instanceId,
+          createdAt: "1970-01-01T00:00:00.000Z",
+        };
+        yield* service.begin({
+          instanceId,
+          runKey: `turn:${threadId}`,
+          selection: { instanceId, model: "test-model" },
+        });
+        yield* service.bind(`turn:${threadId}`, "sent");
+        h.setUsed(12);
+        yield* service.event({
+          ...base,
+          turnId: TurnId.make("sent"),
+          type: "turn.completed",
+          payload: { state: "completed", tokenUsage: tokens },
+        });
+        // A task notification wakes the agent with no T3 turn running.
+        yield* service.event({
+          ...base,
+          turnId: TurnId.make("woken"),
+          type: "turn.started",
+          payload: {},
+        });
+        // Later events for the thread wait for the off-stream begin().
+        yield* service.event({
+          ...base,
+          turnId: TurnId.make("woken"),
+          type: "thread.token-usage.updated",
+          payload: { usage: { usedTokens: 120 }, turnUsage: tokens },
+        });
+        h.setUsed(15);
+        yield* service.event({
+          ...base,
+          turnId: TurnId.make("woken"),
+          type: "turn.completed",
+          payload: {
+            state: "completed",
+            tokenUsage: { ...tokens, cacheCreation1hTokens: 10 },
+          },
+        });
+        const report = yield* service.read();
+        assert.equal(report.samples.length, 2);
+        // Same-millisecond samples tie on startedAt; pick by quota position.
+        const woken = report.samples.find((sample) => sample.before[0]?.usedPercent === 12)!;
+        assert.isNotNull(woken.endedAt);
+        assert.deepEqual(woken.issues, []);
+        // 10 one-hour writes at 0.02 instead of 0.012.
+        assert.closeTo(woken.costUsd, 1.14, 0.00001);
+        assert.equal(woken.before[0]!.usedPercent, 12);
+        assert.equal(woken.after[0]!.usedPercent, 15);
+      }).pipe(Effect.provide(Estimation.layer.pipe(Layer.provide(h.deps))));
+    }),
+  );
+  it.effect("flags samples that overlap provider-started turns it cannot price", () =>
+    Effect.gen(function* () {
+      const h = yield* setup;
+      yield* Effect.gen(function* () {
+        const service = yield* Estimation.SubscriptionEstimation;
+        const base = {
+          eventId: EventId.make("unknown-event"),
+          threadId: ThreadId.make("never-sent"),
+          turnId: TurnId.make("woken"),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: instanceId,
+          createdAt: "1970-01-01T00:00:00.000Z",
+        };
+        yield* service.event({ ...base, type: "turn.started", payload: {} });
+        yield* service.begin({
+          instanceId,
+          runKey: "sent",
+          selection: { instanceId, model: "test-model" },
+        });
+        yield* service.finish("sent", tokens);
+        yield* service.event({
+          ...base,
+          type: "turn.completed",
+          payload: { state: "completed", tokenUsage: tokens },
+        });
+        yield* service.begin({
+          instanceId,
+          runKey: "later",
+          selection: { instanceId, model: "later-model" },
+        });
+        yield* service.finish("later", tokens);
+        const report = yield* service.read();
+        const later = report.samples.find((sample) => sample.models.includes("later-model"))!;
+        const overlapped = report.samples.find((sample) => sample.models.includes("test-model"))!;
+        assert.deepEqual(later.issues, []);
+        assert.include(overlapped.issues, "untrackedActivity");
       }).pipe(Effect.provide(Estimation.layer.pipe(Layer.provide(h.deps))));
     }),
   );

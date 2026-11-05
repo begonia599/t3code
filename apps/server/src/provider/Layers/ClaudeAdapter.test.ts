@@ -2424,6 +2424,7 @@ describe("ClaudeAdapterLive", () => {
           input_tokens: 100,
           cache_read_input_tokens: 40,
           cache_creation_input_tokens: 10,
+          cache_creation: { ephemeral_1h_input_tokens: 7, ephemeral_5m_input_tokens: 3 },
           output_tokens: 20,
         },
         session_id: "sdk-session-task",
@@ -2441,6 +2442,7 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(completed?.type, "turn.completed");
       if (completed?.type === "turn.completed") {
         assert.equal(completed.payload.tokenUsage?.hasSubagents, true);
+        assert.equal(completed.payload.tokenUsage?.cacheCreation1hTokens, 7);
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
