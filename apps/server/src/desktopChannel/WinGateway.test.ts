@@ -420,7 +420,9 @@ describe("WinGateway over real DesktopChannelBroker", () => {
       await text;
     }
     await h.stop();
-    const offline = await (await f.request("log?n=1")).json();
+    const offline = (await (await f.request("log?n=1")).json()) as {
+      readonly entries: ReadonlyArray<unknown>;
+    };
     expect(offline).toMatchObject({
       source: "server",
       entries: [{ requestId: ids[1], summary: "X".repeat(500), outcome: "exited" }],

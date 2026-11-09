@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - the shim test runs the real launcher against a local HTTP server.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeHttp from "node:http";
 import * as FileSystem from "effect/FileSystem";
