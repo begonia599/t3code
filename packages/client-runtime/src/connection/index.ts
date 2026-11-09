@@ -27,5 +27,6 @@ export { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
 export {
   createDesktopChannelHostLoop,
   createDesktopChannelEnvironmentAtoms,
-  createDesktopChannelHostAtom,
+  desktopChannelEvents,
+  runDesktopChannelHost,
 } from "../state/desktopChannel.ts";

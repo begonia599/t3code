@@ -11,10 +11,10 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { createEnvironmentRpcCommand, createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
+import { createEnvironmentRpcCommand, followStreamInEnvironment } from "./runtime.ts";
 
 export interface DesktopChannelHostDependencies {
   readonly host: DesktopChannelHost;
@@ -121,36 +121,78 @@ export function createDesktopChannelHostLoop(options: DesktopChannelHostDependen
   return { receive, disconnect };
 }
 
+/**
+ * The desktop's DesktopChannel connect stream for one environment. `null` marks a
+ * lost connection: no session yet, the stream ended, or it failed.
+ */
+export function desktopChannelEvents(
+  host: DesktopChannelHost,
+): Stream.Stream<DesktopChannelStreamEvent | null, never, EnvironmentSupervisor> {
+  return Stream.unwrap(
+    Effect.gen(function* () {
+      const supervisor = yield* EnvironmentSupervisor;
+      return SubscriptionRef.changes(supervisor.session).pipe(
+        Stream.switchMap(
+          Option.match({
+            onNone: () => Stream.succeed(null),
+            onSome: (session) =>
+              session.client[WS_METHODS.desktopChannelConnect](host).pipe(
+                Stream.concat(Stream.succeed(null)),
+                Stream.catchCause((cause) =>
+                  Stream.fromEffect(Effect.logWarning("Desktop channel disconnected", cause)).pipe(
+                    Stream.map(() => null),
+                  ),
+                ),
+              ),
+          }),
+        ),
+      );
+    }),
+  );
+}
+
+/**
+ * Feeds every connect-stream event to a fresh host loop, in order.
+ *
+ * The events are commands, not state: a stream atom only exposes the latest
+ * element of each pulled chunk (and marks live values as waiting), so routing
+ * them through an atom value drops requests. Consume the stream directly.
+ */
+export function runDesktopChannelHost<E, R>(
+  events: Stream.Stream<DesktopChannelStreamEvent | null, E, R>,
+  options: DesktopChannelHostDependencies,
+): Effect.Effect<void, E, R> {
+  return Effect.suspend(() => {
+    const loop = createDesktopChannelHostLoop(options);
+    return events.pipe(
+      Stream.runForEach((event) =>
+        Effect.sync(() => {
+          if (event === null) loop.disconnect();
+          else void loop.receive(event).catch(options.onError);
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => loop.disconnect())),
+    );
+  });
+}
+
 export function createDesktopChannelEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
-    connect: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:desktop-channel:connect",
-      subscribe: (host: DesktopChannelHost) =>
-        Stream.unwrap(
-          Effect.gen(function* () {
-            const supervisor = yield* EnvironmentSupervisor;
-            return SubscriptionRef.changes(supervisor.session).pipe(
-              Stream.switchMap(
-                Option.match({
-                  onNone: () => Stream.succeed(null),
-                  onSome: (session) =>
-                    session.client[WS_METHODS.desktopChannelConnect](host).pipe(
-                      Stream.concat(Stream.succeed(null)),
-                      Stream.catchCause((cause) =>
-                        Stream.fromEffect(
-                          Effect.logWarning("Desktop channel disconnected", cause),
-                        ).pipe(Stream.map(() => null)),
-                      ),
-                    ),
-                }),
-              ),
-            );
-          }),
-        ),
-      idleTtlMs: 0,
-    }),
+    /** Mounting the returned atom serves the host until it is unmounted. */
+    host: (options: DesktopChannelHostDependencies) =>
+      runtime
+        .atom(
+          runDesktopChannelHost(
+            followStreamInEnvironment(
+              options.host.environmentId,
+              desktopChannelEvents(options.host),
+            ),
+            options,
+          ),
+        )
+        .pipe(Atom.setIdleTTL(0)),
     emit: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:desktop-channel:emit",
       tag: WS_METHODS.desktopChannelEmit,
@@ -160,31 +202,4 @@ export function createDesktopChannelEnvironmentAtoms<R, E>(
       tag: WS_METHODS.desktopChannelRespond,
     }),
   };
-}
-
-export function createDesktopChannelHostAtom<E>(
-  requests: Atom.Atom<AsyncResult.AsyncResult<DesktopChannelStreamEvent | null, E>>,
-  options: DesktopChannelHostDependencies,
-) {
-  return Atom.make((get) => {
-    const loop = createDesktopChannelHostLoop(options);
-    let disposed = false;
-    get.addFinalizer(() => {
-      disposed = true;
-      loop.disconnect();
-    });
-    const consume = (result: AsyncResult.AsyncResult<DesktopChannelStreamEvent | null, E>) => {
-      if (AsyncResult.isSuccess(result) && !result.waiting && result.value !== null) {
-        void loop.receive(result.value).catch(options.onError);
-      } else {
-        loop.disconnect();
-      }
-    };
-    const initial = get.once(requests);
-    // Establish cached connection identity before a synchronous request notification.
-    if (AsyncResult.isSuccess(initial) && initial.value?.type === "connected") consume(initial);
-    get.subscribe(requests, (result) => {
-      if (!disposed) consume(result);
-    });
-  }).pipe(Atom.setIdleTTL(0));
 }

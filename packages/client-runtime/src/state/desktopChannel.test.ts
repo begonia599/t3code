@@ -1,4 +1,6 @@
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -6,8 +8,8 @@ import {
   type RemoteControlNext,
 } from "@t3tools/contracts";
 import {
-  createDesktopChannelHostAtom,
   createDesktopChannelHostLoop,
+  runDesktopChannelHost,
   type DesktopChannelHostDependencies,
 } from "./desktopChannel.ts";
 
@@ -150,7 +152,41 @@ it("cancels a start that completes after disconnect", async () => {
   expect(options.rpc.respond).not.toHaveBeenCalled();
 });
 
-it("consumes a request immediately after mounting a cached connected event and cancels on stream loss", async () => {
+const connected: DesktopChannelStreamEvent = { type: "connected", connectionId: "c" };
+
+it("serves every event of a chunk through a mounted atom, including back-to-back requests", async () => {
+  const started = [deferred<void>(), deferred<void>()];
+  const { options } = setup(() => new Promise<RemoteControlNext>(() => {}));
+  vi.mocked(options.bridge.start).mockImplementation(async ({ request }) => {
+    started[request.requestId === "a" ? 0 : 1]!.resolve();
+  });
+  // The connect stream delivers these in one chunk; a stream atom value would only expose the last.
+  const events = Stream.concat(
+    Stream.fromIterable<DesktopChannelStreamEvent | null>([
+      connected,
+      { ...request, requestId: "a" },
+      { ...request, requestId: "b" },
+    ]),
+    Stream.never,
+  );
+  const registry = AtomRegistry.make();
+  try {
+    registry.mount(Atom.make(runDesktopChannelHost(events, options)));
+    await Promise.all(started.map((entry) => entry.promise));
+    expect(options.bridge.start).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionId: "c" }),
+    );
+  } finally {
+    registry.dispose();
+  }
+  // Unmounting ends the host and cancels whatever was still running.
+  await vi.waitFor(() => {
+    expect(options.bridge.cancel).toHaveBeenCalledWith({ requestId: "a" });
+    expect(options.bridge.cancel).toHaveBeenCalledWith({ requestId: "b" });
+  });
+});
+
+it("cancels an in-flight request when the stream reports a lost connection", async () => {
   const pulling = deferred<void>();
   const cancelled = deferred<void>();
   const terminal = deferred<RemoteControlNext>();
@@ -161,21 +197,16 @@ it("consumes a request immediately after mounting a cached connected event and c
   vi.mocked(options.bridge.cancel).mockImplementation(async () => {
     cancelled.resolve();
   });
-  const requests = Atom.make(
-    AsyncResult.success<DesktopChannelStreamEvent | null, Error>({
-      type: "connected",
-      connectionId: "cached",
-    }),
-  );
-  const consumer = createDesktopChannelHostAtom(requests, options);
+  const events = Stream.concat(
+    Stream.fromIterable<DesktopChannelStreamEvent | null>([connected, request]),
+    Stream.fromEffect(Effect.promise(() => pulling.promise)).pipe(Stream.map(() => null)),
+  ).pipe(Stream.concat(Stream.never));
   const registry = AtomRegistry.make();
   try {
-    registry.mount(consumer);
-    registry.set(requests, AsyncResult.success(request));
-    await pulling.promise;
-    registry.set(requests, AsyncResult.success(null));
+    registry.mount(Atom.make(runDesktopChannelHost(events, options)));
     await cancelled.promise;
     terminal.resolve({ type: "result", ok: true, result: "late" });
+    await Promise.resolve();
     expect(options.rpc.respond).not.toHaveBeenCalled();
   } finally {
     registry.dispose();

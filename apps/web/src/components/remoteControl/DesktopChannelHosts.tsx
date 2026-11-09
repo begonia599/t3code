@@ -1,8 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
-import {
-  createDesktopChannelEnvironmentAtoms,
-  createDesktopChannelHostAtom,
-} from "@t3tools/client-runtime/connection";
+import { createDesktopChannelEnvironmentAtoms } from "@t3tools/client-runtime/connection";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId } from "@t3tools/contracts";
 import { useContext, useEffect } from "react";
@@ -49,35 +46,32 @@ export function DesktopChannelHosts() {
           if (settled._tag === "Failure") throw squashAtomCommandFailure(settled);
           return settled.value;
         };
-        const consumer = createDesktopChannelHostAtom(
-          atoms.connect({ environmentId, input: host }),
-          {
-            host,
-            bridge,
-            clock: { now: Date.now },
-            rpc: {
-              emit: (input) =>
-                run(
-                  runAtomCommand(
-                    registry,
-                    atoms.emit,
-                    { environmentId, input },
-                    { reportFailure: false, reportDefect: false },
-                  ),
+        const consumer = atoms.host({
+          host,
+          bridge,
+          clock: { now: Date.now },
+          rpc: {
+            emit: (input) =>
+              run(
+                runAtomCommand(
+                  registry,
+                  atoms.emit,
+                  { environmentId, input },
+                  { reportFailure: false, reportDefect: false },
                 ),
-              respond: (input) =>
-                run(
-                  runAtomCommand(
-                    registry,
-                    atoms.respond,
-                    { environmentId, input },
-                    { reportFailure: false, reportDefect: false },
-                  ),
+              ),
+            respond: (input) =>
+              run(
+                runAtomCommand(
+                  registry,
+                  atoms.respond,
+                  { environmentId, input },
+                  { reportFailure: false, reportDefect: false },
                 ),
-            },
-            onError: (error) => console.error("Desktop channel host failed", error),
+              ),
           },
-        );
+          onError: (error) => console.error("Desktop channel host failed", error),
+        });
         mounted.set(environmentId, registry.mount(consumer));
       }
     };
