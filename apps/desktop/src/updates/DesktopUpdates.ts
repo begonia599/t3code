@@ -51,6 +51,9 @@ const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
 const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
 
+// Baked into the main process so downloaded fork builds keep updates disabled.
+declare const __T3CODE_BUILD_DISABLE_AUTO_UPDATE__: boolean | undefined;
+
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
 interface DesktopPreparedUpdateInstallResult extends DesktopUpdateActionResult {
@@ -254,6 +257,12 @@ function getAutoUpdateDisabledReason(args: {
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
 }): string | null {
+  if (
+    typeof __T3CODE_BUILD_DISABLE_AUTO_UPDATE__ !== "undefined" &&
+    __T3CODE_BUILD_DISABLE_AUTO_UPDATE__
+  ) {
+    return "Automatic updates are disabled for this build.";
+  }
   if (!args.hasUpdateFeedConfig) {
     return "Automatic updates are not available because no update feed is configured.";
   }

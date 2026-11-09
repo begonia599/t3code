@@ -12,6 +12,7 @@ import * as References from "effect/References";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { afterEach, vi } from "vite-plus/test";
 
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -20,7 +21,64 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
+// The harness supplies both Electron services; no native runtime is needed.
+vi.mock("electron", () => ({}));
+vi.mock("electron-updater", () => ({ autoUpdater: {} }));
+
 describe("DesktopUpdates", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.effect("builds with updates disabled refuse all update actions and never poll", () => {
+    vi.stubGlobal("__T3CODE_BUILD_DISABLE_AUTO_UPDATE__", true);
+    const harness = makeHarness({ env: { T3CODE_DISABLE_AUTO_UPDATE: "false" } });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        assert.equal((yield* updates.getState).status, "disabled");
+        assert.isFalse((yield* updates.getState).enabled);
+        assert.equal(
+          Option.getOrThrow(yield* updates.disabledReason),
+          "Automatic updates are disabled for this build.",
+        );
+        assert.isFalse((yield* updates.check("manual")).checked);
+        assert.isFalse((yield* updates.download).accepted);
+        assert.isFalse((yield* updates.install).accepted);
+        assert.isFalse((yield* updates.installPrepared("1.2.4")).accepted);
+        assert.equal((yield* updates.setChannel("nightly")).status, "disabled");
+        assert.isFalse((yield* updates.check("manual")).checked);
+
+        yield* TestClock.adjust(Duration.minutes(10));
+        assert.equal(harness.checkCount(), 0);
+        assert.equal(harness.downloadCount(), 0);
+        assert.equal(harness.quitAndInstalls(), 0);
+        assert.equal(harness.listenerCount(), 0);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("a false build flag preserves updater checks and downloads", () => {
+    vi.stubGlobal("__T3CODE_BUILD_DISABLE_AUTO_UPDATE__", false);
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        assert.isTrue((yield* updates.getState).enabled);
+        assert.isTrue((yield* updates.check("manual")).checked);
+
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.isTrue((yield* updates.download).accepted);
+        assert.equal(harness.checkCount(), 1);
+        assert.equal(harness.downloadCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it("preserves complete causes for update poller and event failures", () => {
     const cause = Cause.combine(
       Cause.fail(new Error("updater failed")),
