@@ -33,12 +33,15 @@ export function DesktopChannelHosts() {
           mounted.delete(id);
         }
       }
-      const identity = await bridge.getHostIdentity();
+      const [identity, capabilities] = await Promise.all([
+        bridge.getHostIdentity(),
+        bridge.getCapabilities(),
+      ]);
       if (disposed || version !== revision) return;
       for (const id of JSON.parse(environmentIdsKey) as string[]) {
         const environmentId = EnvironmentId.make(id);
         if (!ids.includes(environmentId) || mounted.has(environmentId)) continue;
-        const host = { ...identity, environmentId, capabilities: { enabled: true } };
+        const host = { ...identity, environmentId, capabilities };
         const run = async <A, E>(
           result: Promise<import("@t3tools/client-runtime/state/runtime").AtomCommandResult<A, E>>,
         ) => {

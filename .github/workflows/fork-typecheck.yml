@@ -60,6 +60,7 @@ jobs:
           apps/desktop/src/updates/DesktopUpdates.test.ts
           apps/desktop/src/remoteControl
           apps/desktop/src/ipc/methods/remoteControl.test.ts
+          apps/desktop/src/ipc/methods/remoteControl.management.test.ts
           apps/desktop/src/settings/DesktopAppSettings.test.ts
           packages/client-runtime/src/state/desktopChannel.test.ts
           scripts/build-desktop-artifact.test.ts

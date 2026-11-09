@@ -286,6 +286,45 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     },
   },
   remoteControl: {
+    getCapabilities: () => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_CAPABILITIES_CHANNEL),
+    getConfig: () => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_GET_CONFIG_CHANNEL),
+    updateConfig: (patch) =>
+      ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_UPDATE_CONFIG_CHANNEL, patch),
+    listGrants: () => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_LIST_GRANTS_CHANNEL),
+    revokeGrant: (input) =>
+      ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_REVOKE_GRANT_CHANNEL, input),
+    getPendingGrantRequests: () =>
+      ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_GET_PENDING_CHANNEL),
+    resolveGrant: (input) =>
+      ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_RESOLVE_GRANT_CHANNEL, input),
+    readAudit: (input) => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_READ_AUDIT_CHANNEL, input),
+    disconnectAll: () => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_DISCONNECT_ALL_CHANNEL),
+    onConfigChanged: (listener) => {
+      const handler = (_event: unknown, value: import("@t3tools/contracts").RemoteControlConfig) =>
+        listener(value);
+      ipcRenderer.on(IpcChannels.REMOTE_CONTROL_CONFIG_CHANGED_CHANNEL, handler);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.REMOTE_CONTROL_CONFIG_CHANGED_CHANNEL, handler);
+    },
+    onGrantsChanged: (listener) => {
+      const handler = (
+        _event: unknown,
+        value: readonly import("@t3tools/contracts").RemoteControlGrant[],
+      ) => listener(value);
+      ipcRenderer.on(IpcChannels.REMOTE_CONTROL_GRANTS_CHANGED_CHANNEL, handler);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.REMOTE_CONTROL_GRANTS_CHANGED_CHANNEL, handler);
+    },
+    onPendingGrantRequestsChanged: (listener) => {
+      const handler = (
+        _event: unknown,
+        value: readonly import("@t3tools/contracts").RemoteControlGrantRequest[],
+      ) => listener(value);
+      ipcRenderer.on(IpcChannels.REMOTE_CONTROL_PENDING_CHANGED_CHANNEL, handler);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.REMOTE_CONTROL_PENDING_CHANGED_CHANNEL, handler);
+    },
+
     getHostIdentity: () => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_IDENTITY_CHANNEL),
     getEnabledEnvironmentIds: () =>
       ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_GET_ENABLED_CHANNEL),

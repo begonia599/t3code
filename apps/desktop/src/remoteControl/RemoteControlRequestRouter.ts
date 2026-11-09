@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Clock from "effect/Clock";
 import * as NodeOS from "node:os";
 
+import { WinExecService } from "./WinExecService.ts";
 import { DesktopAppSettings } from "../settings/DesktopAppSettings.ts";
 import { DesktopEnvironment } from "../app/DesktopEnvironment.ts";
 
@@ -21,6 +22,7 @@ export interface RequestOwner {
 }
 export type RequestHandler = (input: {
   readonly request: DesktopChannelRequest;
+  readonly environmentId: string;
   readonly signal: AbortSignal;
   readonly emit: (event: Events[number]) => Promise<void>;
 }) => Promise<unknown>;
@@ -43,7 +45,7 @@ export function createRemoteControlRequestRouter(options: {
       ownerId: number;
       environmentId: string;
       controller: AbortController;
-      events: Events[];
+      events: Events[number][];
       result: RemoteControlNext | undefined;
       wake: Set<() => void>;
       pulling: boolean;
@@ -80,7 +82,7 @@ export function createRemoteControlRequestRouter(options: {
         ownerId: owner.id,
         environmentId: input.environmentId,
         controller: new AbortController(),
-        events: [] as Events[],
+        events: [] as Events[number][],
         result: undefined as RemoteControlNext | undefined,
         wake: new Set<() => void>(),
         pulling: false,
@@ -110,13 +112,16 @@ export function createRemoteControlRequestRouter(options: {
         try {
           const result = await handler({
             request: input.request,
+            environmentId: input.environmentId,
             signal: state.controller.signal,
             emit: async (event) => {
+              if (Buffer.byteLength(event.data, "utf8") > 256 * 1024)
+                throw new Error("Remote control event exceeds the 256KB batch limit");
               while (!state.controller.signal.aborted && state.events.length >= capacity) {
                 await new Promise<void>((resolve) => state.wake.add(resolve));
               }
               if (state.controller.signal.aborted) throw { code: "CANCELLED" };
-              state.events.push([event]);
+              state.events.push(event);
               notify(state);
             },
           });
@@ -130,7 +135,12 @@ export function createRemoteControlRequestRouter(options: {
                 typeof error.code === "string"
                 ? error.code
                 : "HOST_ERROR",
-              error instanceof Error ? error.message : "Remote control request failed",
+              typeof error === "object" &&
+                error !== null &&
+                "message" in error &&
+                typeof error.message === "string"
+                ? error.message
+                : "Remote control request failed",
             );
           }
         } finally {
@@ -147,8 +157,16 @@ export function createRemoteControlRequestRouter(options: {
         while (state.events.length === 0 && !state.result) {
           await new Promise<void>((resolve) => state.wake.add(resolve));
         }
-        const events = state.events.shift();
-        if (events) {
+        const events: Events[number][] = [];
+        let bytes = 0;
+        while (state.events.length && events.length < 64) {
+          const event = state.events[0]!;
+          const size = Buffer.byteLength(event.data, "utf8");
+          if (events.length && bytes + size > 256 * 1024) break;
+          events.push(state.events.shift()!);
+          bytes += size;
+        }
+        if (events.length) {
           notify(state);
           return { type: "events", events };
         }
@@ -185,6 +203,7 @@ export const layer = Layer.effect(
     const settings = yield* DesktopAppSettings;
     const environment = yield* DesktopEnvironment;
     const clock = yield* Clock.Clock;
+    const exec = yield* WinExecService;
     const getHostIdentity = Effect.gen(function* () {
       const platform = environment.platform;
       if (platform !== "win32" && platform !== "linux" && platform !== "darwin") {
@@ -201,6 +220,7 @@ export const layer = Layer.effect(
     const router = createRemoteControlRequestRouter({
       identity: () => Effect.runPromiseWith(runIdentity)(getHostIdentity),
       now: () => clock.currentTimeMillisUnsafe(),
+      handlers: exec.handlers,
     });
     yield* Effect.addFinalizer(() => Effect.sync(() => router.dispose()));
     return { router, getHostIdentity };

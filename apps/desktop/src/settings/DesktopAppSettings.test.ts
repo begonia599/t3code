@@ -36,6 +36,8 @@ const DesktopSettingsPatch = Schema.Struct({
   wslOnly: Schema.optionalKey(Schema.Boolean),
 });
 
+const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const decodeDesktopSettingsPatch = Schema.decodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
 const encodeDesktopSettingsPatch = Schema.encodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
 
@@ -120,7 +122,7 @@ describe("DesktopSettings", () => {
         ]);
         yield* settings.setEnvironmentEnabled("env-a", false);
         assert.deepEqual((yield* settings.load).remoteControl, {
-          hostId: first.remoteControl.hostId,
+          ...first.remoteControl,
           enabledEnvironmentIds: ["env-b"],
         });
       }),
@@ -600,3 +602,47 @@ describe("DesktopSettings", () => {
     ),
   );
 });
+
+it.effect("migrates remote-control fields and validates and persists normalized config", () =>
+  withSettings(
+    Effect.gen(function* () {
+      const settings = yield* DesktopAppSettings.DesktopAppSettings;
+      const environment = yield* DesktopEnvironment.DesktopEnvironment;
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(environment.stateDir, { recursive: true });
+      yield* fs.writeFileString(
+        environment.desktopSettingsPath,
+        yield* encodeUnknownJson({
+          remoteControl: {
+            hostId: "91d581f4-d87a-4efe-967c-2b60314575bb",
+            enabledEnvironmentIds: ["env"],
+          },
+        }),
+      );
+      const migrated = yield* settings.load;
+      assert.deepEqual(migrated.remoteControl, {
+        hostId: "91d581f4-d87a-4efe-967c-2b60314575bb",
+        enabledEnvironmentIds: ["env"],
+        allowlist: [],
+        mappings: [],
+        strictMode: false,
+      });
+      yield* settings.updateRemoteControlConfig({
+        allowlist: ["C:/work/", "c:\\work"],
+        mappings: [{ serverPath: "/project/", winPath: "D:/project/", syncSession: "project" }],
+        strictMode: true,
+      });
+      assert.deepEqual((yield* settings.load).remoteControl, {
+        ...migrated.remoteControl,
+        allowlist: ["c:\\work"],
+        mappings: [{ serverPath: "/project", winPath: "D:\\project", syncSession: "project" }],
+        strictMode: true,
+      });
+      const error = yield* settings
+        .updateRemoteControlConfig({ allowlist: ["relative"] })
+        .pipe(Effect.flip);
+      assert.include(error.message, "absolute Windows");
+      assert.deepEqual((yield* settings.load).remoteControl.allowlist, ["c:\\work"]);
+    }),
+  ),
+);

@@ -128,3 +128,53 @@ describe("remote control request router", () => {
     await expect(router.next("a", 1)).rejects.toThrow("Unknown");
   });
 });
+
+it.each([
+  { count: 65, text: "x", expected: 64 },
+  { count: 17, text: "x".repeat(16 * 1024), expected: 16 },
+  { count: 20, text: "汉".repeat(8192), expected: 10 },
+])(
+  "batches buffered events by count and UTF-8 byte size: $expected",
+  async ({ count, text, expected }) => {
+    const buffered = deferred<void>();
+    const router = createRemoteControlRequestRouter({
+      identity: async () => identity,
+      now: () => 0,
+      capacity: 100,
+      handlers: {
+        stream: async ({ emit }) => {
+          for (let i = 0; i < count; i++) await emit({ kind: "stdout", data: text });
+          buffered.resolve();
+          return "done";
+        },
+      },
+    });
+    router.start(input("stream"), owner);
+    await buffered.promise;
+    const first = await router.next("r", 1);
+    expect(first.type).toBe("events");
+    if (first.type !== "events") throw new Error("expected events");
+    expect(first.events).toHaveLength(expected);
+    const second = await router.next("r", 1);
+    expect(second.type).toBe("events");
+    if (second.type !== "events") throw new Error("expected events");
+    expect(second.events).toHaveLength(count - expected);
+    expect(await router.next("r", 1)).toMatchObject({ ok: true });
+  },
+);
+
+it("preserves handler error messages", async () => {
+  const router = createRemoteControlRequestRouter({
+    identity: async () => identity,
+    now: () => 0,
+    handlers: {
+      exec: async () => {
+        throw { code: "CWD_NOT_ALLOWED", message: "Directory does not exist: C:\\missing" };
+      },
+    },
+  });
+  router.start(input("exec"), owner);
+  expect(await router.next("r", 1)).toMatchObject({
+    error: { code: "CWD_NOT_ALLOWED", message: "Directory does not exist: C:\\missing" },
+  });
+});

@@ -12,6 +12,7 @@ import {
   createRemoteControlRequestRouter,
   RemoteControlRequestRouter,
 } from "../../remoteControl/RemoteControlRequestRouter.ts";
+import { RemoteControlStore } from "../../remoteControl/RemoteControlStore.ts";
 import { start, setEnvironmentEnabled } from "./remoteControl.ts";
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
 import * as Channels from "../channels.ts";
@@ -94,7 +95,11 @@ it.effect.each(["destroyed", "render-process-gone", "did-start-navigation"])(
         Effect.provide(
           layerTest({
             ...DEFAULT_DESKTOP_SETTINGS,
-            remoteControl: { hostId: identity.hostId, enabledEnvironmentIds: ["env"] },
+            remoteControl: {
+              ...DEFAULT_DESKTOP_SETTINGS.remoteControl,
+              hostId: identity.hostId,
+              enabledEnvironmentIds: ["env"],
+            },
           }),
         ),
         Effect.provideService(RemoteControlRequestRouter, {
@@ -135,6 +140,17 @@ it.effect("persists switches, broadcasts changes, and aborts requests when disab
         },
       },
     });
+    const store = RemoteControlStore.of({
+      authorize: async () => {},
+      resolveGrant: async () => {},
+      grantState: () => "none",
+      listGrants: () => [],
+      getPendingGrantRequests: () => [],
+      revokeGrant: async () => {},
+      rejectEnvironment: vi.fn(),
+      appendAudit: async () => {},
+      readAudit: async () => [],
+    });
     const messages: unknown[][] = [];
     const windows = ElectronWindow.of({
       create: () => Effect.die("unexpected create"),
@@ -159,6 +175,7 @@ it.effect("persists switches, broadcasts changes, and aborts requests when disab
         getHostIdentity: Effect.succeed(identity),
       }),
       Effect.provideService(ElectronWindow, windows),
+      Effect.provideService(RemoteControlStore, store),
     );
     expect((yield* settings.get).remoteControl.enabledEnvironmentIds).toEqual(["env"]);
     router.start(input, { id: 1, onGone: () => () => {} });
@@ -168,9 +185,13 @@ it.effect("persists switches, broadcasts changes, and aborts requests when disab
         getHostIdentity: Effect.succeed(identity),
       }),
       Effect.provideService(ElectronWindow, windows),
+      Effect.provideService(RemoteControlStore, store),
     );
     expect(signal?.aborted).toBe(true);
-    expect(messages).toEqual([
+    expect(store.rejectEnvironment).toHaveBeenCalledWith("env");
+    expect(
+      messages.filter(([channel]) => channel === Channels.REMOTE_CONTROL_ENABLED_CHANGED_CHANNEL),
+    ).toEqual([
       [Channels.REMOTE_CONTROL_ENABLED_CHANGED_CHANNEL, ["env"]],
       [Channels.REMOTE_CONTROL_ENABLED_CHANGED_CHANNEL, []],
     ]);

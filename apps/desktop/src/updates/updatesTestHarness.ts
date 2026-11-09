@@ -180,6 +180,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       ? Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
           get: Effect.sync(() => testSettings),
           load: Effect.sync(() => testSettings),
+          updateRemoteControlConfig: () => Effect.die("unexpected remote control config update"),
           setEnvironmentEnabled: () => Effect.die("unexpected remote control environment toggle"),
           setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
           setServerExposureMode: () => Effect.die("unexpected server exposure update"),

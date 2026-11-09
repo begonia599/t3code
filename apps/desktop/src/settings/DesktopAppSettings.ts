@@ -1,4 +1,6 @@
 import {
+  DesktopPathMapping,
+  type RemoteControlConfigPatch,
   DesktopServerExposureModeSchema,
   DesktopUpdateChannelSchema,
   type DesktopServerExposureMode,
@@ -15,6 +17,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+import { normalizeRemoteControlConfig } from "../remoteControl/paths.ts";
+
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import {
   DEFAULT_LINUX_PASSWORD_STORE,
@@ -28,6 +32,9 @@ export interface DesktopSettings {
   readonly remoteControl: {
     readonly hostId: string;
     readonly enabledEnvironmentIds: readonly string[];
+    readonly allowlist: readonly string[];
+    readonly mappings: readonly DesktopPathMapping[];
+    readonly strictMode: boolean;
   };
   readonly localEnvironmentEnabled: boolean;
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
@@ -78,7 +85,13 @@ export const DEFAULT_MAIN_WINDOW_SIZE = {
 } as const;
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
-  remoteControl: { hostId: "", enabledEnvironmentIds: [] },
+  remoteControl: {
+    hostId: "",
+    enabledEnvironmentIds: [],
+    allowlist: [],
+    mappings: [],
+    strictMode: false,
+  },
   localEnvironmentEnabled: true,
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
@@ -105,6 +118,9 @@ const DesktopSettingsDocument = Schema.Struct({
     Schema.Struct({
       hostId: Schema.optionalKey(Schema.String.check(Schema.isUUID(4))),
       enabledEnvironmentIds: Schema.optionalKey(Schema.Array(Schema.String)),
+      allowlist: Schema.optionalKey(Schema.Array(Schema.String)),
+      mappings: Schema.optionalKey(Schema.Array(DesktopPathMapping)),
+      strictMode: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
@@ -161,9 +177,17 @@ export class DesktopSettingsWriteError extends Schema.TaggedError<DesktopSetting
   }
 }
 
+export class RemoteControlConfigError extends Schema.TaggedError<RemoteControlConfigError>()(
+  "RemoteControlConfigError",
+  { message: Schema.String },
+) {}
+
 export class DesktopAppSettings extends Context.Service<
   DesktopAppSettings,
   {
+    readonly updateRemoteControlConfig: (
+      patch: RemoteControlConfigPatch,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError | RemoteControlConfigError>;
     readonly setEnvironmentEnabled: (
       environmentId: string,
       enabled: boolean,
@@ -248,6 +272,10 @@ function normalizeDesktopSettingsDocument(
     remoteControl: {
       hostId: parsed.remoteControl?.hostId ?? "",
       enabledEnvironmentIds: [...new Set(parsed.remoteControl?.enabledEnvironmentIds ?? [])],
+      allowlist: [],
+      mappings: [],
+      strictMode: false,
+      ...normalizeRemoteControlConfig(parsed.remoteControl ?? {}),
     },
     localEnvironmentEnabled: parsed.localEnvironmentEnabled !== false,
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
@@ -513,7 +541,7 @@ export const make = Effect.gen(function* () {
   const initialHostId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
   const settingsRef = yield* SynchronizedRef.make({
     ...environment.defaultDesktopSettings,
-    remoteControl: { hostId: initialHostId, enabledEnvironmentIds: [] as readonly string[] },
+    remoteControl: { ...DEFAULT_DESKTOP_SETTINGS.remoteControl, hostId: initialHostId },
   });
 
   const updateInMemory = (update: (settings: DesktopSettings) => DesktopSettings) =>
@@ -557,6 +585,21 @@ export const make = Effect.gen(function* () {
 
   return DesktopAppSettings.of({
     get: SynchronizedRef.get(settingsRef),
+    updateRemoteControlConfig: (patch) =>
+      Effect.try({
+        try: () => normalizeRemoteControlConfig(patch),
+        catch: (cause) =>
+          new RemoteControlConfigError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      }).pipe(
+        Effect.flatMap((normalized) =>
+          persist((settings) => ({
+            ...settings,
+            remoteControl: { ...settings.remoteControl, ...normalized },
+          })),
+        ),
+      ),
     setEnvironmentEnabled: (environmentId, enabled) =>
       persist((settings) => setEnvironmentEnabled(settings, environmentId, enabled)),
     load: Effect.gen(function* () {
@@ -648,6 +691,21 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
 
       return DesktopAppSettings.of({
         get: SynchronizedRef.get(settingsRef),
+        updateRemoteControlConfig: (patch) =>
+          Effect.try({
+            try: () => normalizeRemoteControlConfig(patch),
+            catch: (cause) =>
+              new RemoteControlConfigError({
+                message: cause instanceof Error ? cause.message : String(cause),
+              }),
+          }).pipe(
+            Effect.flatMap((normalized) =>
+              update((settings) => ({
+                ...settings,
+                remoteControl: { ...settings.remoteControl, ...normalized },
+              })),
+            ),
+          ),
         setEnvironmentEnabled: (environmentId, enabled) =>
           update((settings) => setEnvironmentEnabled(settings, environmentId, enabled)),
         load: SynchronizedRef.get(settingsRef),

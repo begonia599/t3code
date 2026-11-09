@@ -76,7 +76,21 @@ import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./m
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
   yield* installNotificationBadge();
-  for (const method of RemoteControlIpc.methods) yield* ipc.handle(method);
+  yield* ipc.handle(RemoteControlIpc.getHostIdentity);
+  yield* ipc.handle(RemoteControlIpc.getEnabledEnvironmentIds);
+  yield* ipc.handle(RemoteControlIpc.setEnvironmentEnabled);
+  yield* ipc.handle(RemoteControlIpc.start);
+  yield* ipc.handle(RemoteControlIpc.next);
+  yield* ipc.handle(RemoteControlIpc.cancel);
+  yield* ipc.handle(RemoteControlIpc.getCapabilities);
+  yield* ipc.handle(RemoteControlIpc.getConfig);
+  yield* ipc.handle(RemoteControlIpc.updateConfig);
+  yield* ipc.handle(RemoteControlIpc.listGrants);
+  yield* ipc.handle(RemoteControlIpc.revokeGrant);
+  yield* ipc.handle(RemoteControlIpc.getPendingGrantRequests);
+  yield* ipc.handle(RemoteControlIpc.resolveGrant);
+  yield* ipc.handle(RemoteControlIpc.readAudit);
+  yield* ipc.handle(RemoteControlIpc.disconnectAll);
   yield* PreviewIpc.installPreviewEventForwarding();
 
   yield* ipc.handle(AppActivationIpc.setReady);

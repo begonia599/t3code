@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { DesktopChannelHost, DesktopChannelRequest, DesktopChannelEmit } from "./desktopChannel.ts";
+import {
+  DesktopChannelHost,
+  DesktopChannelRequest,
+  DesktopChannelEmit,
+  DesktopChannelCapabilities,
+} from "./desktopChannel.ts";
+import { DesktopPathMapping, type DesktopExecLogEntry } from "./desktopExec.ts";
 
 import {
   PreviewAutomationClickInput,
@@ -1122,6 +1128,55 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+export const RemoteControlConfigPatch = Schema.Struct({
+  allowlist: Schema.optionalKey(Schema.Array(Schema.String)),
+  mappings: Schema.optionalKey(Schema.Array(DesktopPathMapping)),
+  strictMode: Schema.optionalKey(Schema.Boolean),
+});
+export type RemoteControlConfigPatch = typeof RemoteControlConfigPatch.Type;
+export const RemoteControlConfig = Schema.Struct({
+  hostId: Schema.String,
+  hostName: Schema.String,
+  enabledEnvironmentIds: Schema.Array(Schema.String),
+  allowlist: Schema.Array(Schema.String),
+  mappings: Schema.Array(DesktopPathMapping),
+  strictMode: Schema.Boolean,
+});
+export type RemoteControlConfig = typeof RemoteControlConfig.Type;
+export const RemoteControlGrant = Schema.Struct({
+  environmentId: Schema.String,
+  threadId: Schema.String,
+  provider: Schema.NullOr(Schema.String),
+  label: Schema.NullOr(Schema.String),
+  grantedAt: Schema.String,
+  lastUsedAt: Schema.String,
+});
+export type RemoteControlGrant = typeof RemoteControlGrant.Type;
+export const RemoteControlGrantKey = Schema.Struct({
+  environmentId: Schema.String,
+  threadId: Schema.String,
+});
+export const RemoteControlGrantRequest = Schema.Struct({
+  grantRequestId: Schema.String,
+  environmentId: Schema.String,
+  threadId: Schema.NullOr(Schema.String),
+  provider: Schema.NullOr(Schema.String),
+  label: Schema.NullOr(Schema.String),
+  mode: Schema.Literals(["argv", "powershell"]),
+  summary: Schema.String,
+  winCwd: Schema.String,
+  strictMode: Schema.Boolean,
+  requestedAt: Schema.String,
+  expiresAt: Schema.String,
+  requestCount: Schema.Int,
+});
+export type RemoteControlGrantRequest = typeof RemoteControlGrantRequest.Type;
+export const RemoteControlGrantDecision = Schema.Struct({
+  grantRequestId: Schema.String,
+  decision: Schema.Literals(["allow-session", "allow-once", "deny"]),
+});
+export type RemoteControlGrantDecision = typeof RemoteControlGrantDecision.Type;
+
 export const RemoteControlHostIdentity = Schema.Struct({
   hostId: DesktopChannelHost.fields.hostId,
   hostName: DesktopChannelHost.fields.hostName,
@@ -1155,6 +1210,20 @@ export const RemoteControlNext = Schema.Union([
 ]);
 export type RemoteControlNext = typeof RemoteControlNext.Type;
 export interface RemoteControlBridge {
+  getCapabilities(): Promise<DesktopChannelCapabilities>;
+  getConfig(): Promise<RemoteControlConfig>;
+  updateConfig(patch: RemoteControlConfigPatch): Promise<RemoteControlConfig>;
+  onConfigChanged(listener: (config: RemoteControlConfig) => void): () => void;
+  listGrants(): Promise<readonly RemoteControlGrant[]>;
+  revokeGrant(input: { environmentId: string; threadId: string }): Promise<void>;
+  onGrantsChanged(listener: (grants: readonly RemoteControlGrant[]) => void): () => void;
+  getPendingGrantRequests(): Promise<readonly RemoteControlGrantRequest[]>;
+  onPendingGrantRequestsChanged(
+    listener: (pending: readonly RemoteControlGrantRequest[]) => void,
+  ): () => void;
+  resolveGrant(input: RemoteControlGrantDecision): Promise<void>;
+  readAudit(input: { limit: number }): Promise<readonly DesktopExecLogEntry[]>;
+  disconnectAll(): Promise<void>;
   getHostIdentity(): Promise<RemoteControlHostIdentity>;
   getEnabledEnvironmentIds(): Promise<readonly string[]>;
   setEnvironmentEnabled(environmentId: string, enabled: boolean): Promise<void>;

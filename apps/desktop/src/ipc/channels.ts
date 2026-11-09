@@ -127,3 +127,16 @@ export const REMOTE_CONTROL_ENABLED_CHANGED_CHANNEL = "desktop:remote-control-en
 export const REMOTE_CONTROL_START_CHANNEL = "desktop:remote-control-start";
 export const REMOTE_CONTROL_NEXT_CHANNEL = "desktop:remote-control-next";
 export const REMOTE_CONTROL_CANCEL_CHANNEL = "desktop:remote-control-cancel";
+
+export const REMOTE_CONTROL_CAPABILITIES_CHANNEL = "desktop:remote-control-capabilities";
+export const REMOTE_CONTROL_GET_CONFIG_CHANNEL = "desktop:remote-control-get-config";
+export const REMOTE_CONTROL_UPDATE_CONFIG_CHANNEL = "desktop:remote-control-update-config";
+export const REMOTE_CONTROL_CONFIG_CHANGED_CHANNEL = "desktop:remote-control-config-changed";
+export const REMOTE_CONTROL_LIST_GRANTS_CHANNEL = "desktop:remote-control-list-grants";
+export const REMOTE_CONTROL_REVOKE_GRANT_CHANNEL = "desktop:remote-control-revoke-grant";
+export const REMOTE_CONTROL_GRANTS_CHANGED_CHANNEL = "desktop:remote-control-grants-changed";
+export const REMOTE_CONTROL_GET_PENDING_CHANNEL = "desktop:remote-control-get-pending";
+export const REMOTE_CONTROL_PENDING_CHANGED_CHANNEL = "desktop:remote-control-pending-changed";
+export const REMOTE_CONTROL_RESOLVE_GRANT_CHANNEL = "desktop:remote-control-resolve-grant";
+export const REMOTE_CONTROL_READ_AUDIT_CHANNEL = "desktop:remote-control-read-audit";
+export const REMOTE_CONTROL_DISCONNECT_ALL_CHANNEL = "desktop:remote-control-disconnect-all";

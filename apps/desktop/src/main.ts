@@ -20,6 +20,8 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/ho
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
 
+import * as RemoteControlStore from "./remoteControl/RemoteControlStore.ts";
+import * as WinExecService from "./remoteControl/WinExecService.ts";
 import * as RemoteControlRequestRouter from "./remoteControl/RemoteControlRequestRouter.ts";
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
 import * as ElectronApp from "./electron/ElectronApp.ts";
@@ -192,7 +194,10 @@ const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
 );
 
 const desktopApplicationLayer = Layer.mergeAll(
-  RemoteControlRequestRouter.layer,
+  RemoteControlRequestRouter.layer.pipe(
+    Layer.provideMerge(WinExecService.layer),
+    Layer.provideMerge(RemoteControlStore.layer),
+  ),
   DesktopLifecycle.layer,
   desktopAppActivationLayer,
   DesktopApplicationMenu.layer,

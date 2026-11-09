@@ -231,6 +231,7 @@ function makeTestLayer(input: {
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
     get: Effect.sync(() => desktopSettings),
     load: Effect.sync(() => desktopSettings),
+    updateRemoteControlConfig: () => Effect.die("unexpected remote control config update"),
     setEnvironmentEnabled: () => Effect.die("unexpected remote control environment toggle"),
     setMainWindowBounds: (bounds, isMaximized) =>
       Effect.gen(function* () {
