@@ -1,0 +1,52 @@
+name: Fork Typecheck
+
+# Upstream CI runs on Blacksmith runners that this fork cannot use, and the
+# development host is too loaded to typecheck the server in reasonable time.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/win-desktop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-typecheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: Typecheck and desktop channel tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Typecheck
+        run: vp run typecheck
+
+      - name: Desktop channel tests
+        if: ${{ !cancelled() }}
+        run: >-
+          vp test run
+          apps/server/src/desktopChannel
+          apps/server/src/auth/RpcAuthorization.test.ts
+          apps/desktop/src/updates/DesktopUpdates.test.ts
+          scripts/build-desktop-artifact.test.ts
