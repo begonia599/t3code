@@ -19,6 +19,17 @@ describe("RPC authorization scopes", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
 
+  it("requires operate permission for every desktop channel method", () => {
+    for (const method of [
+      WS_METHODS.desktopChannelConnect,
+      WS_METHODS.desktopChannelRespond,
+      WS_METHODS.desktopChannelEmit,
+      WS_METHODS.desktopChannelUpdateCapabilities,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("authorizes background policy reporting and observation deliberately", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverReportClientActivity)).toBe(
       AuthOrchestrationReadScope,

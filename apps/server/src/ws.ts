@@ -129,6 +129,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as DesktopChannelBroker from "./desktopChannel/DesktopChannelBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -507,6 +508,7 @@ const makeWsRpcLayer = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  desktopChannelBroker: DesktopChannelBroker.DesktopChannelBroker["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -3822,6 +3824,29 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.desktopChannelConnect]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.desktopChannelConnect,
+            desktopChannelBroker.connect(input, {
+              subject: currentSession.subject,
+              sessionId: currentSession.sessionId,
+            }),
+            { "rpc.aggregate": "desktop-channel" },
+          ),
+        [WS_METHODS.desktopChannelRespond]: (input) =>
+          observeRpcEffect(WS_METHODS.desktopChannelRespond, desktopChannelBroker.respond(input), {
+            "rpc.aggregate": "desktop-channel",
+          }),
+        [WS_METHODS.desktopChannelEmit]: (input) =>
+          observeRpcEffect(WS_METHODS.desktopChannelEmit, desktopChannelBroker.emit(input), {
+            "rpc.aggregate": "desktop-channel",
+          }),
+        [WS_METHODS.desktopChannelUpdateCapabilities]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.desktopChannelUpdateCapabilities,
+            desktopChannelBroker.updateCapabilities(input),
+            { "rpc.aggregate": "desktop-channel" },
+          ),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.previewAutomationConnect,
@@ -4111,6 +4136,7 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const desktopChannelBroker = yield* DesktopChannelBroker.DesktopChannelBroker;
     const baseServerSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const config = yield* ServerConfig.ServerConfig;
     const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -4177,6 +4203,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              desktopChannelBroker,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),

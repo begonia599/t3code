@@ -26,6 +26,14 @@ import {
   ChatGptHandoffInput,
   ChatGptHandoffState,
 } from "./providerSetup.ts";
+import {
+  DesktopChannelError,
+  DesktopChannelHost,
+  DesktopChannelStreamEvent,
+  DesktopChannelResponse,
+  DesktopChannelEmit,
+  DesktopChannelUpdateCapabilities,
+} from "./desktopChannel.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
@@ -392,6 +400,10 @@ export const WS_METHODS = {
   previewClose: "preview.close",
   previewList: "preview.list",
   previewReportStatus: "preview.reportStatus",
+  desktopChannelConnect: "desktopChannel.connect",
+  desktopChannelRespond: "desktopChannel.respond",
+  desktopChannelEmit: "desktopChannel.emit",
+  desktopChannelUpdateCapabilities: "desktopChannel.updateCapabilities",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
@@ -1321,6 +1333,31 @@ const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+const WsDesktopChannelConnectRpc = Rpc.make(WS_METHODS.desktopChannelConnect, {
+  payload: DesktopChannelHost,
+  success: DesktopChannelStreamEvent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsDesktopChannelRespondRpc = Rpc.make(WS_METHODS.desktopChannelRespond, {
+  payload: DesktopChannelResponse,
+  error: Schema.Union([DesktopChannelError, EnvironmentAuthorizationError]),
+});
+
+const WsDesktopChannelEmitRpc = Rpc.make(WS_METHODS.desktopChannelEmit, {
+  payload: DesktopChannelEmit,
+  error: Schema.Union([DesktopChannelError, EnvironmentAuthorizationError]),
+});
+
+const WsDesktopChannelUpdateCapabilitiesRpc = Rpc.make(
+  WS_METHODS.desktopChannelUpdateCapabilities,
+  {
+    payload: DesktopChannelUpdateCapabilities,
+    error: Schema.Union([DesktopChannelError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationHost,
   success: PreviewAutomationStreamEvent,
@@ -1659,6 +1696,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewReportStatusRpc,
+  WsDesktopChannelConnectRpc,
+  WsDesktopChannelRespondRpc,
+  WsDesktopChannelEmitRpc,
+  WsDesktopChannelUpdateCapabilitiesRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
