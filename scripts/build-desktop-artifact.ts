@@ -1524,6 +1524,27 @@ function getPatchedDependencyPackageName(patchKey: string): string {
   return versionSeparator > 0 ? patchKey.slice(0, versionSeparator) : patchKey;
 }
 
+/**
+ * Staged installs run without the workspace lockfile, so a range such as
+ * `^1.2.0-beta.15` can resolve to a newer release than the one a patch targets,
+ * and pnpm then fails with ERR_PNPM_UNUSED_PATCH. Pin every patched dependency
+ * to the exact version its patch was written for.
+ */
+export function pinPatchedDependencyVersions<Spec>(
+  dependencies: Record<string, Spec>,
+  patchedDependencies: Record<string, string>,
+): Record<string, Spec | string> {
+  const pinned: Record<string, Spec | string> = { ...dependencies };
+  for (const patchKey of Object.keys(patchedDependencies)) {
+    const name = getPatchedDependencyPackageName(patchKey);
+    const version = patchKey.slice(name.length + 1);
+    if (version.length > 0 && Object.hasOwn(pinned, name)) {
+      pinned[name] = version;
+    }
+  }
+  return pinned;
+}
+
 const AzureTrustedSigningOptionsConfig = Config.all({
   publisherName: Config.String("AZURE_TRUSTED_SIGNING_PUBLISHER_NAME"),
   endpoint: Config.String("AZURE_TRUSTED_SIGNING_ENDPOINT"),
@@ -2933,7 +2954,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     version: input.appVersion,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    dependencies: sidecarDependencies,
+    dependencies: pinPatchedDependencyVersions(sidecarDependencies, sidecarPatchedDependencies),
   };
   const sidecarPackageJsonString = yield* encodeJsonString(sidecarPackageJson);
   yield* fs.writeFileString(
@@ -3690,7 +3711,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
     ),
-    dependencies: stageDependencies,
+    dependencies: pinPatchedDependencyVersions(stageDependencies, stagePatchedDependencies),
     devDependencies: {
       electron: electronVersion,
     },

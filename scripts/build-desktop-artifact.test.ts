@@ -21,6 +21,7 @@ import {
   DesktopDmgBackgroundSourceMissingError,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
+  pinPatchedDependencyVersions,
   createBuildConfig,
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
@@ -443,6 +444,26 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         { effect: "4.0.0-beta.73" },
       ),
       {},
+    );
+  });
+
+  it("pins patched dependencies to the version their patch targets", () => {
+    assert.deepStrictEqual(
+      pinPatchedDependencyVersions(
+        { "node-pty": "^1.2.0-beta.15", effect: "4.0.0-beta.73", ws: "^8.0.0" },
+        {
+          "node-pty@1.2.0-beta.15": "patches/node-pty@1.2.0-beta.15.patch",
+          "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
+        },
+      ),
+      { "node-pty": "1.2.0-beta.15", effect: "4.0.0-beta.73", ws: "^8.0.0" },
+    );
+    assert.deepStrictEqual(
+      pinPatchedDependencyVersions(
+        { "@pierre/diffs": "^1.1.0" },
+        { "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch" },
+      ),
+      { "@pierre/diffs": "1.1.20" },
     );
   });
 
