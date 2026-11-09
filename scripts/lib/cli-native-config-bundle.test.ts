@@ -7,12 +7,21 @@ import * as NodeURL from "node:url";
 import { build } from "vite-plus/pack";
 import { expect, it } from "vite-plus/test";
 
-import serverConfig from "../../apps/server/vite.config.ts";
+type PackConfig = Parameters<typeof build>[0];
+
+// Loaded at runtime rather than imported statically: a static import pulls the server's
+// vite config into every tsconfig project that includes scripts/lib (TS6307).
+const loadServerConfig = async () =>
+  (
+    (await import(new URL("../../apps/server/vite.config.ts", import.meta.url).href)) as {
+      readonly default: { readonly pack?: PackConfig | PackConfig[] };
+    }
+  ).default;
 
 it("bundles native configuration editing without runtime parser dependencies", async () => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-native-config-bundle-"));
   try {
-    const pack = serverConfig.pack;
+    const pack = (await loadServerConfig()).pack;
     if (!pack || Array.isArray(pack)) throw new Error("Expected a single server pack config.");
     await build({
       ...pack,
