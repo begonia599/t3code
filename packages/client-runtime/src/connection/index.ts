@@ -23,3 +23,9 @@ export { EnvironmentSupervisor, type EnvironmentSupervisorOptions } from "./supe
 export * as Wakeups from "./wakeups.ts";
 
 export { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
+
+export {
+  createDesktopChannelHostLoop,
+  createDesktopChannelEnvironmentAtoms,
+  createDesktopChannelHostAtom,
+} from "../state/desktopChannel.ts";

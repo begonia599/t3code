@@ -285,6 +285,25 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       };
     },
   },
+  remoteControl: {
+    getHostIdentity: () => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_IDENTITY_CHANNEL),
+    getEnabledEnvironmentIds: () =>
+      ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_GET_ENABLED_CHANNEL),
+    setEnvironmentEnabled: (environmentId, enabled) =>
+      ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_SET_ENABLED_CHANNEL, {
+        environmentId,
+        enabled,
+      }),
+    start: (input) => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_START_CHANNEL, input),
+    next: (input) => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_NEXT_CHANNEL, input),
+    cancel: (input) => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_CANCEL_CHANNEL, input),
+    onEnabledEnvironmentIdsChanged: (listener) => {
+      const handler = (_event: unknown, ids: readonly string[]) => listener(ids);
+      ipcRenderer.on(IpcChannels.REMOTE_CONTROL_ENABLED_CHANGED_CHANNEL, handler);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.REMOTE_CONTROL_ENABLED_CHANGED_CHANNEL, handler);
+    },
+  },
   preview: {
     createTab: (tabId, defaults) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, {

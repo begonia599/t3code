@@ -25,6 +25,10 @@ import { resolveDefaultDesktopUpdateChannel } from "../updates/updateChannels.ts
 import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
 export interface DesktopSettings {
+  readonly remoteControl: {
+    readonly hostId: string;
+    readonly enabledEnvironmentIds: readonly string[];
+  };
   readonly localEnvironmentEnabled: boolean;
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
@@ -74,6 +78,7 @@ export const DEFAULT_MAIN_WINDOW_SIZE = {
 } as const;
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
+  remoteControl: { hostId: "", enabledEnvironmentIds: [] },
   localEnvironmentEnabled: true,
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
@@ -96,6 +101,12 @@ const DesktopWindowBoundsDocument = Schema.Struct({
 });
 
 const DesktopSettingsDocument = Schema.Struct({
+  remoteControl: Schema.optionalKey(
+    Schema.Struct({
+      hostId: Schema.optionalKey(Schema.String.check(Schema.isUUID(4))),
+      enabledEnvironmentIds: Schema.optionalKey(Schema.Array(Schema.String)),
+    }),
+  ),
   localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
@@ -153,6 +164,10 @@ export class DesktopSettingsWriteError extends Schema.TaggedError<DesktopSetting
 export class DesktopAppSettings extends Context.Service<
   DesktopAppSettings,
   {
+    readonly setEnvironmentEnabled: (
+      environmentId: string,
+      enabled: boolean,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly load: Effect.Effect<DesktopSettings>;
     readonly get: Effect.Effect<DesktopSettings>;
     readonly setLocalEnvironmentEnabled: (
@@ -230,6 +245,10 @@ function normalizeDesktopSettingsDocument(
     (parsed.wslBackendEnabled === undefined && parsed.wslMode === "wsl");
 
   return {
+    remoteControl: {
+      hostId: parsed.remoteControl?.hostId ?? "",
+      enabledEnvironmentIds: [...new Set(parsed.remoteControl?.enabledEnvironmentIds ?? [])],
+    },
     localEnvironmentEnabled: parsed.localEnvironmentEnabled !== false,
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
@@ -252,7 +271,7 @@ function toDesktopSettingsDocument(
   settings: DesktopSettings,
   defaults: DesktopSettings,
 ): DesktopSettingsDocument {
-  const document: Mutable<DesktopSettingsDocument> = {};
+  const document: Mutable<DesktopSettingsDocument> = { remoteControl: settings.remoteControl };
 
   if (settings.localEnvironmentEnabled !== defaults.localEnvironmentEnabled) {
     document.localEnvironmentEnabled = settings.localEnvironmentEnabled;
@@ -381,6 +400,24 @@ function setWslOnly(settings: DesktopSettings, enabled: boolean): DesktopSetting
       };
 }
 
+function setEnvironmentEnabled(
+  settings: DesktopSettings,
+  environmentId: string,
+  enabled: boolean,
+): DesktopSettings {
+  const ids = settings.remoteControl.enabledEnvironmentIds;
+  if (ids.includes(environmentId) === enabled) return settings;
+  return {
+    ...settings,
+    remoteControl: {
+      ...settings.remoteControl,
+      enabledEnvironmentIds: enabled
+        ? [...ids, environmentId]
+        : ids.filter((id) => id !== environmentId),
+    },
+  };
+}
+
 function setLocalEnvironmentEnabled(settings: DesktopSettings, enabled: boolean): DesktopSettings {
   return settings.localEnvironmentEnabled === enabled
     ? settings
@@ -473,7 +510,11 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
-  const settingsRef = yield* SynchronizedRef.make(environment.defaultDesktopSettings);
+  const initialHostId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+  const settingsRef = yield* SynchronizedRef.make({
+    ...environment.defaultDesktopSettings,
+    remoteControl: { hostId: initialHostId, enabledEnvironmentIds: [] as readonly string[] },
+  });
 
   const updateInMemory = (update: (settings: DesktopSettings) => DesktopSettings) =>
     SynchronizedRef.modify(settingsRef, (settings) => {
@@ -516,12 +557,23 @@ export const make = Effect.gen(function* () {
 
   return DesktopAppSettings.of({
     get: SynchronizedRef.get(settingsRef),
+    setEnvironmentEnabled: (environmentId, enabled) =>
+      persist((settings) => setEnvironmentEnabled(settings, environmentId, enabled)),
     load: Effect.gen(function* () {
       const settings = yield* readSettings(
         fileSystem,
         environment.desktopSettingsPath,
         environment.appVersion,
       );
+      if (settings.remoteControl.hostId === "") {
+        const current = yield* SynchronizedRef.get(settingsRef);
+        const migrated = {
+          ...settings,
+          remoteControl: { ...settings.remoteControl, hostId: current.remoteControl.hostId },
+        };
+        yield* persist(() => migrated).pipe(Effect.orDie);
+        return migrated;
+      }
       return yield* SynchronizedRef.setAndGet(settingsRef, settings);
     }).pipe(Effect.withSpan("desktop.settings.load")),
     setMainWindowBounds: (bounds, isMaximized) =>
@@ -596,6 +648,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
 
       return DesktopAppSettings.of({
         get: SynchronizedRef.get(settingsRef),
+        setEnvironmentEnabled: (environmentId, enabled) =>
+          update((settings) => setEnvironmentEnabled(settings, environmentId, enabled)),
         load: SynchronizedRef.get(settingsRef),
         setMainWindowBounds: (bounds, isMaximized) =>
           update((settings) => setMainWindowBounds(settings, bounds, isMaximized)),

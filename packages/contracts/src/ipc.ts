@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { DesktopChannelHost, DesktopChannelRequest, DesktopChannelEmit } from "./desktopChannel.ts";
 
 import {
   PreviewAutomationClickInput,
@@ -1121,7 +1122,50 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+export const RemoteControlHostIdentity = Schema.Struct({
+  hostId: DesktopChannelHost.fields.hostId,
+  hostName: DesktopChannelHost.fields.hostName,
+  platform: DesktopChannelHost.fields.platform,
+  appVersion: DesktopChannelHost.fields.appVersion,
+});
+export type RemoteControlHostIdentity = typeof RemoteControlHostIdentity.Type;
+export const RemoteControlStart = Schema.Struct({
+  environmentId: Schema.String,
+  connectionId: TrimmedNonEmptyString,
+  request: DesktopChannelRequest,
+});
+export type RemoteControlStart = typeof RemoteControlStart.Type;
+export const RemoteControlRequestId = Schema.Struct({ requestId: TrimmedNonEmptyString });
+export const RemoteControlEnvironmentEnabled = Schema.Struct({
+  environmentId: TrimmedNonEmptyString,
+  enabled: Schema.Boolean,
+});
+export const RemoteControlNext = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("events"), events: DesktopChannelEmit.fields.events }),
+  Schema.Struct({
+    type: Schema.Literal("result"),
+    ok: Schema.Literal(true),
+    result: Schema.Unknown,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("result"),
+    ok: Schema.Literal(false),
+    error: Schema.Struct({ code: Schema.String, message: Schema.String }),
+  }),
+]);
+export type RemoteControlNext = typeof RemoteControlNext.Type;
+export interface RemoteControlBridge {
+  getHostIdentity(): Promise<RemoteControlHostIdentity>;
+  getEnabledEnvironmentIds(): Promise<readonly string[]>;
+  setEnvironmentEnabled(environmentId: string, enabled: boolean): Promise<void>;
+  onEnabledEnvironmentIdsChanged(listener: (ids: readonly string[]) => void): () => void;
+  start(input: RemoteControlStart): Promise<void>;
+  next(input: { readonly requestId: string }): Promise<RemoteControlNext>;
+  cancel(input: { readonly requestId: string }): Promise<void>;
+}
+
 export interface DesktopBridge {
+  remoteControl: RemoteControlBridge;
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */
   getPathForFile?: (file: File) => string;

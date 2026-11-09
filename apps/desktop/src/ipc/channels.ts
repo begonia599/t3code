@@ -119,3 +119,11 @@ export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input"
 
 export const RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:receive-provider-auth-callback";
 export const CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:cancel-provider-auth-callback";
+
+export const REMOTE_CONTROL_IDENTITY_CHANNEL = "desktop:remote-control-identity";
+export const REMOTE_CONTROL_GET_ENABLED_CHANNEL = "desktop:remote-control-get-enabled";
+export const REMOTE_CONTROL_SET_ENABLED_CHANNEL = "desktop:remote-control-set-enabled";
+export const REMOTE_CONTROL_ENABLED_CHANGED_CHANNEL = "desktop:remote-control-enabled-changed";
+export const REMOTE_CONTROL_START_CHANNEL = "desktop:remote-control-start";
+export const REMOTE_CONTROL_NEXT_CHANNEL = "desktop:remote-control-next";
+export const REMOTE_CONTROL_CANCEL_CHANNEL = "desktop:remote-control-cancel";

@@ -91,6 +91,59 @@ function writeSettingsPatch(patch: typeof DesktopSettingsPatch.Type) {
 }
 
 describe("DesktopSettings", () => {
+  it.effect("creates and persists a stable UUIDv4 and defaults all environments off", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fs = yield* FileSystem.FileSystem;
+        const first = yield* settings.load;
+        assert.match(
+          first.remoteControl.hostId,
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        );
+        assert.deepEqual(first.remoteControl.enabledEnvironmentIds, []);
+        const reloadedService = yield* DesktopAppSettings.make;
+        assert.equal(
+          (yield* reloadedService.load).remoteControl.hostId,
+          first.remoteControl.hostId,
+        );
+        const persisted = yield* fs.readFileString(environment.desktopSettingsPath);
+        assert.include(persisted, first.remoteControl.hostId);
+        assert.deepEqual((yield* settings.load).remoteControl, first.remoteControl);
+        yield* settings.setEnvironmentEnabled("env-a", true);
+        yield* settings.setEnvironmentEnabled("env-b", true);
+        assert.isFalse((yield* settings.setEnvironmentEnabled("env-a", true)).changed);
+        assert.deepEqual((yield* settings.load).remoteControl.enabledEnvironmentIds, [
+          "env-a",
+          "env-b",
+        ]);
+        yield* settings.setEnvironmentEnabled("env-a", false);
+        assert.deepEqual((yield* settings.load).remoteControl, {
+          hostId: first.remoteControl.hostId,
+          enabledEnvironmentIds: ["env-b"],
+        });
+      }),
+    ),
+  );
+  it.effect("migrates an old settings document without losing existing settings", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fs = yield* FileSystem.FileSystem;
+        yield* writeSettingsPatch({ wslBackendEnabled: true });
+        const migrated = yield* settings.load;
+        assert.isTrue(migrated.wslBackendEnabled);
+        assert.isNotEmpty(migrated.remoteControl.hostId);
+        assert.include(
+          yield* fs.readFileString(environment.desktopSettingsPath),
+          migrated.remoteControl.hostId,
+        );
+      }),
+    ),
+  );
+
   it.effect(
     "persists disabling and re-enabling local execution without clearing backend settings",
     () =>
@@ -113,8 +166,14 @@ describe("DesktopSettings", () => {
     withSettings(
       Effect.gen(function* () {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        assert.deepEqual(yield* settings.load, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
-        assert.deepEqual(yield* settings.get, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
+        assert.deepEqual(yield* settings.load, {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          remoteControl: (yield* settings.get).remoteControl,
+        });
+        assert.deepEqual(yield* settings.get, {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          remoteControl: (yield* settings.get).remoteControl,
+        });
       }),
     ),
   );
@@ -123,6 +182,7 @@ describe("DesktopSettings", () => {
     assert.deepEqual(
       DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
       {
+        remoteControl: DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS.remoteControl,
         linuxPasswordStore: "auto",
         localEnvironmentEnabled: true,
         mainWindowBounds: null,
@@ -153,6 +213,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          remoteControl: (yield* settings.get).remoteControl,
           linuxPasswordStore: "gnome-libsecret",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
@@ -237,7 +298,10 @@ describe("DesktopSettings", () => {
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(environment.desktopSettingsPath, "{not-json");
 
-        assert.deepEqual(yield* settings.load, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
+        assert.deepEqual(yield* settings.load, {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          remoteControl: (yield* settings.get).remoteControl,
+        });
       }),
     ),
   );
@@ -261,6 +325,7 @@ describe("DesktopSettings", () => {
         );
 
         assert.deepEqual(yield* settings.load, {
+          remoteControl: (yield* settings.get).remoteControl,
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
@@ -318,6 +383,7 @@ describe("DesktopSettings", () => {
           );
 
           assert.deepEqual(yield* settings.load, {
+            remoteControl: (yield* settings.get).remoteControl,
             linuxPasswordStore: "auto",
             localEnvironmentEnabled: true,
             mainWindowBounds: null,
@@ -367,6 +433,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          remoteControl: (yield* settings.get).remoteControl,
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
@@ -396,6 +463,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          remoteControl: (yield* settings.get).remoteControl,
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
@@ -424,6 +492,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          remoteControl: (yield* settings.get).remoteControl,
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
