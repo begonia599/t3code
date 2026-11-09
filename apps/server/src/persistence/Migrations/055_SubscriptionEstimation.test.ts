@@ -11,13 +11,15 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("subscription schema 
       yield* runMigrations({ toMigrationInclusive: 54 });
       yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, created_at, updated_at)
       VALUES ('existing', 'project', 'Existing conversation', '{"instanceId":"codex","model":"test"}', 'full-access', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`;
-      assert.deepEqual(yield* runMigrations(), [[55, "SubscriptionEstimation"]]);
+      assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 55 }), [
+        [55, "SubscriptionEstimation"],
+      ]);
       assert.equal(
         (yield* sql`SELECT * FROM projection_threads WHERE thread_id='existing'`).length,
         1,
       );
       assert.equal((yield* sql`SELECT * FROM subscription_estimation_samples`).length, 0);
-      assert.deepEqual(yield* runMigrations(), []);
+      assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 55 }), []);
     }),
   );
 });

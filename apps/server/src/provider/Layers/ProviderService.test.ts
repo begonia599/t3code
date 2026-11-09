@@ -5064,19 +5064,25 @@ describe("agent browser access", () => {
   const projectId = ProjectId.make("project-browser-access");
 
   const startSessionWith = (
-    access: boolean | { readonly browser: boolean; readonly device: boolean },
+    access:
+      | boolean
+      | { readonly browser: boolean; readonly device: boolean; readonly win?: boolean },
     threadId: ThreadId,
-    projectOverride?: boolean | { readonly browser?: boolean; readonly device?: boolean },
-    options?: { readonly withoutOrchestration?: boolean },
+    projectOverride?:
+      | boolean
+      | { readonly browser?: boolean; readonly device?: boolean; readonly win?: boolean },
+    options?: { readonly withoutOrchestration?: boolean; readonly driver?: ProviderDriverKind },
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
       const enableAgentDeviceAccess = typeof access === "boolean" ? access : access.device;
+      const enableAgentWinAccess = typeof access === "boolean" ? false : (access.win ?? false);
+      const driver = options?.driver ?? CODEX_DRIVER;
       const issued: Array<{ threadId: ThreadId; capabilities: ReadonlyArray<string> }> = [];
-      const codex = makeFakeCodexAdapter();
+      const codex = makeFakeCodexAdapter(driver);
       const providerAdapterLayer = Layer.succeed(
         ProviderAdapterRegistry.ProviderAdapterRegistry,
-        makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter }),
+        makeStaticInstanceRegistry([[codexInstanceId, codex.adapter]]),
       );
       const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
         Layer.provide(SqlitePersistenceMemory),
@@ -5149,6 +5155,7 @@ describe("agent browser access", () => {
           ServerSettings.ServerSettingsService.layerTest({
             enableAgentBrowserAccess,
             enableAgentDeviceAccess,
+            enableAgentWinAccess,
             projectSettingsOverrides:
               projectOverride === undefined
                 ? {}
@@ -5158,6 +5165,9 @@ describe("agent browser access", () => {
                       [projectId]: {
                         ...(projectOverride.browser !== undefined
                           ? { enableAgentBrowserAccess: projectOverride.browser }
+                          : {}),
+                        ...(projectOverride.win !== undefined
+                          ? { enableAgentWinAccess: projectOverride.win }
                           : {}),
                         ...(projectOverride.device !== undefined
                           ? { enableAgentDeviceAccess: projectOverride.device }
@@ -5179,7 +5189,7 @@ describe("agent browser access", () => {
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
         return yield* provider.startSession(threadId, {
-          provider: CODEX_DRIVER,
+          provider: driver,
           providerInstanceId: codexInstanceId,
           threadId,
           runtimeMode: "full-access",
@@ -5280,6 +5290,45 @@ describe("agent browser access", () => {
       assert.deepEqual(issued, [
         { threadId, capabilities: ["file-downloads", "preview", "pull-requests"] },
       ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+  for (const driver of ["codex", "claudeAgent", "cursor", "grok", "opencode", "antigravity"]) {
+    it.effect(`grants win only to supported adapters (${driver})`, () =>
+      Effect.gen(function* () {
+        const threadId = asThreadId(`win-${driver}`);
+        const issued = yield* startSessionWith(
+          { browser: false, device: false, win: true },
+          threadId,
+          undefined,
+          { driver: ProviderDriverKind.make(driver) },
+        );
+        assert.deepEqual(
+          issued[0]?.capabilities,
+          ["codex", "claudeAgent"].includes(driver)
+            ? ["file-downloads", "pull-requests", "win"]
+            : ["file-downloads", "pull-requests"],
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+  }
+  it.effect("resolves win project overrides independently and denies unresolved projects", () =>
+    Effect.gen(function* () {
+      const access = { browser: false, device: false, win: false };
+      const enabled = yield* startSessionWith(access, asThreadId("win-project-on"), { win: true });
+      assert.deepEqual(enabled[0]?.capabilities, ["file-downloads", "pull-requests", "win"]);
+      const disabled = yield* startSessionWith(
+        { ...access, win: true },
+        asThreadId("win-project-off"),
+        { win: false },
+      );
+      assert.deepEqual(disabled[0]?.capabilities, ["file-downloads", "pull-requests"]);
+      const unresolved = yield* startSessionWith(
+        { ...access, win: true },
+        asThreadId("win-unresolved"),
+        { win: true },
+        { withoutOrchestration: true },
+      );
+      assert.deepEqual(unresolved[0]?.capabilities, ["file-downloads", "pull-requests"]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

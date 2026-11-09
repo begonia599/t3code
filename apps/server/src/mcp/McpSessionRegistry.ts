@@ -3,6 +3,11 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Option from "effect/Option";
+import { ServerConfig } from "../config.ts";
+import { prepareAgentWinEnvironment } from "../desktopChannel/AgentWinShim.ts";
 import * as Layer from "effect/Layer";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/unstable/http";
@@ -47,6 +52,7 @@ interface CredentialRecord {
   readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpInvocationScope;
   readonly lastAliveAt: number;
+  readonly credentialFile?: string;
 }
 
 interface RegistryState {
@@ -56,6 +62,7 @@ interface RegistryState {
 export interface McpSessionRegistryOptions {
   readonly livenessWindowMs?: number;
   readonly now?: () => number;
+  readonly stateDir?: string;
 }
 
 /**
@@ -90,6 +97,25 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   options: McpSessionRegistryOptions = {},
 ) {
   const crypto = yield* Crypto.Crypto;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const config = yield* Effect.serviceOption(ServerConfig);
+  const stateDir = options.stateDir ?? (Option.isSome(config) ? config.value.stateDir : undefined);
+  if (stateDir)
+    yield* fs
+      .remove(path.join(stateDir, "agent-win", "credentials"), { recursive: true, force: true })
+      .pipe(Effect.orDie);
+  const removeFile = (file: string | undefined) =>
+    file
+      ? fs
+          .remove(file, { force: true })
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not remove win credential", { cause }),
+            ),
+          )
+      : Effect.void;
+
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const environmentId = yield* environment.getEnvironmentId;
   const httpServer = yield* HttpServer.HttpServer;
@@ -105,14 +131,19 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       .digest("SHA-256", new TextEncoder().encode(token))
       .pipe(Effect.map(bytesToHex), Effect.orDie);
 
-  const pruneDead = (records: ReadonlyMap<string, CredentialRecord>, timestamp: number) => {
-    const next = new Map(
-      Array.from(records).filter(
-        ([, record]) => timestamp - record.lastAliveAt <= livenessWindowMs,
-      ),
-    );
-    return next.size === records.size ? records : next;
-  };
+  const pruneDead = Effect.fn("McpSessionRegistry.pruneDead")(function* (
+    records: ReadonlyMap<string, CredentialRecord>,
+    timestamp: number,
+  ) {
+    const next = new Map(records);
+    for (const [hash, record] of records) {
+      if (timestamp - record.lastAliveAt > livenessWindowMs) {
+        yield* removeFile(record.credentialFile);
+        next.delete(hash);
+      }
+    }
+    return next;
+  });
 
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
@@ -120,25 +151,62 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
+      const capabilities = new Set<McpInvocationContext.McpCapability>([
+        "pull-requests",
+        "file-downloads",
+        ...request.capabilities,
+      ]);
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set<McpInvocationContext.McpCapability>([
-          "pull-requests",
-          "file-downloads",
-          ...request.capabilities,
-        ]),
+        capabilities,
         issuedAt,
       };
-      yield* SynchronizedRef.update(state, ({ records }) => {
-        const next = new Map(pruneDead(records, issuedAt));
-        next.set(tokenHash, { tokenHash, scope, lastAliveAt: issuedAt });
-        return { records: next };
-      });
+      const agentWinEnvironment =
+        stateDir && scope.capabilities.has("win")
+          ? yield* prepareAgentWinEnvironment({
+              stateDir,
+              sessionId: providerSessionId,
+              endpoint,
+              authorizationHeader: `Bearer ${rawToken}`,
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+              Effect.catch((cause) =>
+                Effect.logWarning(
+                  "Could not prepare win environment; withholding win access for this session",
+                  { cause },
+                ).pipe(
+                  Effect.andThen(
+                    removeFile(
+                      path.join(stateDir, "agent-win", "credentials", `${providerSessionId}.token`),
+                    ),
+                  ),
+                  Effect.as(undefined),
+                ),
+              ),
+            )
+          : undefined;
+      if (stateDir && !agentWinEnvironment) capabilities.delete("win");
+      yield* SynchronizedRef.updateEffect(state, ({ records }) =>
+        Effect.gen(function* () {
+          const next = new Map(yield* pruneDead(records, issuedAt));
+          next.set(tokenHash, {
+            tokenHash,
+            scope,
+            lastAliveAt: issuedAt,
+            ...(agentWinEnvironment
+              ? { credentialFile: agentWinEnvironment.T3_WIN_CREDENTIAL_FILE }
+              : {}),
+          });
+          return { records: next };
+        }),
+      );
       return {
         config: {
+          ...(agentWinEnvironment ? { agentWinEnvironment } : {}),
           environmentId,
           threadId: scope.threadId,
           providerSessionId,
@@ -156,37 +224,50 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
       const timestamp = yield* currentTimeMillis;
-      return yield* SynchronizedRef.modify(state, ({ records }) => {
-        const current = pruneDead(records, timestamp);
-        const record = current.get(tokenHash);
-        if (!record) return [undefined, { records: current }] as const;
-        const next = new Map(current);
-        next.set(tokenHash, { ...record, lastAliveAt: timestamp });
-        return [record.scope, { records: next }] as const;
-      });
+      return yield* SynchronizedRef.modifyEffect(state, ({ records }) =>
+        Effect.gen(function* () {
+          const current = yield* pruneDead(records, timestamp);
+          const record = current.get(tokenHash);
+          if (!record) return [undefined, { records: current }] as const;
+          const next = new Map(current);
+          next.set(tokenHash, { ...record, lastAliveAt: timestamp });
+          return [record.scope, { records: next }] as const;
+        }),
+      );
     },
   );
 
   const touch: McpSessionRegistryShape["touch"] = Effect.fn("McpSessionRegistry.touch")(
     function* (threadId) {
       const timestamp = yield* currentTimeMillis;
-      yield* SynchronizedRef.update(state, ({ records }) => {
-        const current = pruneDead(records, timestamp);
-        const next = new Map(current);
-        for (const [tokenHash, record] of current) {
-          if (record.scope.threadId === threadId) {
-            next.set(tokenHash, { ...record, lastAliveAt: timestamp });
+      yield* SynchronizedRef.updateEffect(state, ({ records }) =>
+        Effect.gen(function* () {
+          const current = yield* pruneDead(records, timestamp);
+          const next = new Map(current);
+          for (const [tokenHash, record] of current) {
+            if (record.scope.threadId === threadId) {
+              next.set(tokenHash, { ...record, lastAliveAt: timestamp });
+            }
           }
-        }
-        return { records: next };
-      });
+          return { records: next };
+        }),
+      );
     },
   );
 
   const revokeWhere = (predicate: (record: CredentialRecord) => boolean) =>
-    SynchronizedRef.update(state, ({ records }) => ({
-      records: new Map(Array.from(records).filter(([, record]) => !predicate(record))),
-    }));
+    SynchronizedRef.updateEffect(state, ({ records }) =>
+      Effect.gen(function* () {
+        const next = new Map(records);
+        for (const [hash, record] of records) {
+          if (predicate(record)) {
+            yield* removeFile(record.credentialFile);
+            next.delete(hash);
+          }
+        }
+        return { records: next };
+      }),
+    );
 
   return McpSessionRegistry.of({
     issue,
@@ -200,7 +281,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     revokeThread: Effect.fn("McpSessionRegistry.revokeThread")(function* (threadId) {
       yield* revokeWhere((record) => record.scope.threadId === threadId);
     }),
-    revokeAll: SynchronizedRef.set(state, { records: new Map() }),
+    revokeAll: revokeWhere(() => true),
   });
 });
 
@@ -215,11 +296,15 @@ const make = Effect.acquireRelease(
     ),
   ),
   (registry) =>
-    Effect.sync(() => {
-      if (activeMcpSessionRegistry === registry) {
-        activeMcpSessionRegistry = undefined;
-      }
-    }),
+    registry.revokeAll.pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          if (activeMcpSessionRegistry === registry) {
+            activeMcpSessionRegistry = undefined;
+          }
+        }),
+      ),
+    ),
 );
 
 export const layer = Layer.effect(McpSessionRegistry, make);

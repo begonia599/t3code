@@ -1,3 +1,4 @@
+import { WIN_AGENT_INSTRUCTIONS } from "../desktopChannel/winAgentInstructions.ts";
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
 import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
@@ -17,12 +18,15 @@ The \`t3-code\` MCP server also exposes \`device_*\` tools for iOS Simulators an
 export interface T3CodeToolAvailability {
   readonly browser: boolean;
   readonly device: boolean;
+  readonly win: boolean;
 }
 
 const normalizeAvailability = (
   availability: boolean | T3CodeToolAvailability,
 ): T3CodeToolAvailability =>
-  typeof availability === "boolean" ? { browser: availability, device: false } : availability;
+  typeof availability === "boolean"
+    ? { browser: availability, device: false, win: false }
+    : availability;
 
 /**
  * Each block is omitted entirely when its tools aren't attached. Describing
@@ -36,6 +40,7 @@ const toolInstructions = (availability: boolean | T3CodeToolAvailability): strin
   return [
     tools.browser ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "",
     tools.device ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS : "",
+    tools.win ? WIN_AGENT_INSTRUCTIONS : "",
   ]
     .filter(Boolean)
     .join("\n\n");

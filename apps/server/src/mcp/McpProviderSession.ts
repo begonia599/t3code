@@ -7,7 +7,7 @@ export interface McpProviderSessionConfig {
   readonly providerInstanceId: ProviderInstanceId;
   readonly endpoint: string;
   readonly authorizationHeader: string;
-  /** Capabilities the credential grants ("preview", "device"). */
+  /** Capabilities the session credential grants, including optional device and win access. */
   readonly capabilities: ReadonlySet<string>;
   /**
    * Set when the session may drive devices. Adapters spread this into the
@@ -15,23 +15,33 @@ export interface McpProviderSessionConfig {
    * already pointed at the server's daemon; the agent never handles a token.
    */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /** The Windows launcher PATH and session credential file, when win access is granted. */
+  readonly agentWinEnvironment?: Readonly<Record<string, string>>;
 }
 
-/** Provider env with the device variables applied over `base`, or `base` untouched. */
+/** Prepends both launcher directories and applies their variables; otherwise returns `base`. */
 export function withAgentDeviceEnvironment(
   base: NodeJS.ProcessEnv,
-  config: Pick<McpProviderSessionConfig, "agentDeviceEnvironment"> | undefined,
+  config:
+    | Pick<McpProviderSessionConfig, "agentDeviceEnvironment" | "agentWinEnvironment">
+    | undefined,
 ): NodeJS.ProcessEnv {
-  const extra = config?.agentDeviceEnvironment;
-  if (!extra) return base;
-  const separator = extra.PATH_SEPARATOR ?? ":";
-  const basePath = base.PATH ?? base.Path;
-  const { PATH: shimDir, PATH_SEPARATOR: _separator, ...rest } = extra;
-  return {
-    ...base,
-    ...rest,
-    ...(shimDir ? { PATH: basePath ? `${shimDir}${separator}${basePath}` : shimDir } : {}),
-  };
+  const extras = [config?.agentDeviceEnvironment, config?.agentWinEnvironment].filter(
+    (extra) => extra !== undefined,
+  );
+  if (!extras.length) return base;
+  const environment = { ...base };
+  const separator =
+    config?.agentWinEnvironment?.PATH_SEPARATOR ??
+    config?.agentDeviceEnvironment?.PATH_SEPARATOR ??
+    ":";
+  for (const extra of extras) {
+    const { PATH: shimDir, PATH_SEPARATOR: _separator, ...rest } = extra;
+    const basePath = environment.PATH ?? environment.Path;
+    Object.assign(environment, rest);
+    if (shimDir) environment.PATH = basePath ? `${shimDir}${separator}${basePath}` : shimDir;
+  }
+  return environment;
 }
 
 const sessionsByThread = new Map<ThreadId, McpProviderSessionConfig>();

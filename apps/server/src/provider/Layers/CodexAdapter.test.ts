@@ -7,6 +7,7 @@ import {
   ApprovalRequestId,
   CodexSettings,
   EventId,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderItemId,
@@ -41,11 +42,15 @@ import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import {
+  buildTurnStartParams,
+  configuredMcpToolAvailability,
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { WIN_AGENT_INSTRUCTIONS } from "../../desktopChannel/winAgentInstructions.ts";
 import { makeCodexAdapter } from "./CodexAdapter.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
@@ -3252,3 +3257,80 @@ it.effect("managed turn failures preserve the sharing-limit code for client noti
     if (events[1]?.type === "turn.completed") NodeAssert.equal(events[1].payload.state, "failed");
   }).pipe(Effect.provide(layer));
 });
+
+for (const enabled of [false, true]) {
+  it.effect(`injects win environment and instructions only when prepared (${enabled})`, () => {
+    const factory = makeRuntimeFactory();
+    const layer = Layer.effect(
+      CodexAdapter,
+      makeCodexAdapter(decodeCodexSettings({}), {
+        environment: { PATH: "/provider", PROVIDER_KEY: "fixture" },
+        makeRuntime: factory.factory,
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const threadId = asThreadId(`win-codex-${enabled}`);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+        );
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("win-env"),
+          threadId,
+          providerSessionId: "win-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          endpoint: "http://127.0.0.1/mcp",
+          authorizationHeader: "Bearer fixture",
+          capabilities: new Set(enabled ? ["device", "win"] : []),
+          ...(enabled
+            ? {
+                agentDeviceEnvironment: { PATH: "/device" },
+                agentWinEnvironment: {
+                  PATH: "/win",
+                  T3_WIN_ENDPOINT: "http://127.0.0.1/agent-win/v1",
+                  T3_WIN_CREDENTIAL_FILE: "/win.token",
+                },
+              }
+            : {}),
+        });
+        const adapter = yield* CodexAdapter;
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("codex"),
+          runtimeMode: "full-access",
+        });
+        const options = factory.lastRuntime!.options;
+        NodeAssert.equal(
+          options.environment?.PATH,
+          enabled ? "/win:/device:/provider" : "/provider",
+        );
+        NodeAssert.equal(
+          options.environment?.T3_WIN_CREDENTIAL_FILE,
+          enabled ? "/win.token" : undefined,
+        );
+        NodeAssert.equal(
+          options.appServerArgs?.some((arg) => arg.includes("developer_instructions")),
+          false,
+        );
+        const params = yield* buildTurnStartParams({
+          threadId: "win-provider-thread",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          browserToolsAvailable: configuredMcpToolAvailability(
+            options.appServerArgs,
+            options.mcpCapabilities,
+          ),
+        });
+        NodeAssert.equal(
+          params.additionalContext?.t3_code_tools?.value.includes(WIN_AGENT_INSTRUCTIONS) ?? false,
+          enabled,
+        );
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+}

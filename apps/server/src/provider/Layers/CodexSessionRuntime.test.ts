@@ -1,3 +1,4 @@
+import { WIN_AGENT_INSTRUCTIONS } from "../../desktopChannel/winAgentInstructions.ts";
 import * as NodeAssert from "node:assert/strict";
 
 import { it } from "@effect/vitest";
@@ -16,6 +17,7 @@ import {
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
+  configuredMcpToolAvailability,
   describeMcpElicitation,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
@@ -628,7 +630,11 @@ describe("buildCodexAdditionalContext", () => {
   });
 
   it("keeps every entry under Codex's 1,000 token cap per entry", () => {
-    const context = buildCodexAdditionalContext(runtime, { browser: true, device: true });
+    const context = buildCodexAdditionalContext(runtime, {
+      browser: true,
+      device: true,
+      win: true,
+    });
     for (const entry of Object.values(context)) {
       // Codex estimates 4 bytes per token and truncates the middle of longer values.
       NodeAssert.ok(Buffer.byteLength(entry.value) < 4_000);
@@ -650,8 +656,8 @@ describe("T3 tool instructions", () => {
 
   it("describes device tools only when the credential grants them", () => {
     const tools =
-      buildCodexAdditionalContext(runtime, { browser: false, device: true }).t3_code_tools?.value ??
-      "";
+      buildCodexAdditionalContext(runtime, { browser: false, device: true, win: false })
+        .t3_code_tools?.value ?? "";
     NodeAssert.match(tools, /device_open/);
     NodeAssert.doesNotMatch(tools, /preview_open/);
   });
@@ -1095,6 +1101,54 @@ describe("openCodexThread", () => {
 
       NodeAssert.ok(isCodexAppServerRequestError(error));
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
+    }),
+  );
+});
+
+describe("win tool instructions on turn/start", () => {
+  for (const mode of ["default", "plan"] as const) {
+    for (const capabilities of [
+      undefined,
+      new Set<string>(),
+      new Set(["device"]),
+      new Set(["win"]),
+      new Set(["preview", "device", "win"]),
+    ]) {
+      it.effect(
+        `uses additionalContext in ${mode} with capabilities ${[...(capabilities ?? [])].join(",") || "none"}`,
+        () =>
+          Effect.gen(function* () {
+            const params = yield* buildTurnStartParams({
+              threadId: "win-thread",
+              runtimeMode: "full-access",
+              interactionMode: mode,
+              browserToolsAvailable: configuredMcpToolAvailability(
+                ["-c", "mcp_servers.t3-code.url=http://localhost/mcp"],
+                capabilities,
+              ),
+            });
+            NodeAssert.equal(
+              params.additionalContext?.t3_code_tools?.value.includes(WIN_AGENT_INSTRUCTIONS) ??
+                false,
+              capabilities?.has("win") ?? false,
+            );
+            NodeAssert.equal(
+              params.collaborationMode?.settings.developer_instructions,
+              buildCodexDeveloperInstructions(mode),
+            );
+          }),
+      );
+    }
+  }
+  it.effect("does not advertise win without an attached MCP server", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "win-thread",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        browserToolsAvailable: configuredMcpToolAvailability(undefined, new Set(["win"])),
+      });
+      NodeAssert.equal(params.additionalContext?.t3_code_tools, undefined);
     }),
   );
 });

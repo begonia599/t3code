@@ -1,3 +1,4 @@
+import * as WinGateway from "../desktopChannel/WinGateway.ts";
 import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -676,6 +677,7 @@ const McpTransportLive = McpServer.layerHttp({
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
 export const layer = Layer.mergeAll(
+  WinGateway.routes,
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   FileDownloadsToolkitRegistrationLive,

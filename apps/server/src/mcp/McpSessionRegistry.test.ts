@@ -1,6 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as PlatformError from "effect/PlatformError";
+import * as Logger from "effect/Logger";
+import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 import * as NetAddress from "effect/unstable/net/NetAddress";
@@ -20,10 +23,11 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getDescriptor: Effect.die("unused"),
 });
 
-const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
+const makeRegistry = (now: () => number, httpServer = fakeHttpServer, stateDir?: string) =>
   McpSessionRegistry.__testing
     .make({
       now,
+      ...(stateDir ? { stateDir } : {}),
       livenessWindowMs: 100,
     })
     .pipe(
@@ -172,4 +176,135 @@ it.effect("does not keep credentials of other threads alive", () =>
 
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
+);
+
+for (const revoke of ["thread", "provider", "all", "expiry", "startup"] as const) {
+  it.effect(`removes win credentials on ${revoke}`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-win-credentials-" });
+        let timestamp = 1000;
+        const registry = yield* makeRegistry(() => timestamp, fakeHttpServer, stateDir);
+        const issued = yield* registry.issue({
+          threadId: ThreadId.make("win-thread"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: new Set(["win"]),
+        });
+        const env = issued.config.agentWinEnvironment!;
+        const file = env.T3_WIN_CREDENTIAL_FILE!;
+        expect(env.T3_WIN_ENDPOINT).toBe("http://127.0.0.1:43123/agent-win/v1");
+        expect(env.PATH).toBe(`${stateDir}/agent-win/bin`);
+        expect(yield* fs.readFileString(file)).toBe(issued.config.authorizationHeader.slice(7));
+        expect((yield* fs.stat(file)).mode & 0o777).toBe(0o600);
+        expect((yield* fs.stat(`${stateDir}/agent-win/credentials`)).mode & 0o777).toBe(0o700);
+        if (revoke === "thread") yield* registry.revokeThread(issued.config.threadId);
+        if (revoke === "provider")
+          yield* registry.revokeProviderSession(issued.config.providerSessionId);
+        if (revoke === "all") yield* registry.revokeAll;
+        if (revoke === "expiry") {
+          timestamp += 101;
+          expect(
+            yield* registry.resolve(issued.config.authorizationHeader.slice(7)),
+          ).toBeUndefined();
+        }
+        if (revoke === "startup") {
+          yield* fs.makeDirectory(`${stateDir}/agent-win/credentials/stale`);
+          yield* fs.writeFileString(`${stateDir}/agent-win/credentials/stale/nested.token`, "old");
+          yield* makeRegistry(() => timestamp, fakeHttpServer, stateDir);
+          expect(yield* fs.exists(`${stateDir}/agent-win/credentials`)).toBe(false);
+        }
+        expect(yield* fs.exists(file)).toBe(false);
+        if (revoke !== "startup")
+          expect(
+            yield* registry.resolve(issued.config.authorizationHeader.slice(7)),
+          ).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect("leaves the existing session environment unchanged with win disabled", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-no-win-" });
+      const registry = yield* makeRegistry(() => 1000, fakeHttpServer, stateDir);
+      const issued = yield* registry.issue({
+        threadId: ThreadId.make("no-win"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(),
+      });
+      expect(issued.config.agentWinEnvironment).toBeUndefined();
+      expect(yield* fs.exists(`${stateDir}/agent-win`)).toBe(false);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps other capabilities and the credential when win credential writes fail", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-win-failed-" });
+      const warnings: unknown[] = [];
+      const failingFs = FileSystem.FileSystem.of({
+        ...fs,
+        writeFileString: (file, content, options) =>
+          fs.writeFileString(file, content, options).pipe(
+            Effect.andThen(
+              file.endsWith(".token")
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "writeFileString",
+                      pathOrDescriptor: file,
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
+      });
+      const registry = yield* McpSessionRegistry.__testing
+        .make({ stateDir, now: () => 1000 })
+        .pipe(
+          Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
+          Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
+          Effect.provideService(FileSystem.FileSystem, failingFs),
+        );
+      const issued = yield* registry
+        .issue({
+          threadId: ThreadId.make("win-failed"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: new Set(["preview", "device", "win"]),
+        })
+        .pipe(
+          Effect.provideService(
+            Logger.CurrentLoggers,
+            new Set([
+              Logger.make(({ message }) => {
+                warnings.push(message);
+              }),
+            ]),
+          ),
+        );
+      expect(issued.config.agentWinEnvironment).toBeUndefined();
+      expect([...issued.config.capabilities].sort()).toEqual([
+        "device",
+        "file-downloads",
+        "preview",
+        "pull-requests",
+      ]);
+      const resolved = yield* registry.resolve(issued.config.authorizationHeader.slice(7));
+      expect(resolved?.threadId).toBe("win-failed");
+      expect([...resolved!.capabilities].sort()).toEqual([
+        "device",
+        "file-downloads",
+        "preview",
+        "pull-requests",
+      ]);
+      expect(yield* fs.readDirectory(`${stateDir}/agent-win/credentials`)).toEqual([]);
+      expect(warnings).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );
