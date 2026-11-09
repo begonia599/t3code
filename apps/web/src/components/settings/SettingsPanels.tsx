@@ -647,6 +647,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
         ? ["Agent browser access"]
         : []),
+      ...(settings.enableAgentWinAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentWinAccess
+        ? ["Agent Windows access"]
+        : []),
     ],
     [
       isTextGenerationModelDirty,
@@ -663,6 +666,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffColorScheme,
       settings.chatWidth,
       settings.enableAgentBrowserAccess,
+      settings.enableAgentWinAccess,
       settings.confirmQuit,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
@@ -835,6 +839,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       // name, so a user restoring defaults is told the agent regains access
       // rather than discovering it later.
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
+      // Off by default, so restoring defaults can only revoke Windows access.
+      enableAgentWinAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentWinAccess,
     });
     onRestored?.();
   }, [

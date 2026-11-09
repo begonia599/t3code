@@ -878,4 +878,105 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Preparing worktree": "正在准备工作树",
   "Queue message": "消息排队",
   "Send message": "发送消息",
+  // Remote control
+  "Remote control": "远程操作",
+  "Remote control activity": "远程操作记录",
+  "Agent Windows access": "智能体 Windows 权限",
+  "Allow agents in this project to run commands on a connected Windows computer with the win command. Applies when the agent session next starts.":
+    "允许此项目中的智能体通过 win 命令在已连接的 Windows 电脑上运行命令。下次启动智能体会话时生效。",
+  "Allow agents to run commands on a connected Windows computer with the win command. Applies when the agent session next starts. Projects can override it.":
+    "允许智能体通过 win 命令在已连接的 Windows 电脑上运行命令。下次启动智能体会话时生效，项目可以单独设置。",
+  "Update the desktop app to let agents run commands on this computer.":
+    "请先更新桌面版，才能让智能体在这台电脑上运行命令。",
+  "Only available in the desktop app.": "仅桌面版可用。",
+  "Running commands is only supported on Windows.": "只有 Windows 桌面版支持运行命令。",
+  "This computer": "这台电脑",
+  "Choose which servers may run commands here, and in which folders.":
+    "选择哪些服务器可以在这里运行命令，以及可以在哪些目录中运行。",
+  "Allowed servers": "允许的服务器",
+  "Servers turned on here can send commands to this computer. Each thread still asks before its first command.":
+    "在这里开启的服务器可以向这台电脑发送命令。每个会话第一次运行命令前仍会先询问。",
+  "Servers see this computer as": "服务器看到的本机名称：",
+  "Disconnect all": "全部断开",
+  "Remote control turned off": "已关闭远程操作",
+  "Running commands were stopped and waiting requests denied.":
+    "正在运行的命令已停止，待处理的请求已拒绝。",
+  "Couldn't turn off remote control": "无法关闭远程操作",
+  "Couldn't change remote control": "无法更改远程操作设置",
+  "Add a server under Connections first.": "请先在“连接”中添加服务器。",
+  "Agent Windows access is off by default on this server": "该服务器默认未开启智能体 Windows 权限",
+  "Accept commands from {server}": "接受来自 {server} 的命令",
+  Connected: "已连接",
+  Available: "可用",
+  Offline: "离线",
+  "Connecting...": "正在连接…",
+  "Reconnecting...": "正在重新连接…",
+  "Connection failed": "连接失败",
+  "Client not supported": "客户端版本不受支持",
+  "Ask for every command": "每条命令都询问",
+  "Approve each command on its own instead of once per thread.":
+    "逐条确认命令，而不是每个会话只确认一次。",
+  "Couldn't save": "无法保存",
+  "Allowed folders": "允许的目录",
+  "Commands only run inside these folders and their subfolders. Folders in path mappings are allowed too.":
+    "命令只能在这些目录及其子目录中运行。路径映射里的本机目录也算在内。",
+  "No folders yet. Commands can't run until you add one.":
+    "还没有目录。添加目录之前，命令都无法运行。",
+  "Folder to allow": "要允许的目录",
+  "Add folder": "添加目录",
+  "Remove folder": "移除目录",
+  "Enter a full Windows path, such as D:\\Projects.":
+    "请输入完整的 Windows 路径，例如 D:\\Projects。",
+  "Path mappings": "路径映射",
+  "Match folders on a server to folders here, so a command runs in the same project the agent is working in.":
+    "把服务器上的目录对应到本机目录，命令就会在智能体正在处理的同一个项目里运行。",
+  "No mappings. Agents must pass --cwd with a Windows folder.":
+    "还没有映射。智能体需要用 --cwd 指定 Windows 目录。",
+  "The server path must be absolute, such as /home/dev/project.":
+    "服务器路径必须是绝对路径，例如 /home/dev/project。",
+  "Server path": "服务器路径",
+  "Windows path": "Windows 路径",
+  "Mutagen session (optional)": "Mutagen 会话（可选）",
+  Sync: "同步",
+  "Add mapping": "添加映射",
+  "Remove mapping": "移除映射",
+  "Allowed threads": "已授权的会话",
+  "Threads that may run commands without asking. Permission lapses after 7 days without use.":
+    "这些会话运行命令时不再询问。闲置 7 天后授权自动失效。",
+  "No threads are allowed right now.": "目前没有已授权的会话。",
+  "Last used {time}": "上次使用 {time}",
+  Revoke: "撤销",
+  "Couldn't revoke": "无法撤销",
+  "Recent activity": "最近记录",
+  "The last {count} commands agents ran or tried to run here, including denied ones.":
+    "智能体最近在这里运行或尝试运行的 {count} 条命令，包括被拒绝的。",
+  "Nothing has run yet.": "还没有运行过命令。",
+  "Exit 0": "退出码 0",
+  "Exit {code}": "退出码 {code}",
+  "Timed out": "已超时",
+  Cancelled: "已取消",
+  Error: "出错",
+  "Run a command on this computer?": "要在这台电脑上运行命令吗？",
+  "An agent on {server} wants to run a command here.":
+    "{server} 上的智能体请求在这台电脑上运行命令。",
+  "a server": "某个服务器",
+  "{count} waiting": "{count} 个待处理",
+  Thread: "会话",
+  "Not in a thread": "不属于任何会话",
+  Agent: "智能体",
+  Folder: "目录",
+  Command: "命令",
+  "PowerShell script": "PowerShell 脚本",
+  "{count} commands from this thread are waiting on this answer.":
+    "这个会话有 {count} 条命令在等这次答复。",
+  "Strict mode is on, so every command asks first. Denying also blocks this thread for 10 minutes.":
+    "已开启严格模式，每条命令都会先询问。拒绝后，该会话 10 分钟内的命令都会被直接拒绝。",
+  "Allowing for this thread skips this question until the thread is idle for 7 days. Denying also blocks this thread for 10 minutes.":
+    "允许此会话后不再询问，直到该会话闲置满 7 天。拒绝后，该会话 10 分钟内的命令都会被直接拒绝。",
+  "This request has no thread, so it can only be allowed once.":
+    "这个请求不属于任何会话，只能允许这一次。",
+  "Expires in {time}": "{time} 后失效",
+  Deny: "拒绝",
+  "Allow once": "仅允许这一次",
+  "Allow for this thread": "允许此会话",
 };
