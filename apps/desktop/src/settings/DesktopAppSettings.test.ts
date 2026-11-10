@@ -25,6 +25,7 @@ const DesktopSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
@@ -195,7 +196,9 @@ describe("DesktopSettings", () => {
           assert.isFalse((yield* settings.load).localEnvironmentEnabled);
 
           assert.isTrue((yield* settings.setLocalEnvironmentEnabled(true)).changed);
-          const persisted = JSON.parse(yield* fs.readFileString(environment.desktopSettingsPath));
+          const persisted = yield* decodeDesktopSettingsPatch(
+            yield* fs.readFileString(environment.desktopSettingsPath),
+          );
           assert.strictEqual(persisted.localEnvironmentEnabled, true);
           assert.isTrue((yield* settings.load).localEnvironmentEnabled);
 
