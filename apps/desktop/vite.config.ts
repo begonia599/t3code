@@ -18,6 +18,9 @@ const publicConfigDefine = {
   __T3CODE_BUILD_DISABLE_AUTO_UPDATE__: JSON.stringify(
     repoEnv.T3CODE_BUILD_DISABLE_AUTO_UPDATE === "1",
   ),
+  __T3CODE_BUILD_LOCAL_ENVIRONMENT_DEFAULT_OFF__: JSON.stringify(
+    repoEnv.T3CODE_BUILD_LOCAL_ENVIRONMENT_DEFAULT_OFF === "1",
+  ),
   __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
     repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
   ),

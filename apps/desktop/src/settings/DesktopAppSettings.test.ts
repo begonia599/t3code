@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { afterEach, vi } from "vite-plus/test";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -179,6 +180,35 @@ describe("DesktopSettings", () => {
       }),
     ),
   );
+
+  describe("builds that default the local environment off", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it.effect("start without it and persist an explicit opt-in", () => {
+      vi.stubGlobal("__T3CODE_BUILD_LOCAL_ENVIRONMENT_DEFAULT_OFF__", true);
+      return withSettings(
+        Effect.gen(function* () {
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fs = yield* FileSystem.FileSystem;
+          assert.isFalse((yield* settings.get).localEnvironmentEnabled);
+          assert.isFalse((yield* settings.load).localEnvironmentEnabled);
+
+          assert.isTrue((yield* settings.setLocalEnvironmentEnabled(true)).changed);
+          const persisted = JSON.parse(yield* fs.readFileString(environment.desktopSettingsPath));
+          assert.strictEqual(persisted.localEnvironmentEnabled, true);
+          assert.isTrue((yield* settings.load).localEnvironmentEnabled);
+
+          yield* settings.setLocalEnvironmentEnabled(false);
+          assert.notInclude(
+            yield* fs.readFileString(environment.desktopSettingsPath),
+            "localEnvironmentEnabled",
+          );
+          assert.isFalse((yield* settings.load).localEnvironmentEnabled);
+        }),
+      );
+    });
+  });
 
   it("defaults packaged nightly builds to the nightly update channel", () => {
     assert.deepEqual(

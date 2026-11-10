@@ -20,6 +20,7 @@ jobs:
     env:
       NODE_OPTIONS: --max-old-space-size=8192
       T3CODE_BUILD_DISABLE_AUTO_UPDATE: "1"
+      T3CODE_BUILD_LOCAL_ENVIRONMENT_DEFAULT_OFF: "1"
       T3CODE_DESKTOP_SIGNED: "false"
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:

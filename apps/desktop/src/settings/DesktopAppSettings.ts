@@ -228,9 +228,17 @@ export class DesktopAppSettings extends Context.Service<
   }
 >()("@t3tools/desktop/settings/DesktopAppSettings") {}
 
+declare const __T3CODE_BUILD_LOCAL_ENVIRONMENT_DEFAULT_OFF__: boolean | undefined;
+
 export function resolveDefaultDesktopSettings(appVersion: string): DesktopSettings {
   return {
     ...DEFAULT_DESKTOP_SETTINGS,
+    // Builds made only to reach remote environments start without the local
+    // backend, so agents never run here unless the user turns it on.
+    localEnvironmentEnabled: !(
+      typeof __T3CODE_BUILD_LOCAL_ENVIRONMENT_DEFAULT_OFF__ !== "undefined" &&
+      __T3CODE_BUILD_LOCAL_ENVIRONMENT_DEFAULT_OFF__
+    ),
     updateChannel: resolveDefaultDesktopUpdateChannel(appVersion),
   };
 }
@@ -277,7 +285,8 @@ function normalizeDesktopSettingsDocument(
       strictMode: false,
       ...normalizeRemoteControlConfig(parsed.remoteControl ?? {}),
     },
-    localEnvironmentEnabled: parsed.localEnvironmentEnabled !== false,
+    localEnvironmentEnabled:
+      parsed.localEnvironmentEnabled ?? defaultSettings.localEnvironmentEnabled,
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
