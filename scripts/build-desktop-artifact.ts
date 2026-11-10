@@ -1065,6 +1065,46 @@ export const WSL_RUNTIME_EXTRA_RESOURCES = [
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
 ] as const;
+export const MUTAGEN_EXTRA_RESOURCES = [
+  {
+    from: "apps/desktop/prod-resources/mutagen",
+    to: "mutagen",
+    filter: ["mutagen.exe", "ssh.exe", "scp.exe"],
+  },
+] as const;
+
+const bundleMutagen = (platform: typeof BuildPlatform.Type) =>
+  platform === "win"
+    ? Config.Boolean("T3CODE_BUILD_BUNDLE_MUTAGEN").pipe(Config.withDefault(false))
+    : Effect.succeed(false);
+
+export class MutagenResourceMissingError extends Schema.TaggedError<MutagenResourceMissingError>()(
+  "MutagenResourceMissingError",
+  { path: Schema.String },
+) {}
+
+/** CI prepares pinned, verified executables; ordinary local builds opt out. */
+export const stageMutagen = Effect.fn("stageMutagen")(function* (input: {
+  repoRoot: string;
+  stageResourcesDir: string;
+  platform: typeof BuildPlatform.Type;
+}) {
+  if (!(yield* bundleMutagen(input.platform))) return;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const source = path.join(input.repoRoot, "apps/desktop/prod-resources/mutagen");
+  const destination = path.join(input.stageResourcesDir, "mutagen");
+  for (const name of MUTAGEN_EXTRA_RESOURCES[0].filter) {
+    const file = path.join(source, name);
+    const info = yield* fs.stat(file).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "File")
+      return yield* new MutagenResourceMissingError({ path: file });
+  }
+  yield* fs.makeDirectory(destination, { recursive: true });
+  for (const name of MUTAGEN_EXTRA_RESOURCES[0].filter)
+    yield* fs.copyFile(path.join(source, name), path.join(destination, name));
+});
+
 export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
@@ -2683,6 +2723,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...((yield* bundleMutagen(platform)) ? MUTAGEN_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
@@ -3593,6 +3634,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   if (options.platform !== "win") {
     yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
   }
+  yield* stageMutagen({ repoRoot, stageResourcesDir, platform: options.platform });
   yield* stageResourceMonitor({
     repoRoot,
     stageResourcesDir,

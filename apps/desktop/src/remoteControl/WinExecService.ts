@@ -22,6 +22,7 @@ import {
   type DesktopExecLogEntry,
   type DesktopChannelCapabilities,
 } from "@t3tools/contracts";
+import { SyncEnvironment } from "../sync/SyncEnvironment.ts";
 import { DesktopEnvironment } from "../app/DesktopEnvironment.ts";
 import { DesktopAppSettings, type DesktopSettings } from "../settings/DesktopAppSettings.ts";
 import { RemoteControlStore } from "./RemoteControlStore.ts";
@@ -264,6 +265,7 @@ export function createWinExecService(options: {
   store: RemoteControlStore["Service"];
   /** Allows Linux tests to run the same execution pipeline against a real temporary directory. */
   localDirectory?: (winCwd: string) => string;
+  syncEnvironment?: (environmentId: string) => Promise<Readonly<Record<string, string>>>;
 }) {
   let active = 0;
   const queue: Array<() => void> = [];
@@ -378,7 +380,10 @@ export function createWinExecService(options: {
       await acquire(signal, emit);
       acquired = true;
       if (signal.aborted) throw fail("CANCELLED");
-      const env = mergedEnvironment(input.env, options.platform);
+      const env = mergedEnvironment(
+        { ...input.env, ...(await options.syncEnvironment?.(environmentId)) },
+        options.platform,
+      );
       if (resolved.mapping?.syncSession && !input.noSync) {
         const session = resolved.mapping.syncSession;
         await progress(emit, { type: "syncing", session });
@@ -548,11 +553,13 @@ export const layer = Layer.effect(
     const environment = yield* DesktopEnvironment;
     const settings = yield* DesktopAppSettings;
     const store = yield* RemoteControlStore;
+    const sync = yield* SyncEnvironment;
     const run = Effect.runPromiseWith(yield* Effect.context<never>());
     const service = createWinExecService({
       platform: environment.platform,
       getConfig: async () => (await run(settings.get)).remoteControl,
       store,
+      syncEnvironment: sync.environment,
     });
     yield* Effect.addFinalizer(() => Effect.promise(() => service.disconnectAll()));
     return service;

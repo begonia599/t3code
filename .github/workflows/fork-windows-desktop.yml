@@ -18,6 +18,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     env:
+      T3CODE_BUILD_BUNDLE_MUTAGEN: "1"
       NODE_OPTIONS: --max-old-space-size=8192
       T3CODE_BUILD_DISABLE_AUTO_UPDATE: "1"
       T3CODE_BUILD_LOCAL_ENVIRONMENT_DEFAULT_OFF: "1"
@@ -44,6 +45,40 @@ jobs:
           node-version-file: package.json
           cache: false
           run-install: false
+
+      - name: Setup Go
+        uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
+        with:
+          go-version: "1.27.3"
+          cache: false
+
+      - name: Prepare Mutagen and native SSH shims
+        shell: pwsh
+        env:
+          GOTOOLCHAIN: local
+          GOFLAGS: -buildvcs=false
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          $ErrorActionPreference = "Stop"
+          $destination = Join-Path $env:GITHUB_WORKSPACE "apps/desktop/prod-resources/mutagen"
+          New-Item -ItemType Directory -Force $destination | Out-Null
+          go -C native/sync-ssh-shim build -trimpath -o "$destination/ssh.exe" .
+          if ($LASTEXITCODE -ne 0) { throw "SSH shim compilation failed" }
+          Copy-Item "$destination/ssh.exe" "$destination/scp.exe"
+          $archive = Join-Path $env:RUNNER_TEMP "mutagen.zip"
+          Invoke-WebRequest "https://github.com/mutagen-io/mutagen/releases/download/v0.18.1/mutagen_windows_amd64_v0.18.1.zip" -OutFile $archive
+          $expected = "76f8223d5e6b607efdd9516473669ae5492e4f142887352d59bc6934d1f07a2d"
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+            throw "Mutagen archive SHA256 mismatch"
+          }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+          try {
+            $entry = $zip.GetEntry("mutagen.exe")
+            if ($null -eq $entry) { throw "mutagen.exe missing from verified archive" }
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, "$destination/mutagen.exe", $true)
+          } finally { $zip.Dispose() }
 
       # Also install web dependencies: this job builds the JS bundle locally.
       - name: Install build dependencies

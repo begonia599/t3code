@@ -49,6 +49,9 @@ let store: Awaited<ReturnType<typeof createRemoteControlStore>>;
 let service: ReturnType<typeof createWinExecService>;
 let config: DesktopSettings["remoteControl"];
 let counter = 0;
+let syncEnvironment:
+  | ((environmentId: string) => Promise<Readonly<Record<string, string>>>)
+  | undefined;
 // Restricted Linux sandboxes can make uv_guess_handle classify pipe sockets as
 // UNKNOWN, so Node replaces process.stdout with a no-op Writable. File-descriptor
 // streams exercise real pipe backpressure without relying on that classification.
@@ -107,8 +110,10 @@ beforeEach(async () => {
     store,
     getConfig: async () => config,
     localDirectory: () => dir,
+    syncEnvironment: (id) => syncEnvironment?.(id) ?? Promise.resolve({}),
   });
   children.length = 0;
+  syncEnvironment = undefined;
 });
 afterEach(async () => {
   await service.disconnectAll();
@@ -447,4 +452,30 @@ it("writes PowerShell as BOM UTF-8 with the encoding prelude, cleans up and cach
   } finally {
     vi.unstubAllEnvs();
   }
+});
+
+it("injects only public sync variables for the requesting environment", async () => {
+  const seen: string[] = [];
+  syncEnvironment = async (environmentId) => {
+    seen.push(environmentId);
+    return {
+      T3_MUTAGEN_EXE: "/isolated/mutagen",
+      T3_MUTAGEN_DATA_DIRECTORY: "/isolated/data",
+      T3_SYNC_HOST: "t3-requester",
+    };
+  };
+  let output = "";
+  const script =
+    'process.stdout.write([process.env.T3_MUTAGEN_EXE,process.env.T3_MUTAGEN_DATA_DIRECTORY,process.env.T3_SYNC_HOST,process.env.T3_SYNC_RELAY_TOKEN,process.env.MUTAGEN_SSH_PATH,process.env.MUTAGEN_DATA_DIRECTORY].join("|"))';
+  await execute(script, async (event) => {
+    if (event.kind === "stdout") output += event.data;
+  });
+  expect(seen).toEqual(["env"]);
+  expect(output).toBe("/isolated/mutagen|/isolated/data|t3-requester|||");
+  syncEnvironment = undefined;
+  output = "";
+  await execute(script, async (event) => {
+    if (event.kind === "stdout") output += event.data;
+  });
+  expect(output).toBe("|||||");
 });

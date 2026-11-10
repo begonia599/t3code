@@ -65,6 +65,9 @@ import {
   stageLinuxIconSize,
   stageDesktopDmgBackground,
   stageResourceMonitor,
+  stageMutagen,
+  MutagenResourceMissingError,
+  MUTAGEN_EXTRA_RESOURCES,
   stageLinuxCaptureHelper,
   stageWslRuntimeArchive,
   bundlesWslRuntime,
@@ -862,6 +865,56 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         );
       }),
     ),
+  );
+
+  it.effect(
+    "only stages explicitly enabled Mutagen executables and fails on missing resources",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mutagen-stage-" });
+          const stageResourcesDir = path.join(repoRoot, "stage");
+          const input = { repoRoot, stageResourcesDir, platform: "win" as const };
+          const config = (enabled: boolean) =>
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({ env: { T3CODE_BUILD_BUNDLE_MUTAGEN: enabled ? "1" : "0" } }),
+            );
+          yield* stageMutagen(input).pipe(Effect.provide(config(false)));
+          assert.isFalse(yield* fs.exists(stageResourcesDir));
+          const error = yield* stageMutagen(input).pipe(Effect.provide(config(true)), Effect.flip);
+          assert.instanceOf(error, MutagenResourceMissingError);
+          const source = path.join(repoRoot, "apps/desktop/prod-resources/mutagen");
+          yield* fs.makeDirectory(source, { recursive: true });
+          for (const name of ["mutagen.exe", "ssh.exe", "scp.exe", "mutagen-agents.tar.gz"])
+            yield* fs.writeFileString(path.join(source, name), name);
+          yield* stageMutagen(input).pipe(Effect.provide(config(true)));
+          assert.deepStrictEqual(
+            (yield* fs.readDirectory(path.join(stageResourcesDir, "mutagen"))).toSorted(),
+            ["mutagen.exe", "scp.exe", "ssh.exe"],
+          );
+          assert.equal(
+            yield* fs.readFileString(path.join(stageResourcesDir, "mutagen/ssh.exe")),
+            "ssh.exe",
+          );
+          const build = yield* createBuildConfig(
+            "win",
+            "nsis",
+            "0.0.1",
+            false,
+            false,
+            undefined,
+            undefined,
+          ).pipe(Effect.provide(config(true)));
+          assert.includeDeepMembers(build.extraResources as unknown[], [
+            ...MUTAGEN_EXTRA_RESOURCES,
+          ]);
+          yield* stageMutagen({ ...input, repoRoot: "/missing", platform: "linux" }).pipe(
+            Effect.provide(config(true)),
+          );
+        }),
+      ),
   );
 
   it.effect("stages a cached resource monitor without invoking Cargo", () =>
