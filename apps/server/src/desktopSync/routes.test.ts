@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - drives the real route over Node HTTP and ws in-memory sockets.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeStream from "node:stream";
 import type * as NodeNet from "node:net";
@@ -100,8 +101,9 @@ async function fixture(script = echoScript) {
   const closedLogs = mailbox<typeof logFields.Type>();
   const openedLogs = mailbox<typeof logFields.Type>();
   const logger = Logger.make(({ message }) => {
-    if (message[0] === "desktop sync tunnel closed") closedLogs.push(decodeLog(message[1]));
-    if (message[0] === "desktop sync tunnel opened") openedLogs.push(decodeLog(message[1]));
+    const parts: ReadonlyArray<unknown> = Array.isArray(message) ? message : [message];
+    if (parts[0] === "desktop sync tunnel closed") closedLogs.push(decodeLog(parts[1]));
+    if (parts[0] === "desktop sync tunnel opened") openedLogs.push(decodeLog(parts[1]));
   });
   const authLayer = EnvironmentAuth.layer.pipe(
     Layer.provideMerge(SqlitePersistenceMemory),
@@ -304,7 +306,8 @@ describe("desktop synchronization endpoint", () => {
     expect(Buffer.concat(binary).equals(Buffer.alloc(400000, 255))).toBe(true);
     expect(binary.every((chunk) => chunk.length <= DESKTOP_SYNC_MAX_FRAME_BYTES)).toBe(true);
     const stderr = client.events.filter(
-      (value) => !Buffer.isBuffer(value) && value.type === "stderr",
+      (value): value is { readonly type: "stderr"; readonly data: string } =>
+        !Buffer.isBuffer(value) && value.type === "stderr",
     );
     expect(stderr.reduce((total, value) => total + Buffer.byteLength(value.data), 0)).toBe(
       DESKTOP_SYNC_STDERR_LIMIT_BYTES,

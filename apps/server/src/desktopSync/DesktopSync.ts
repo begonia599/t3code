@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off globalDateInEffect:off globalTimersInEffect:off - ws event callbacks own these deadlines and clear them in each callback finalizer.
 import { NodeWS } from "@effect/platform-node/NodeSocket";
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import {
