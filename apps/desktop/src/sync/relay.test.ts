@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Real ws/HTTP framing over in-memory duplex sockets in restricted sandboxes.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- Fake system clock advanced via Date.now() in heartbeat case; Real ws/HTTP framing over in-memory duplex sockets in restricted sandboxes.
 import * as NodeHttp from "node:http";
 import * as NodeStream from "node:stream";
 import type * as NodeNet from "node:net";
