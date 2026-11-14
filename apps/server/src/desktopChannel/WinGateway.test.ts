@@ -1,5 +1,10 @@
+import * as Option from "effect/Option";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ProjectId,
+  OrchestrationProjectShell,
+  OrchestrationThreadShell,
+  winExitCodeForError,
   AuthSessionId,
   EnvironmentId,
   ProviderInstanceId,
@@ -23,6 +28,8 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { HttpRouter } from "effect/unstable/http";
 import { afterEach, describe, expect, it } from "vite-plus/test";
+import * as DesktopLinkService from "../desktopLink/DesktopLinkService.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as DesktopChannelBroker from "./DesktopChannelBroker.ts";
 import * as WinGateway from "./WinGateway.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -78,6 +85,8 @@ const hostStatus = {
   running: 0,
   shells: ["pwsh"],
 };
+const decodeThreadShell = Schema.decodeUnknownSync(OrchestrationThreadShell);
+const decodeProjectShell = Schema.decodeUnknownSync(OrchestrationProjectShell);
 const decodeExecLine = Schema.decodeUnknownEffect(Schema.fromJsonString(WinGatewayExecLine));
 const decodeLogEntry = Schema.decodeUnknownSync(DesktopExecLogEntry);
 const lines = (text: string): WinGatewayExecLine[] =>
@@ -87,10 +96,66 @@ const lines = (text: string): WinGatewayExecLine[] =>
     .filter(Boolean)
     .map((line) => JSON.parse(line));
 
-async function fixture(eventBufferCapacity = 256) {
+async function fixture(eventBufferCapacity = 256, linked = false) {
+  const projectId = ProjectId.make("trusted-project");
+  const queryLayer = Layer.mock(ProjectionSnapshotQuery)({
+    getThreadShellById: () =>
+      Effect.succeed(
+        Option.some(
+          decodeThreadShell({
+            id: scope.threadId,
+            projectId,
+            title: "Trusted",
+            modelSelection: { instanceId: "codex", model: "gpt-5" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            latestTurn: null,
+            createdAt: "2026-01-01",
+            updatedAt: "2026-01-01",
+            session: null,
+            latestUserMessageAt: null,
+            hasPendingApprovals: false,
+            hasPendingUserInput: false,
+            hasActionableProposedPlan: false,
+          }),
+        ),
+      ),
+    getProjectShellById: () =>
+      Effect.succeed(
+        Option.some(
+          decodeProjectShell({
+            id: projectId,
+            workspaceRoot: "/trusted/project",
+            title: "Trusted",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-01-01",
+            updatedAt: "2026-01-01",
+          }),
+        ),
+      ),
+  });
+  const linkLayer = Layer.mock(DesktopLinkService.DesktopLinkService)({
+    getLinkForProject: () =>
+      Effect.succeed(
+        linked
+          ? Option.some({
+              projectId,
+              hostId,
+              hostName: host.hostName,
+              winPath: "C:\\project",
+              serverPath: "/trusted/project",
+              createdAt: "2026-01-01",
+            })
+          : Option.none(),
+      ),
+  });
   // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Own the broker and SQLite lifetime across Promise-based HTTP handlers and reader cancellation.
   const runtime = ManagedRuntime.make(
     WinGateway.layer.pipe(
+      Layer.provide(queryLayer),
+      Layer.provide(linkLayer),
       Layer.provideMerge(
         DesktopChannelBroker.layer.pipe(
           Layer.provide(
@@ -126,6 +191,8 @@ async function fixture(eventBufferCapacity = 256) {
   };
   const { handler, dispose } = HttpRouter.toWebHandler(
     WinGateway.routes.pipe(
+      Layer.provide(queryLayer),
+      Layer.provide(linkLayer),
       Layer.provide(Layer.succeed(DesktopChannelBroker.DesktopChannelBroker, broker)),
       Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
       Layer.provide(Layer.succeed(McpSessionRegistry.McpSessionRegistry, registry)),
@@ -197,6 +264,55 @@ async function fixture(eventBufferCapacity = 256) {
 }
 
 describe("WinGateway over real DesktopChannelBroker", () => {
+  it("pins linked exec/status/log to the linked PC and forwards trusted project context", async () => {
+    const f = await fixture(256, true);
+    const linked = await f.startHost();
+    const other = await f.startHost({ ...host, hostId: secondHostId, hostName: "Other" });
+    for (const path of ["exec", "status", "log"] as const) {
+      const text = f
+        .request(path, path === "exec" ? { body: { exec } } : {})
+        .then((response) => response.text());
+      const message = await linked.next();
+      expect(message).toMatchObject({
+        type: "request",
+        kind: path,
+        context: {
+          projectId: "trusted-project",
+          workspaceRoot: "/trusted/project",
+          linkedHostId: hostId,
+          threadId: scope.threadId,
+        },
+      });
+      if (message.type !== "request") throw new Error("Expected request");
+      await linked.respond(
+        message.requestId,
+        path === "exec" ? result : path === "status" ? hostStatus : { entries: [] },
+      );
+      await text;
+    }
+    const response = await f.request("exec", { body: { exec, host: secondHostId } });
+    const text = response.text();
+    const message = await other.next();
+    if (message.type !== "request") throw new Error("Expected request");
+    await other.respond(message.requestId, result);
+    await text;
+  });
+  it("reports linked PC offline with launcher code 121 even when another PC is online", async () => {
+    const f = await fixture(256, true);
+    await f.startHost({ ...host, hostId: secondHostId });
+    const response = await f.request("exec", { body: { exec } });
+    const line = lines(await response.text())[0];
+    expect(line).toMatchObject({
+      type: "error",
+      code: "HOST_OFFLINE",
+      message: `Windows PC "${host.hostName}" is offline`,
+    });
+    if (line?.type !== "error") throw new Error("Expected error");
+    expect(winExitCodeForError(line.code)).toBe(121);
+    const status = await (await f.request("status")).json();
+    expect(status).toMatchObject({ selectedHostId: null, hostStatusError: "HOST_OFFLINE" });
+    expect(await (await f.request("log")).json()).toEqual({ source: "server", entries: [] });
+  });
   it.each(["expired", "no-win", ""])("requires a win credential (%s)", async (token) => {
     const f = await fixture();
     const res = await f.request("exec", { body: { exec }, token });
@@ -613,6 +729,16 @@ effectIt.effect(
     ).pipe(
       Effect.provide(
         WinGateway.layer.pipe(
+          Layer.provide(
+            Layer.mock(ProjectionSnapshotQuery)({
+              getThreadShellById: () => Effect.succeed(Option.none()),
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(DesktopLinkService.DesktopLinkService)({
+              getLinkForProject: () => Effect.succeed(Option.none()),
+            }),
+          ),
           Layer.provideMerge(DesktopChannelBroker.layer),
           Layer.provideMerge(SqlitePersistenceMemory),
           Layer.provide(NodeServices.layer),

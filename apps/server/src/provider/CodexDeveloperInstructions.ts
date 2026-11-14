@@ -1,4 +1,7 @@
-import { WIN_AGENT_INSTRUCTIONS } from "../desktopChannel/winAgentInstructions.ts";
+import {
+  WIN_AGENT_INSTRUCTIONS,
+  buildWindowsProjectInstructions,
+} from "../desktopChannel/winAgentInstructions.ts";
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
 import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
@@ -19,6 +22,11 @@ export interface T3CodeToolAvailability {
   readonly browser: boolean;
   readonly device: boolean;
   readonly win: boolean;
+  readonly windowsProject?: {
+    readonly hostName: string;
+    readonly winPath: string;
+    readonly serverPath: string;
+  };
 }
 
 const normalizeAvailability = (
@@ -40,7 +48,11 @@ const toolInstructions = (availability: boolean | T3CodeToolAvailability): strin
   return [
     tools.browser ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "",
     tools.device ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS : "",
-    tools.win ? WIN_AGENT_INSTRUCTIONS : "",
+    tools.win
+      ? tools.windowsProject
+        ? buildWindowsProjectInstructions(tools.windowsProject)
+        : WIN_AGENT_INSTRUCTIONS
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");

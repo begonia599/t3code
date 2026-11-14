@@ -1,3 +1,5 @@
+import * as DesktopLinkService from "../../desktopLink/DesktopLinkService.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -17,6 +19,7 @@ import {
   AssistantCitation,
   ApprovalRequestId,
   EnvironmentId,
+  DesktopLinkError,
   EventId,
   MessageId,
   OrchestrationThreadShell,
@@ -5071,7 +5074,15 @@ describe("agent browser access", () => {
     projectOverride?:
       | boolean
       | { readonly browser?: boolean; readonly device?: boolean; readonly win?: boolean },
-    options?: { readonly withoutOrchestration?: boolean; readonly driver?: ProviderDriverKind },
+    options?: {
+      readonly withoutOrchestration?: boolean;
+      readonly driver?: ProviderDriverKind;
+      readonly linked?: boolean;
+      readonly linkFailure?: "error" | "defect" | "interrupt";
+      readonly onPrepared?: (
+        config: McpProviderSession.McpProviderSessionConfig | undefined,
+      ) => void;
+    },
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
@@ -5145,9 +5156,45 @@ describe("agent browser access", () => {
               threadId: request.threadId,
               capabilities: [...request.capabilities].toSorted(),
             });
-            return undefined;
+            if (options?.linked === undefined) return undefined;
+            return {
+              config: {
+                environmentId: EnvironmentId.make("linked-env"),
+                threadId: request.threadId,
+                providerSessionId: "linked-session",
+                providerInstanceId: request.providerInstanceId,
+                endpoint: "http://localhost/mcp",
+                authorizationHeader: "Bearer test",
+                capabilities: request.capabilities,
+              },
+            };
           }),
       }).pipe(
+        Layer.provide(
+          Layer.mock(DesktopLinkService.DesktopLinkService)({
+            getLinkForProject: (id) => {
+              assert.equal(id, projectId);
+              if (options?.linkFailure === "error")
+                return Effect.fail(
+                  new DesktopLinkError({ code: "CREATE_FAILED", message: "Database locked" }),
+                );
+              if (options?.linkFailure === "defect") return Effect.die("Link lookup defect");
+              if (options?.linkFailure === "interrupt") return Effect.interrupt;
+              return Effect.succeed(
+                options?.linked
+                  ? Option.some({
+                      projectId,
+                      hostId: "91d581f4-d87a-4efe-967c-2b60314575bb",
+                      hostName: "Trusted PC",
+                      winPath: "C:\\Demo",
+                      serverPath: "/server/Demo",
+                      createdAt: "2026-01-01",
+                    })
+                  : Option.none(),
+              );
+            },
+          }),
+        ),
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(options?.withoutOrchestration ? Layer.empty : projectionLayer),
@@ -5188,16 +5235,85 @@ describe("agent browser access", () => {
 
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
-        return yield* provider.startSession(threadId, {
+        const session = yield* provider.startSession(threadId, {
           provider: driver,
           providerInstanceId: codexInstanceId,
           threadId,
           runtimeMode: "full-access",
         });
+        options?.onPrepared?.(McpProviderSession.readMcpProviderSession(threadId));
+        return session;
       }).pipe(Effect.provide(providerLayer));
 
       return issued;
     });
+
+  for (const linkFailure of ["error", "defect"] as const) {
+    it.effect(
+      `starts the session without Windows project context after a link lookup ${linkFailure}`,
+      () =>
+        Effect.gen(function* () {
+          const threadId = asThreadId(`link-lookup-${linkFailure}`);
+          let prepared = false;
+          const issued = yield* startSessionWith(
+            { browser: false, device: false, win: true },
+            threadId,
+            undefined,
+            {
+              linked: true,
+              linkFailure,
+              onPrepared: (config) => {
+                prepared = true;
+                assert.isDefined(config);
+                assert.isTrue(config?.capabilities.has("win"));
+                assert.isUndefined(config?.windowsProject);
+              },
+            },
+          );
+          assert.isTrue(prepared);
+          assert.isTrue(issued[0]?.capabilities.includes("win"));
+        }).pipe(Effect.provide(NodeServices.layer)),
+    );
+  }
+  it.effect("preserves interruption while resolving the Windows project link", () =>
+    Effect.gen(function* () {
+      const exit = yield* startSessionWith(
+        { browser: false, device: false, win: true },
+        asThreadId("link-lookup-interrupt"),
+        undefined,
+        { linked: true, linkFailure: "interrupt" },
+      ).pipe(Effect.exit);
+      assert.equal(exit._tag, "Failure");
+      if (exit._tag === "Failure") assert.isTrue(Cause.hasInterrupts(exit.cause));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  for (const linked of [false, true]) {
+    for (const win of [false, true]) {
+      for (const driver of ["codex", "claudeAgent", "cursor"]) {
+        it.effect(
+          `prepares trusted Windows context only for granted supported sessions (${linked}/${win}/${driver})`,
+          () =>
+            Effect.gen(function* () {
+              const threadId = asThreadId(`linked-${linked}-${win}-${driver}`);
+              yield* startSessionWith({ browser: false, device: false, win }, threadId, undefined, {
+                linked,
+                driver: ProviderDriverKind.make(driver),
+                onPrepared: (config) => {
+                  assert.isDefined(config);
+                  assert.deepEqual(
+                    config?.windowsProject,
+                    linked && win && driver !== "cursor"
+                      ? { hostName: "Trusted PC", winPath: "C:\\Demo", serverPath: "/server/Demo" }
+                      : undefined,
+                  );
+                },
+              });
+            }).pipe(Effect.provide(NodeServices.layer)),
+        );
+      }
+    }
+  }
 
   // The capability on the credential is the observable that matters: a session
   // always gets a credential (the pull request toolkit is never withheld), and

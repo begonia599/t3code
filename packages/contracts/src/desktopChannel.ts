@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const DesktopChannelCapabilities = Schema.StructWithRest(
   Schema.Struct({
@@ -46,6 +46,9 @@ export const DesktopChannelHost = Schema.Struct({
 export type DesktopChannelHost = typeof DesktopChannelHost.Type;
 
 export const DesktopChannelRequestContext = Schema.Struct({
+  projectId: Schema.optional(ProjectId),
+  workspaceRoot: Schema.optional(Schema.String),
+  linkedHostId: Schema.optional(Schema.String),
   threadId: Schema.optional(ThreadId),
   provider: Schema.optional(TrimmedNonEmptyString),
   label: Schema.optional(Schema.String),

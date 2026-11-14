@@ -37,7 +37,8 @@ import {
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { DesktopLinkedProject, DesktopLinkError } from "./desktopLink.ts";
+import { NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -404,6 +405,10 @@ export const WS_METHODS = {
   desktopChannelRespond: "desktopChannel.respond",
   desktopChannelEmit: "desktopChannel.emit",
   desktopChannelUpdateCapabilities: "desktopChannel.updateCapabilities",
+  desktopLinkCreateProject: "desktopLink.createProject",
+  desktopLinkList: "desktopLink.list",
+  desktopLinkUnlink: "desktopLink.unlink",
+  desktopLinkResolveConflict: "desktopLink.resolveConflict",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
@@ -1350,6 +1355,31 @@ const WsDesktopChannelEmitRpc = Rpc.make(WS_METHODS.desktopChannelEmit, {
   error: Schema.Union([DesktopChannelError, EnvironmentAuthorizationError]),
 });
 
+const WsDesktopLinkCreateProjectRpc = Rpc.make(WS_METHODS.desktopLinkCreateProject, {
+  payload: Schema.Struct({
+    hostId: DesktopChannelHost.fields.hostId,
+    winPath: TrimmedNonEmptyString,
+  }),
+  success: Schema.Struct({ ...DesktopLinkedProject.fields, created: Schema.Boolean }),
+  error: Schema.Union([DesktopLinkError, EnvironmentAuthorizationError]),
+});
+const WsDesktopLinkListRpc = Rpc.make(WS_METHODS.desktopLinkList, {
+  payload: Schema.Struct({}),
+  success: Schema.Struct({ links: Schema.Array(DesktopLinkedProject) }),
+  error: Schema.Union([DesktopLinkError, EnvironmentAuthorizationError]),
+});
+const WsDesktopLinkUnlinkRpc = Rpc.make(WS_METHODS.desktopLinkUnlink, {
+  payload: Schema.Struct({ projectId: ProjectId, deleteServerCopy: Schema.Boolean }),
+  success: Schema.Struct({ projectId: ProjectId, serverCopyDeleted: Schema.Boolean }),
+  error: Schema.Union([DesktopLinkError, EnvironmentAuthorizationError]),
+});
+
+const WsDesktopLinkResolveConflictRpc = Rpc.make(WS_METHODS.desktopLinkResolveConflict, {
+  payload: Schema.Struct({ projectId: ProjectId, path: Schema.String }),
+  success: Schema.Struct({ projectId: ProjectId, path: Schema.String, removed: Schema.Boolean }),
+  error: Schema.Union([DesktopLinkError, EnvironmentAuthorizationError]),
+});
+
 const WsDesktopChannelUpdateCapabilitiesRpc = Rpc.make(
   WS_METHODS.desktopChannelUpdateCapabilities,
   {
@@ -1700,6 +1730,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsDesktopChannelRespondRpc,
   WsDesktopChannelEmitRpc,
   WsDesktopChannelUpdateCapabilitiesRpc,
+  WsDesktopLinkCreateProjectRpc,
+  WsDesktopLinkListRpc,
+  WsDesktopLinkUnlinkRpc,
+  WsDesktopLinkResolveConflictRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,

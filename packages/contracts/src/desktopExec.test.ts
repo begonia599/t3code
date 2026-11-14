@@ -1,3 +1,4 @@
+import { DesktopChannelRequestContext } from "./desktopChannel.ts";
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import {
@@ -117,4 +118,23 @@ describe("desktop exec contracts", () => {
     expect(decodeOverrides({ enableAgentWinAccess: true }).enableAgentWinAccess).toBe(true);
     expect(decodeOverrides({})).not.toHaveProperty("enableAgentWinAccess");
   });
+});
+
+const oldContext = Schema.Struct({
+  threadId: Schema.optional(Schema.String),
+  provider: Schema.optional(Schema.String),
+  label: Schema.optional(Schema.String),
+});
+const decodeOldContext = Schema.decodeSync(oldContext);
+const decodeDesktopContext = Schema.decodeUnknownSync(DesktopChannelRequestContext);
+it("older desktop context schemas ignore added trusted project fields", () => {
+  const input = {
+    threadId: "t",
+    provider: "codex",
+    projectId: "p",
+    workspaceRoot: "/trusted",
+    linkedHostId: "host",
+  };
+  expect(decodeOldContext(input)).toEqual({ threadId: "t", provider: "codex" });
+  expect(decodeDesktopContext(input)).toEqual(input);
 });

@@ -1152,3 +1152,28 @@ describe("win tool instructions on turn/start", () => {
     }),
   );
 });
+
+for (const win of [false, true]) {
+  it.effect(`uses linked Windows instructions only with win access (${win})`, () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "linked",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        browserToolsAvailable: {
+          browser: false,
+          device: false,
+          win,
+          windowsProject: { hostName: "Work PC", winPath: "C:\\Demo", serverPath: "/server/Demo" },
+        },
+      });
+      const text = params.additionalContext?.t3_code_tools?.value ?? "";
+      NodeAssert.equal(text.includes("This is a Windows project."), win);
+      NodeAssert.ok(!text.includes("Use it only when the task needs Windows"));
+      if (win) {
+        NodeAssert.ok(text.includes("Work PC"));
+        NodeAssert.ok(text.includes("C:\\Demo"));
+      }
+    }),
+  );
+}

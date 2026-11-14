@@ -1,4 +1,7 @@
-import { WIN_AGENT_INSTRUCTIONS } from "../../desktopChannel/winAgentInstructions.ts";
+import {
+  WIN_AGENT_INSTRUCTIONS,
+  buildWindowsProjectInstructions,
+} from "../../desktopChannel/winAgentInstructions.ts";
 import { makeClaudeGatewaySettingsWriter } from "../ClaudeGatewaySettings.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 /**
@@ -5027,7 +5030,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           // Model and effort can change after this session-level prompt is set.
           append: [
             buildRuntimeInstructions({ harness: "Claude Code" }),
-            mcpSession?.agentWinEnvironment ? WIN_AGENT_INSTRUCTIONS : "",
+            mcpSession?.agentWinEnvironment
+              ? mcpSession.windowsProject
+                ? buildWindowsProjectInstructions(mcpSession.windowsProject)
+                : WIN_AGENT_INSTRUCTIONS
+              : "",
           ]
             .filter(Boolean)
             .join("\n\n"),

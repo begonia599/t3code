@@ -52,3 +52,5 @@ export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
 
 export * from "./subscriptionEstimation.ts";
+
+export * from "./desktopLink.ts";

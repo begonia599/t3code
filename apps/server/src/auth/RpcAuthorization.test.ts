@@ -19,6 +19,19 @@ describe("RPC authorization scopes", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
 
+  it("scopes desktop links deliberately", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.desktopLinkCreateProject)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.desktopLinkUnlink)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.desktopLinkResolveConflict)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.desktopLinkList)).toBe(AuthOrchestrationReadScope);
+  });
+
   it("requires operate permission for every desktop channel method", () => {
     for (const method of [
       WS_METHODS.desktopChannelConnect,

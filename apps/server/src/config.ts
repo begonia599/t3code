@@ -85,6 +85,8 @@ export class ServerConfig extends Context.Service<
     readonly mode: RuntimeMode;
     readonly port: number;
     readonly host: string | undefined;
+    /** Server copies of linked Windows projects; defaults to ~/win-projects. */
+    readonly winProjectsRoot?: string;
     readonly cwd: string;
     readonly baseDir: string;
     readonly staticDir: string | undefined;

@@ -1,6 +1,11 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
 export interface McpProviderSessionConfig {
+  readonly windowsProject?: {
+    readonly hostName: string;
+    readonly winPath: string;
+    readonly serverPath: string;
+  };
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;

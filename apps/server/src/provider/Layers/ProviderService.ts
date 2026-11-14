@@ -40,6 +40,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -86,6 +87,7 @@ import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import * as DesktopLinkService from "../../desktopLink/DesktopLinkService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 const isModelSelection = Schema.is(ModelSelection);
@@ -489,6 +491,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const desktopLinks = yield* Effect.serviceOption(DesktopLinkService.DesktopLinkService);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const estimation = Option.getOrUndefined(
     yield* Effect.serviceOption(SubscriptionEstimation.SubscriptionEstimation),
@@ -992,9 +995,33 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         const deviceEnvironment = capabilities.has("device")
           ? yield* agentDeviceEnvironment
           : undefined;
+        const windowsProject = yield* Effect.gen(function* () {
+          if (
+            !capabilities.has("win") ||
+            Option.isNone(desktopLinks) ||
+            Option.isNone(projectionQuery)
+          )
+            return undefined;
+          const thread = yield* projectionQuery.value.getThreadShellById(threadId);
+          if (Option.isNone(thread)) return undefined;
+          const link = yield* desktopLinks.value.getLinkForProject(thread.value.projectId);
+          if (Option.isNone(link)) return undefined;
+          const { hostName, winPath, serverPath } = link.value;
+          return { hostName, winPath, serverPath };
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterrupts(cause)
+              ? Effect.interrupt
+              : Effect.logWarning("Failed to resolve Windows project link", {
+                  threadId,
+                  cause,
+                }).pipe(Effect.as(undefined)),
+          ),
+        );
         yield* Effect.sync(() =>
           McpProviderSession.setMcpProviderSession({
             ...credential.config,
+            ...(windowsProject ? { windowsProject } : {}),
             ...(deviceEnvironment ? { agentDeviceEnvironment: deviceEnvironment } : {}),
           }),
         );

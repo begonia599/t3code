@@ -69,6 +69,8 @@ import Migration0054 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledA
 import Migration0055 from "./Migrations/055_SubscriptionEstimation.ts";
 import Migration0056 from "./Migrations/056_DesktopChannelAudit.ts";
 
+import Migration0057 from "./Migrations/057_DesktopLinkedProjects.ts";
+
 /**
  * Migration loader with all migrations defined inline.
  *
@@ -136,6 +138,7 @@ const migrationEntries = [
   [54, "ProjectionThreadsAutoSettleDisabledAt", Migration0054],
   [55, "SubscriptionEstimation", Migration0055],
   [56, "DesktopChannelAudit", Migration0056],
+  [57, "DesktopLinkedProjects", Migration0057],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

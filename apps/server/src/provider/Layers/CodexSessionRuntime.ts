@@ -192,6 +192,7 @@ export interface CodexSessionRuntimeOptions {
   readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
   /** Capabilities the session's `t3-code` MCP credential grants; drives the prompt blocks. */
   readonly mcpCapabilities?: ReadonlySet<string>;
+  readonly windowsProject?: T3CodeToolAvailability["windowsProject"];
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -2587,10 +2588,10 @@ export const makeCodexSessionRuntime = (
             // Derived from the session's own credential rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.
-            browserToolsAvailable: configuredMcpToolAvailability(
-              options.appServerArgs,
-              options.mcpCapabilities,
-            ),
+            browserToolsAvailable: {
+              ...configuredMcpToolAvailability(options.appServerArgs, options.mcpCapabilities),
+              ...(options.windowsProject ? { windowsProject: options.windowsProject } : {}),
+            },
           });
           yield* Ref.set(lastAdditionalContextRef, params.additionalContext);
           const rawResponse = yield* client.raw.request("turn/start", params);

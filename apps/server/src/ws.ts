@@ -129,6 +129,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as DesktopLinkService from "./desktopLink/DesktopLinkService.ts";
 import * as DesktopChannelBroker from "./desktopChannel/DesktopChannelBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
@@ -509,6 +510,7 @@ const makeWsRpcLayer = (
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   desktopChannelBroker: DesktopChannelBroker.DesktopChannelBroker["Service"],
+  desktopLinks: DesktopLinkService.DesktopLinkService["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -3824,6 +3826,30 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.desktopLinkCreateProject]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.desktopLinkCreateProject,
+            desktopLinks.createProject(input, { sessionId: currentSession.sessionId }),
+            { "rpc.aggregate": "desktop-link" },
+          ),
+        [WS_METHODS.desktopLinkList]: () =>
+          observeRpcEffect(
+            WS_METHODS.desktopLinkList,
+            desktopLinks.list().pipe(Effect.map((links) => ({ links }))),
+            { "rpc.aggregate": "desktop-link" },
+          ),
+        [WS_METHODS.desktopLinkResolveConflict]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.desktopLinkResolveConflict,
+            desktopLinks.resolveConflict(input),
+            {
+              "rpc.aggregate": "desktop-link",
+            },
+          ),
+        [WS_METHODS.desktopLinkUnlink]: (input) =>
+          observeRpcEffect(WS_METHODS.desktopLinkUnlink, desktopLinks.unlink(input), {
+            "rpc.aggregate": "desktop-link",
+          }),
         [WS_METHODS.desktopChannelConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.desktopChannelConnect,
@@ -4137,6 +4163,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const desktopChannelBroker = yield* DesktopChannelBroker.DesktopChannelBroker;
+    const desktopLinks = yield* DesktopLinkService.DesktopLinkService;
     const baseServerSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const config = yield* ServerConfig.ServerConfig;
     const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -4204,6 +4231,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientAnalyticsProps,
               previewAutomationBroker,
               desktopChannelBroker,
+              desktopLinks,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),

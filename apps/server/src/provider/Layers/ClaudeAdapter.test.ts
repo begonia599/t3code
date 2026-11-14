@@ -53,7 +53,10 @@ import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import { WIN_AGENT_INSTRUCTIONS } from "../../desktopChannel/winAgentInstructions.ts";
+import {
+  WIN_AGENT_INSTRUCTIONS,
+  buildWindowsProjectInstructions,
+} from "../../desktopChannel/winAgentInstructions.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -8595,58 +8598,81 @@ describe("ClaudeAdapterLive", () => {
   });
 });
 
-for (const enabled of [false, true]) {
-  it.effect(
-    `injects win into Claude environment and system prompt only when prepared (${enabled})`,
-    () => {
-      const harness = makeHarness({ environment: { PATH: "/provider", PROVIDER_KEY: "fixture" } });
-      return Effect.scoped(
-        Effect.gen(function* () {
-          const threadId = ThreadId.make(`win-claude-${enabled}`);
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-          );
-          McpProviderSession.setMcpProviderSession({
-            environmentId: EnvironmentId.make("win-env"),
-            threadId,
-            providerSessionId: "win-session",
-            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-            endpoint: "http://127.0.0.1/mcp",
-            authorizationHeader: "Bearer fixture",
-            capabilities: new Set(enabled ? ["device", "win"] : []),
-            ...(enabled
-              ? {
-                  agentDeviceEnvironment: { PATH: "/device" },
-                  agentWinEnvironment: {
-                    PATH: "/win",
-                    T3_WIN_ENDPOINT: "http://127.0.0.1/agent-win/v1",
-                    T3_WIN_CREDENTIAL_FILE: "/win.token",
-                  },
-                }
-              : {}),
-          });
-          const adapter = yield* ClaudeAdapter;
-          yield* adapter.startSession({
-            threadId,
-            provider: ProviderDriverKind.make("claudeAgent"),
-            runtimeMode: "full-access",
-          });
-          const options = harness.getLastCreateQueryInput()!.options;
-          assert.equal(options.env?.PATH, enabled ? "/win:/device:/provider" : "/provider");
-          assert.equal(options.env?.T3_WIN_CREDENTIAL_FILE, enabled ? "/win.token" : undefined);
-          assert.deepEqual(options.systemPrompt, {
-            type: "preset",
-            preset: "claude_code",
-            append: [
-              buildRuntimeInstructions({ harness: "Claude Code" }),
-              ...(enabled ? [WIN_AGENT_INSTRUCTIONS] : []),
-            ].join("\n\n"),
-          });
-        }),
-      ).pipe(
-        Effect.provideService(Random.Random, makeDeterministicRandomService()),
-        Effect.provide(harness.layer),
-      );
-    },
-  );
+for (const linked of [false, true]) {
+  for (const enabled of [false, true]) {
+    it.effect(
+      `injects win into Claude environment and system prompt only when prepared (${enabled}, linked=${linked})`,
+      () => {
+        const harness = makeHarness({
+          environment: { PATH: "/provider", PROVIDER_KEY: "fixture" },
+        });
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const threadId = ThreadId.make(`win-claude-${enabled}`);
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+            );
+            McpProviderSession.setMcpProviderSession({
+              ...(linked
+                ? {
+                    windowsProject: {
+                      hostName: "Work PC",
+                      winPath: "D:\\Work\\Demo",
+                      serverPath: "/win/Demo",
+                    },
+                  }
+                : {}),
+              environmentId: EnvironmentId.make("win-env"),
+              threadId,
+              providerSessionId: "win-session",
+              providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+              endpoint: "http://127.0.0.1/mcp",
+              authorizationHeader: "Bearer fixture",
+              capabilities: new Set(enabled ? ["device", "win"] : []),
+              ...(enabled
+                ? {
+                    agentDeviceEnvironment: { PATH: "/device" },
+                    agentWinEnvironment: {
+                      PATH: "/win",
+                      T3_WIN_ENDPOINT: "http://127.0.0.1/agent-win/v1",
+                      T3_WIN_CREDENTIAL_FILE: "/win.token",
+                    },
+                  }
+                : {}),
+            });
+            const adapter = yield* ClaudeAdapter;
+            yield* adapter.startSession({
+              threadId,
+              provider: ProviderDriverKind.make("claudeAgent"),
+              runtimeMode: "full-access",
+            });
+            const options = harness.getLastCreateQueryInput()!.options;
+            assert.equal(options.env?.PATH, enabled ? "/win:/device:/provider" : "/provider");
+            assert.equal(options.env?.T3_WIN_CREDENTIAL_FILE, enabled ? "/win.token" : undefined);
+            assert.deepEqual(options.systemPrompt, {
+              type: "preset",
+              preset: "claude_code",
+              append: [
+                buildRuntimeInstructions({ harness: "Claude Code" }),
+                ...(enabled
+                  ? [
+                      linked
+                        ? buildWindowsProjectInstructions({
+                            hostName: "Work PC",
+                            winPath: "D:\\Work\\Demo",
+                            serverPath: "/win/Demo",
+                          })
+                        : WIN_AGENT_INSTRUCTIONS,
+                    ]
+                  : []),
+              ].join("\n\n"),
+            });
+          }),
+        ).pipe(
+          Effect.provideService(Random.Random, makeDeterministicRandomService()),
+          Effect.provide(harness.layer),
+        );
+      },
+    );
+  }
 }

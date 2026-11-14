@@ -12,14 +12,16 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
         const sql = yield* SqlClient.SqlClient;
         yield* runMigrations({ toMigrationInclusive: 55 });
         yield* sql`INSERT INTO subscription_estimation_samples (id, account_key, started_at, payload_json) VALUES ('old', 'account', '2026-01-01', '{}')`;
-        assert.deepEqual(yield* runMigrations(), [[56, "DesktopChannelAudit"]]);
+        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 56 }), [
+          [56, "DesktopChannelAudit"],
+        ]);
         assert.equal(
           (yield* sql`SELECT * FROM subscription_estimation_samples WHERE id='old'`).length,
           1,
         );
         yield* sql`INSERT INTO desktop_channel_audit (request_id,host_id,host_name,server_cwd,started_at,mode,summary,outcome) VALUES ('r','h','Windows','/project','2026-01-01','argv','echo','running')`;
         assert.equal((yield* sql`SELECT * FROM desktop_channel_audit`).length, 1);
-        assert.deepEqual(yield* runMigrations(), []);
+        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 56 }), []);
       }),
     );
   },

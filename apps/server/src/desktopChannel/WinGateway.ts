@@ -16,15 +16,20 @@ import {
   type WinGatewayStatusResponse,
   type WinGatewayLogResponse,
   type DesktopChannelHost,
+  type DesktopChannelRequestContext,
+  type DesktopLinkedProject,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as DesktopLinkService from "../desktopLink/DesktopLinkService.ts";
 import * as DesktopChannelBroker from "./DesktopChannelBroker.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
@@ -55,11 +60,6 @@ const decodeExecRequest = Schema.decodeUnknownEffect(WinGatewayExecRequest, {
 });
 const decodeLogEntries = Schema.decodeUnknownEffect(Schema.Array(DesktopExecLogEntry));
 const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
-const context = ({ scope, label }: Invocation) => ({
-  threadId: scope.threadId,
-  provider: scope.providerInstanceId,
-  ...(label === undefined ? {} : { label }),
-});
 const execEnabled = (host: DesktopChannelHost) =>
   host.capabilities.enabled && host.capabilities.exec !== undefined;
 
@@ -85,6 +85,39 @@ export class WinGateway extends Context.Service<
 const make = Effect.gen(function* () {
   const broker = yield* DesktopChannelBroker.DesktopChannelBroker;
   const sql = yield* SqlClient.SqlClient;
+  const query = yield* ProjectionSnapshotQuery;
+  const links = yield* DesktopLinkService.DesktopLinkService;
+  const trusted = Effect.fn("WinGateway.trustedContext")(
+    function* ({ scope, label }: Invocation) {
+      const context: DesktopChannelRequestContext = {
+        threadId: scope.threadId,
+        provider: scope.providerInstanceId,
+        ...(label === undefined ? {} : { label }),
+      };
+      const thread = yield* query.getThreadShellById(scope.threadId);
+      if (Option.isNone(thread)) return { context, link: undefined };
+      const project = yield* query.getProjectShellById(thread.value.projectId);
+      if (Option.isNone(project)) return { context, link: undefined };
+      const link = Option.getOrUndefined(yield* links.getLinkForProject(project.value.id));
+      return {
+        context: {
+          ...context,
+          projectId: project.value.id,
+          workspaceRoot: project.value.workspaceRoot,
+          ...(link ? { linkedHostId: link.hostId } : {}),
+        },
+        link,
+      };
+    },
+    Effect.mapError(
+      () =>
+        new WinGatewayError({
+          code: "INTERNAL",
+          message: "Could not resolve Windows project context.",
+        }),
+    ),
+  );
+
   const bestEffort = <A, E>(effect: Effect.Effect<A, E>) =>
     effect.pipe(
       Effect.asVoid,
@@ -95,8 +128,21 @@ const make = Effect.gen(function* () {
       code: "HOST_DISABLED",
       message: `Enable remote operations in the T3 Windows desktop app on: ${hosts.map((h) => `${h.hostName} (${h.hostId})`).join(", ")}.`,
     });
-  const select = Effect.fn("WinGateway.select")(function* (name?: string) {
+  const select = Effect.fn("WinGateway.select")(function* (
+    name?: string,
+    link?: DesktopLinkedProject,
+  ) {
     const connected = yield* broker.listHosts();
+    if (!name && link) {
+      const host = connected.find((h) => h.hostId === link.hostId);
+      if (!host)
+        return yield* new WinGatewayError({
+          code: "HOST_OFFLINE",
+          message: `Windows PC "${link.hostName}" is offline`,
+        });
+      if (!execEnabled(host)) return yield* disabled([host]);
+      return host;
+    }
     if (name) {
       const exact = connected.find((h) => h.hostId === name);
       const matches = exact
@@ -134,14 +180,15 @@ const make = Effect.gen(function* () {
   const exec: WinGateway["Service"]["exec"] = (request, invocation) =>
     Stream.unwrap(
       Effect.gen(function* () {
-        const host = yield* select(request.host);
+        const { context, link } = yield* trusted(invocation);
+        const host = yield* select(request.host, link);
         const handle = yield* broker.invoke({
           hostId: host.hostId,
           kind: "exec",
           input: request.exec,
           timeoutMs:
             DESKTOP_EXEC_GRANT_WAIT_MS + request.exec.timeoutMs + DESKTOP_EXEC_TIMEOUT_GRACE_MS,
-          context: context(invocation),
+          context,
         });
         const startedAt = yield* now;
         const input = request.exec;
@@ -227,8 +274,9 @@ const make = Effect.gen(function* () {
 
   const status: WinGateway["Service"]["status"] = Effect.fn("WinGateway.status")(
     function* (host, invocation) {
+      const { context, link } = yield* trusted(invocation);
       const hosts = yield* broker.listHosts();
-      const selected = yield* select(host).pipe(Effect.result);
+      const selected = yield* select(host, link).pipe(Effect.result);
       const response: WinGatewayStatusResponse = {
         threadId: invocation.scope.threadId,
         provider: invocation.scope.providerInstanceId,
@@ -252,7 +300,7 @@ const make = Effect.gen(function* () {
             kind: "status",
             input: {},
             timeoutMs: 10_000,
-            context: context(invocation),
+            context,
           });
           yield* Stream.runDrain(handle.events).pipe(Effect.forkScoped);
           return yield* handle.result.pipe(
@@ -271,7 +319,8 @@ const make = Effect.gen(function* () {
 
   const log: WinGateway["Service"]["log"] = Effect.fn("WinGateway.log")(
     function* (limit, host, invocation) {
-      const selected = yield* select(host).pipe(Effect.result);
+      const { context, link } = yield* trusted(invocation);
+      const selected = yield* select(host, link).pipe(Effect.result);
       if (selected._tag === "Success") {
         const result = yield* Effect.scoped(
           Effect.gen(function* () {
@@ -280,7 +329,7 @@ const make = Effect.gen(function* () {
               kind: "log",
               input: { limit },
               timeoutMs: 10_000,
-              context: context(invocation),
+              context,
             });
             yield* Stream.runDrain(handle.events).pipe(Effect.forkScoped);
             return yield* handle.result.pipe(
@@ -299,9 +348,10 @@ const make = Effect.gen(function* () {
       ) {
         return yield* selected.failure;
       }
+      const auditHost = host ?? link?.hostId;
       const rows =
         yield* sql`SELECT request_id AS "requestId", started_at AS "startedAt", finished_at AS "finishedAt", thread_id AS "threadId", provider, label, mode, summary, win_cwd AS "winCwd", outcome, exit_code AS "exitCode", error_code AS "errorCode", duration_ms AS "durationMs"
-      FROM desktop_channel_audit WHERE (${host ?? null} IS NULL OR host_id=${host ?? null} OR lower(host_name)=lower(${host ?? null})) ORDER BY started_at DESC, rowid DESC LIMIT ${limit}`.pipe(
+      FROM desktop_channel_audit WHERE (${auditHost ?? null} IS NULL OR host_id=${auditHost ?? null} OR lower(host_name)=lower(${auditHost ?? null})) ORDER BY started_at DESC, rowid DESC LIMIT ${limit}`.pipe(
           Effect.flatMap(decodeLogEntries),
           Effect.mapError(
             () =>
