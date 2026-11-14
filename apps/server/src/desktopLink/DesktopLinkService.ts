@@ -25,6 +25,8 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriver from "../vcs/VcsDriver.ts";
 
+const isDesktopLinkError = Schema.is(DesktopLinkError);
+
 /** Normalize without resolving dot segments or changing the user's path casing. */
 export function normalizeWinPath(input: string): string {
   const normalized = input.replaceAll("/", "\\");
@@ -155,7 +157,7 @@ const make = Effect.gen(function* () {
         });
       const winPath = yield* Effect.try({
         try: () => normalizeWinPath(input.winPath),
-        catch: (error) => (error instanceof DesktopLinkError ? error : failure(error)),
+        catch: (error) => (isDesktopLinkError(error) ? error : failure(error)),
       });
       const matching =
         yield* sql`SELECT project_id AS "projectId", host_id AS "hostId", host_name AS "hostName", win_path AS "winPath", server_path AS "serverPath", created_at AS "createdAt" FROM desktop_linked_projects WHERE host_id=${host.hostId} AND win_path_key=${winPath.toLowerCase()}`.pipe(
@@ -238,7 +240,7 @@ const make = Effect.gen(function* () {
         ),
       );
     },
-    Effect.mapError((error) => (error instanceof DesktopLinkError ? error : failure(error))),
+    Effect.mapError((error) => (isDesktopLinkError(error) ? error : failure(error))),
     Effect.uninterruptible,
     semaphore.withPermits(1),
   );
@@ -316,7 +318,7 @@ const make = Effect.gen(function* () {
       );
       return { projectId, serverCopyDeleted: deleteServerCopy };
     },
-    Effect.mapError((error) => (error instanceof DesktopLinkError ? error : failure(error))),
+    Effect.mapError((error) => (isDesktopLinkError(error) ? error : failure(error))),
     Effect.uninterruptible,
     semaphore.withPermits(1),
   );
@@ -389,7 +391,7 @@ const make = Effect.gen(function* () {
       );
       return { projectId, path: conflictPath, removed };
     },
-    Effect.mapError((error) => (error instanceof DesktopLinkError ? error : failure(error))),
+    Effect.mapError((error) => (isDesktopLinkError(error) ? error : failure(error))),
     Effect.uninterruptible,
     semaphore.withPermits(1),
   );
