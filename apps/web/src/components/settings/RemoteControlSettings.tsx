@@ -57,6 +57,7 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { ScopedSwitch } from "./ScopedSwitch";
 import {
   SettingResetButton,
@@ -67,6 +68,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { WindowsFoldersSettings, windowsFoldersAvailable } from "./WindowsFoldersSettings";
 
 const LIST_ROW_CLASS = "flex items-center gap-3 border-t border-border/50 py-2.5";
 const EMPTY_LIST_CLASS = "border-t border-border/50 py-2.5 text-sm text-muted-foreground";
@@ -79,6 +81,7 @@ export function RemoteControlSettings() {
         <AgentWinAccessRow />
         <ThisComputerSettings />
       </SettingsSection>
+      {bridgeAvailable ? <ThisComputerFolders /> : null}
       {bridgeAvailable ? (
         <SettingsSection id="remote-control-history" title="Remote control activity">
           <AllowedThreadsRow />
@@ -261,6 +264,54 @@ function ThisComputerControls() {
           />
         }
       />
+    </>
+  );
+
+  // The executor is Windows-only; other desktops can still see the settings.
+  return capabilities.value && !capabilities.value.exec ? (
+    <SettingsUnavailableGroup message={t("Running commands is only supported on Windows.")}>
+      {rows}
+    </SettingsUnavailableGroup>
+  ) : (
+    rows
+  );
+}
+
+/**
+ * Where commands may run. Windows folders are set up automatically; the
+ * manual allowlist and mappings stay available, folded, for folders that
+ * were not added that way.
+ */
+function ThisComputerFolders() {
+  const t = useT();
+  const bridge = readRemoteControlBridge()!;
+  const config = useRemoteControlConfig();
+  const capabilities = useRemoteControlCapabilities();
+  const updateConfig = async (patch: RemoteControlConfigPatch): Promise<string | null> => {
+    try {
+      config.replace(await bridge.updateConfig(patch));
+      return null;
+    } catch (cause) {
+      return bridgeErrorMessage(cause);
+    }
+  };
+  const folderCount = config.value?.allowlist.length ?? 0;
+  const mappingCount = config.value?.mappings.length ?? 0;
+  const summary =
+    folderCount === 0 && mappingCount === 0
+      ? t("Not needed for Windows folders")
+      : [
+          t(folderCount === 1 ? "1 folder" : "{count} folders").replace(
+            "{count}",
+            String(folderCount),
+          ),
+          t(mappingCount === 1 ? "1 mapping" : "{count} mappings").replace(
+            "{count}",
+            String(mappingCount),
+          ),
+        ].join(" · ");
+  const advancedRows = (
+    <>
       <SettingsRow
         {...searchableSetting("remote-control-folders")}
         description="Commands only run inside these folders and their subfolders. Folders in path mappings are allowed too."
@@ -281,14 +332,27 @@ function ThisComputerControls() {
       </SettingsRow>
     </>
   );
-
-  // The executor is Windows-only; other desktops can still see the settings.
-  return capabilities.value && !capabilities.value.exec ? (
-    <SettingsUnavailableGroup message={t("Running commands is only supported on Windows.")}>
-      {rows}
-    </SettingsUnavailableGroup>
-  ) : (
-    rows
+  const advanced = searchableSetting("remote-control-advanced");
+  return (
+    <>
+      {windowsFoldersAvailable() ? (
+        <WindowsFoldersSettings hostId={config.value?.hostId ?? null} />
+      ) : null}
+      <FoldedSettingsSection id={advanced.id} title={t(advanced.title)} summary={summary}>
+        <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
+          {t(
+            "For folders you didn't add as Windows folders. Windows folders are allowed and mapped automatically.",
+          )}
+        </p>
+        {capabilities.value && !capabilities.value.exec ? (
+          <SettingsUnavailableGroup message={t("Running commands is only supported on Windows.")}>
+            {advancedRows}
+          </SettingsUnavailableGroup>
+        ) : (
+          advancedRows
+        )}
+      </FoldedSettingsSection>
+    </>
   );
 }
 

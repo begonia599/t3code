@@ -203,6 +203,11 @@ import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/com
 import { Button } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import {
+  WINDOWS_FOLDERS_SETTINGS_ID,
+  windowsProjectErrorCopy,
+} from "./windowsProjects/windowsProjectCopy";
+import { canCreateWindowsProject, createWindowsProject } from "../state/windowsProjects";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
@@ -1595,18 +1600,86 @@ function OpenCommandPaletteDialog(props: {
     void navigate({ to: "/settings/source-control" });
   }, [navigate, setOpen]);
 
+  // "Folder on this PC": the desktop picks a Windows folder, the server makes its
+  // synced copy and project, and the thread opens there. Nothing else to set up.
+  const startWindowsProject = useCallback(
+    async (environmentId: EnvironmentId): Promise<void> => {
+      setOpen(false);
+      let result: Awaited<ReturnType<typeof createWindowsProject>>;
+      try {
+        result = await createWindowsProject({ environmentId });
+      } catch (error) {
+        const copy = windowsProjectErrorCopy(error);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: t(copy.title),
+            description: t(copy.description),
+            ...(copy.opensSettings
+              ? {
+                  actionProps: {
+                    children: t("Open settings"),
+                    onClick: () => {
+                      void navigate({
+                        to: "/settings/integrations",
+                        hash: WINDOWS_FOLDERS_SETTINGS_ID,
+                        state: { settingsTargetHighlight: true },
+                      });
+                    },
+                  },
+                }
+              : {}),
+          }),
+        );
+        return;
+      }
+      if (result === null) return;
+      const projectRef = scopeProjectRef(environmentId, result.projectId);
+      await waitForProject(projectRef, 3_000).catch(() => null);
+      const navigation = await settlePromise(() => handleNewThread(projectRef));
+      if (navigation._tag === "Failure") {
+        const error = squashAtomCommandFailure(navigation);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to open project",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+        return;
+      }
+      if (!result.created) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: t("This folder is already a project"),
+            description: t("Opened the existing project instead."),
+          }),
+        );
+      }
+    },
+    [handleNewThread, navigate, setOpen, t],
+  );
+
   const buildAddProjectSourceGroups = useCallback(
     (
       environmentId: EnvironmentId,
       readinessBySource: AddProjectRemoteSourceReadiness,
     ): CommandPaletteView["groups"] => {
+      // On the Windows app talking to a remote server, "local" would be
+      // ambiguous: offer this PC's folders first and name the server browse plainly.
+      const windowsAvailable = canCreateWindowsProject(environmentId);
       const sourceItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [
         {
           kind: "action",
           value: `action:add-project:${environmentId}:local`,
-          searchTerms: ["local", "folder", "directory", "browse"],
-          title: "Local folder",
-          description: "Browse a folder on disk",
+          searchTerms: windowsAvailable
+            ? ["server", "folder", "directory", "browse", "remote"]
+            : ["local", "folder", "directory", "browse"],
+          title: windowsAvailable ? "Folder on the server" : "Local folder",
+          description: windowsAvailable
+            ? "Work directly in a folder on the server"
+            : "Browse a folder on disk",
           icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
           keepOpen: true,
           run: async () => {
@@ -1626,6 +1699,20 @@ function OpenCommandPaletteDialog(props: {
           keepOpen: true,
           run: async () => {
             startNewProject(environmentId, environmentId);
+          },
+        });
+      }
+
+      if (windowsAvailable) {
+        sourceItems.unshift({
+          kind: "action",
+          value: `action:add-project:${environmentId}:windows`,
+          searchTerms: ["windows", "this pc", "this computer", "local", "folder", "sync", "unity"],
+          title: "Folder on this PC",
+          description: "Pick or create a folder here; it stays in sync with the server",
+          icon: <MonitorIcon className={ITEM_ICON_CLASS} />,
+          run: async () => {
+            await startWindowsProject(environmentId);
           },
         });
       }
@@ -1706,6 +1793,7 @@ function OpenCommandPaletteDialog(props: {
       startAddProjectBrowse,
       startAddProjectClone,
       startNewProject,
+      startWindowsProject,
     ],
   );
 

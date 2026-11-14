@@ -22,8 +22,11 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { createPortal } from "react-dom";
 import GitActionsControl from "../GitActionsControl";
+import { WindowsProjectHeaderMarker } from "../windowsProjects/WindowsProjectBadge";
+import { useWindowsProjectInfo } from "~/state/windowsProjects";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -195,6 +198,13 @@ export const ChatHeader = memo(function ChatHeader({
   );
   if (!actionsCollapsed && actionsOpen) setActionsOpen(false);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const navigate = useNavigate();
+  // Windows-linked projects keep diffs, but their files are owned by the Windows
+  // folder, so commit/push/PR actions on the server copy are hidden.
+  const windowsProject = useWindowsProjectInfo(
+    activeProject?.environmentId ?? null,
+    activeProject?.id ?? null,
+  );
   const activeProjectName = activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const fileScripts = useT3ProjectFileScripts(
@@ -381,7 +391,7 @@ export const ChatHeader = memo(function ChatHeader({
           />
         </>
       )}
-      {activeProjectName && gitCwd && (
+      {activeProjectName && gitCwd && !windowsProject && (
         <>
           {actionsCollapsed && (activeProjectScripts || showOpenInPicker) && <MenuSeparator />}
           <GitActionsControl
@@ -428,6 +438,20 @@ export const ChatHeader = memo(function ChatHeader({
                 </TooltipTrigger>
                 <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
               </Tooltip>
+              {windowsProject ? (
+                <span className="ml-1.5 inline-flex">
+                  <WindowsProjectHeaderMarker
+                    info={windowsProject}
+                    onOpenSettings={() =>
+                      void navigate({
+                        to: "/settings/integrations",
+                        hash: "windows-folders",
+                        state: { settingsTargetHighlight: true },
+                      })
+                    }
+                  />
+                </span>
+              ) : null}
             </WorkspaceBreadcrumbItem>
             <WorkspaceBreadcrumbSeparator>
               <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>

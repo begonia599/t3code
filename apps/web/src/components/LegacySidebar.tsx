@@ -215,6 +215,8 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { WindowsProjectSidebarBadge } from "~/components/windowsProjects/WindowsProjectBadge";
+import { useWindowsProjectInfo } from "~/state/windowsProjects";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -1171,6 +1173,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isManualProjectSorting,
     dragHandleProps,
   } = props;
+  const windowsProject = useWindowsProjectInfo(project.environmentId, project.id);
   const environmentMachine = project.allRemoteMembersAreWsl
     ? "linux"
     : project.allRemoteMembersAreDesktopLocal
@@ -2424,7 +2427,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         {/* Environment badge – visible by default, crossfades with the
             "new thread" button on hover using the same pointer-events +
             opacity pattern as the thread row archive/timestamp swap. */}
-        {project.environmentPresence === "remote-only" && (
+        {windowsProject ? (
+          <WindowsProjectSidebarBadge info={windowsProject} />
+        ) : project.environmentPresence === "remote-only" ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -2446,7 +2451,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 : `Remote environment: ${project.remoteEnvironmentLabels.join(", ")}`}
             </TooltipPopup>
           </Tooltip>
-        )}
+        ) : null}
         <Tooltip>
           <TooltipTrigger
             render={
