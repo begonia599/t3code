@@ -118,11 +118,13 @@ export async function createRemoteControlStore(options: {
     input: GrantInput,
     signal: AbortSignal,
     awaiting: () => Promise<void>,
+    linked = false,
   ) => {
     if (signal.aborted) throw failure("CANCELLED");
     const state = grantState(input.environmentId, input.threadId);
     if (state === "denied")
       throw failure("GRANT_DENIED", "This thread was denied within the last ten minutes");
+    if (!input.strictMode && linked) return;
     if (!input.strictMode && state === "granted" && input.threadId) {
       const key = keyOf(input.environmentId, input.threadId);
       grants.set(key, { ...grants.get(key)!, lastUsedAt: new Date(now()).toISOString() });

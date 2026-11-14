@@ -140,3 +140,15 @@ export const REMOTE_CONTROL_PENDING_CHANGED_CHANNEL = "desktop:remote-control-pe
 export const REMOTE_CONTROL_RESOLVE_GRANT_CHANNEL = "desktop:remote-control-resolve-grant";
 export const REMOTE_CONTROL_READ_AUDIT_CHANNEL = "desktop:remote-control-read-audit";
 export const REMOTE_CONTROL_DISCONNECT_ALL_CHANNEL = "desktop:remote-control-disconnect-all";
+
+export const LINKED_PROJECTS_PICK_FOLDER_CHANNEL = "linked-projects:pick-folder";
+export const LINKED_PROJECTS_REGISTER_CHANNEL = "linked-projects:register";
+export const LINKED_PROJECTS_LIST_CHANNEL = "linked-projects:list";
+export const LINKED_PROJECTS_GET_STATUSES_CHANNEL = "linked-projects:get-statuses";
+export const LINKED_PROJECTS_PAUSE_CHANNEL = "linked-projects:pause";
+export const LINKED_PROJECTS_RESUME_CHANNEL = "linked-projects:resume";
+export const LINKED_PROJECTS_REMOVE_CHANNEL = "linked-projects:remove";
+export const LINKED_PROJECTS_FLUSH_CHANNEL = "linked-projects:flush";
+export const LINKED_PROJECTS_RESOLVE_CONFLICT_CHANNEL = "linked-projects:resolve-conflict";
+export const LINKED_PROJECTS_CHANGED_CHANNEL = "linked-projects:changed";
+export const LINKED_PROJECTS_STATUS_CHANGED_CHANNEL = "linked-projects:status-changed";

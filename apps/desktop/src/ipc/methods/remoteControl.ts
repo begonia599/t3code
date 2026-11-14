@@ -28,6 +28,15 @@ import { ElectronWindow } from "../../electron/ElectronWindow.ts";
 import * as Channels from "../channels.ts";
 import { makeIpcMethod } from "../DesktopIpc.ts";
 
+const configPayload = (config: RemoteControlConfig): RemoteControlConfig => ({
+  hostId: config.hostId,
+  hostName: config.hostName,
+  enabledEnvironmentIds: config.enabledEnvironmentIds,
+  allowlist: config.allowlist,
+  mappings: config.mappings,
+  strictMode: config.strictMode,
+});
+
 class RemoteControlIpcError extends Schema.TaggedError<RemoteControlIpcError>()(
   "RemoteControlIpcError",
   { message: Schema.String },
@@ -71,10 +80,13 @@ export const setEnvironmentEnabled = makeIpcMethod({
       router.cancelEnvironment(environmentId);
     }
     if (change.changed)
-      yield* windows.sendAll(Channels.REMOTE_CONTROL_CONFIG_CHANGED_CHANNEL, {
-        ...change.settings.remoteControl,
-        hostName: NodeOS.hostname(),
-      });
+      yield* windows.sendAll(
+        Channels.REMOTE_CONTROL_CONFIG_CHANGED_CHANNEL,
+        configPayload({
+          ...change.settings.remoteControl,
+          hostName: NodeOS.hostname(),
+        }),
+      );
     if (change.changed)
       yield* windows.sendAll(
         Channels.REMOTE_CONTROL_ENABLED_CHANGED_CHANNEL,
@@ -166,7 +178,7 @@ export const updateConfig = makeIpcMethod({
   handler: Effect.fn(function* (patch) {
     const settings = yield* DesktopAppSettings;
     const change = yield* settings.updateRemoteControlConfig(patch);
-    const config = { ...change.settings.remoteControl, hostName: NodeOS.hostname() };
+    const config = configPayload({ ...change.settings.remoteControl, hostName: NodeOS.hostname() });
     if (change.changed)
       yield* (yield* ElectronWindow).sendAll(
         Channels.REMOTE_CONTROL_CONFIG_CHANGED_CHANNEL,

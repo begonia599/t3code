@@ -1,3 +1,4 @@
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -656,6 +657,7 @@ it.effect("migrates remote-control fields and validates and persists normalized 
       assert.deepEqual(migrated.remoteControl, {
         hostId: "91d581f4-d87a-4efe-967c-2b60314575bb",
         enabledEnvironmentIds: ["env"],
+        linkedProjects: [],
         allowlist: [],
         mappings: [],
         strictMode: false,
@@ -678,4 +680,63 @@ it.effect("migrates remote-control fields and validates and persists normalized 
       assert.deepEqual((yield* settings.load).remoteControl.allowlist, ["c:\\work"]);
     }),
   ),
+);
+
+it.effect(
+  "persists linked folders separately from advanced manual paths and rejects duplicates",
+  () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const first = yield* settings.load;
+        const record = {
+          id: "91d581f4-d87a-4efe-967c-2b60314575bb",
+          environmentId: EnvironmentId.make("remote"),
+          projectId: ProjectId.make("linked"),
+          hostId: first.remoteControl.hostId,
+          serverPath: "/linked/",
+          winPath: "C:/linked/",
+          syncSession: "t3-link-91d581f4",
+          paused: false,
+          createdAt: "2026-11-14T00:00:00.000Z",
+        };
+        yield* settings.setLinkedProjects([record]);
+        const reloaded = yield* settings.load;
+        assert.deepEqual(reloaded.remoteControl.linkedProjects, [
+          { ...record, serverPath: "/linked", winPath: "C:\\linked" },
+        ]);
+        assert.deepEqual(reloaded.remoteControl.mappings, []);
+        assert.deepEqual(reloaded.remoteControl.allowlist, []);
+        const duplicateProject = yield* settings
+          .setLinkedProjects([
+            record,
+            { ...record, id: "10f8b3af-ecad-4587-88dd-aab9ab5312c3", winPath: "D:/other" },
+          ])
+          .pipe(Effect.flip);
+        assert.include(duplicateProject.message, "Duplicate");
+        const duplicatePath = yield* settings
+          .setLinkedProjects([
+            record,
+            {
+              ...record,
+              id: "10f8b3af-ecad-4587-88dd-aab9ab5312c3",
+              projectId: ProjectId.make("other"),
+              winPath: "c:/LINKED",
+            },
+          ])
+          .pipe(Effect.flip);
+        assert.include(duplicatePath.message, "Duplicate");
+        assert.deepEqual(
+          (yield* settings.get).remoteControl.linkedProjects,
+          reloaded.remoteControl.linkedProjects,
+        );
+        yield* settings.updateRemoteControlConfig({
+          mappings: [{ serverPath: "/manual", winPath: "D:/manual" }],
+        });
+        assert.deepEqual(
+          (yield* settings.load).remoteControl.linkedProjects,
+          reloaded.remoteControl.linkedProjects,
+        );
+      }),
+    ),
 );

@@ -25,10 +25,17 @@ export interface DesktopChannelHostDependencies {
   };
   readonly clock: { readonly now: () => number };
   readonly onError: (error: unknown) => void;
+  readonly onConnectionChange?: (connected: boolean) => void;
 }
 
 export function createDesktopChannelHostLoop(options: DesktopChannelHostDependencies) {
   let connectionId: string | null = null;
+  let lastConnectionState: boolean | undefined;
+  const reportConnection = (connected: boolean) => {
+    if (lastConnectionState === connected) return;
+    lastConnectionState = connected;
+    options.onConnectionChange?.(connected);
+  };
   const active = new Map<
     string,
     { connectionId: string; started: Promise<void>; cancelled: boolean }
@@ -50,11 +57,13 @@ export function createDesktopChannelHostLoop(options: DesktopChannelHostDependen
       );
     }
     active.clear();
+    reportConnection(false);
   };
   const receive = async (event: DesktopChannelStreamEvent): Promise<void> => {
     if (event.type === "connected") {
-      if (connectionId !== event.connectionId) disconnect();
+      if (connectionId !== null && connectionId !== event.connectionId) disconnect();
       connectionId = event.connectionId;
+      reportConnection(true);
       return;
     }
     if (event.type === "cancel") {

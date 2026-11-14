@@ -285,6 +285,35 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       };
     },
   },
+  linkedProjects: {
+    pickFolder: () => ipcRenderer.invoke(IpcChannels.LINKED_PROJECTS_PICK_FOLDER_CHANNEL),
+    register: (input) => ipcRenderer.invoke(IpcChannels.LINKED_PROJECTS_REGISTER_CHANNEL, input),
+    list: () => ipcRenderer.invoke(IpcChannels.LINKED_PROJECTS_LIST_CHANNEL),
+    getStatuses: () => ipcRenderer.invoke(IpcChannels.LINKED_PROJECTS_GET_STATUSES_CHANNEL),
+    pause: (id) => ipcRenderer.invoke(IpcChannels.LINKED_PROJECTS_PAUSE_CHANNEL, { id }),
+    resume: (id) => ipcRenderer.invoke(IpcChannels.LINKED_PROJECTS_RESUME_CHANNEL, { id }),
+    remove: (id) => ipcRenderer.invoke(IpcChannels.LINKED_PROJECTS_REMOVE_CHANNEL, { id }),
+    flush: (id) => ipcRenderer.invoke(IpcChannels.LINKED_PROJECTS_FLUSH_CHANNEL, { id }),
+    resolveConflict: (input) =>
+      ipcRenderer.invoke(IpcChannels.LINKED_PROJECTS_RESOLVE_CONFLICT_CHANNEL, input),
+    onChanged: (listener) => {
+      const handler = (
+        _event: unknown,
+        value: readonly import("@t3tools/contracts").DesktopLinkedFolder[],
+      ) => listener(value);
+      ipcRenderer.on(IpcChannels.LINKED_PROJECTS_CHANGED_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(IpcChannels.LINKED_PROJECTS_CHANGED_CHANNEL, handler);
+    },
+    onStatusChanged: (listener) => {
+      const handler = (
+        _event: unknown,
+        value: readonly import("@t3tools/contracts").LinkedSyncStatus[],
+      ) => listener(value);
+      ipcRenderer.on(IpcChannels.LINKED_PROJECTS_STATUS_CHANGED_CHANNEL, handler);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.LINKED_PROJECTS_STATUS_CHANGED_CHANNEL, handler);
+    },
+  },
   remoteControl: {
     getCapabilities: () => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_CAPABILITIES_CHANNEL),
     getConfig: () => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_GET_CONFIG_CHANNEL),

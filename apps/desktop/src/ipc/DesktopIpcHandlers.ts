@@ -68,6 +68,7 @@ import {
   setSnapShotAnimationDestination,
   setSnapShotShortcutSuppressed,
 } from "./methods/snapShot.ts";
+import * as LinkedProjectsIpc from "./methods/linkedProjects.ts";
 import * as RemoteControlIpc from "./methods/remoteControl.ts";
 import * as PreviewIpc from "./methods/preview.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
@@ -76,6 +77,16 @@ import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./m
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
   yield* installNotificationBadge();
+  yield* ipc.handle(LinkedProjectsIpc.pickFolder);
+  yield* ipc.handle(LinkedProjectsIpc.register);
+  yield* ipc.handle(LinkedProjectsIpc.list);
+  yield* ipc.handle(LinkedProjectsIpc.getStatuses);
+  yield* ipc.handle(LinkedProjectsIpc.pause);
+  yield* ipc.handle(LinkedProjectsIpc.resume);
+  yield* ipc.handle(LinkedProjectsIpc.remove);
+  yield* ipc.handle(LinkedProjectsIpc.flush);
+  yield* ipc.handle(LinkedProjectsIpc.resolveConflict);
+
   yield* ipc.handle(RemoteControlIpc.getHostIdentity);
   yield* ipc.handle(RemoteControlIpc.getEnabledEnvironmentIds);
   yield* ipc.handle(RemoteControlIpc.setEnvironmentEnabled);

@@ -11,6 +11,8 @@ import {
   DesktopExecLogResult,
   DesktopStatusResult,
   ThreadId,
+  EnvironmentId,
+  ProjectId,
   DESKTOP_EXEC_OUTPUT_LIMIT_BYTES,
   DESKTOP_EXEC_CHUNK_BYTES,
 } from "@t3tools/contracts";
@@ -367,15 +369,19 @@ it("enforces four concurrent executions and reports queued before starting the f
   ).toBe(true);
 });
 
-it.each([0, 5])("runs a PATH mutagen sync barrier, exit %s", async (code) => {
+it.each([0, 5])("runs a private-daemon mutagen sync barrier, exit %s", async (code) => {
   config = {
     ...config,
     mappings: [{ serverPath: "/work", winPath: "C:\\work", syncSession: "test-session" }],
   };
   const marker = NodePath.join(dir, "flushed");
+  syncEnvironment = async () => ({
+    T3_MUTAGEN_EXE: NodePath.join(dir, "mutagen"),
+    T3_MUTAGEN_DATA_DIRECTORY: NodePath.join(dir, "private-data"),
+  });
   await NodeFSP.writeFile(
     NodePath.join(dir, "mutagen"),
-    `#!${process.execPath}\n${pipeOutput}require('node:fs').writeFileSync(${JSON.stringify(marker)}, process.argv.slice(2).join(' ')); process.stderr.write('sync diagnostic'); process.exitCode=${code};\n`,
+    `#!${process.execPath}\n${pipeOutput}require('node:fs').writeFileSync(${JSON.stringify(marker)}, process.argv.slice(2).join(' ') + '|' + process.env.MUTAGEN_DATA_DIRECTORY + '|' + process.env.MUTAGEN_DISABLE_AUTOSTART); process.stderr.write('sync diagnostic'); process.exitCode=${code};\n`,
     { mode: 0o755 },
   );
   const events: Event[] = [];
@@ -393,7 +399,9 @@ it.each([0, 5])("runs a PATH mutagen sync barrier, exit %s", async (code) => {
     });
   else {
     expect(await operation).toMatchObject({ outcome: "exited" });
-    expect(events.find((e) => e.kind === "stdout")?.data).toBe("sync flush test-session");
+    expect(events.find((e) => e.kind === "stdout")?.data).toBe(
+      `sync flush test-session|${NodePath.join(dir, "private-data")}|1`,
+    );
   }
   expect(events.find((e) => e.kind === "progress")?.data).toBe(
     JSON.stringify({ type: "syncing", session: "test-session" }),
@@ -478,4 +486,206 @@ it("injects only public sync variables for the requesting environment", async ()
     if (event.kind === "stdout") output += event.data;
   });
   expect(output).toBe("|||||");
+});
+
+const linkedRecord = {
+  id: "91d581f4-d87a-4efe-967c-2b60314575bb",
+  environmentId: "env",
+  projectId: "project",
+  hostId: "91d581f4-d87a-4efe-967c-2b60314575bb",
+  serverPath: "/work",
+  winPath: "C:\\work",
+  syncSession: "t3-link-91d581f4",
+  paused: false,
+  createdAt: "2026-11-14T00:00:00.000Z",
+} as import("@t3tools/contracts").DesktopLinkedFolder;
+const linkedContext = {
+  ...request("").context,
+  projectId: linkedRecord.projectId,
+  workspaceRoot: "/work",
+  linkedHostId: linkedRecord.hostId,
+};
+const setupLinked = async () => {
+  await store.revokeGrant({ environmentId: "env", threadId: "thread" });
+  config = { ...config, hostId: linkedRecord.hostId, linkedProjects: [linkedRecord] };
+};
+const invokeLinked = (
+  context = linkedContext,
+  extra = {},
+  emit: (event: Event) => Promise<void> = async () => {},
+) =>
+  service.handlers.exec!({
+    request: { ...request("", extra), context },
+    environmentId: "env",
+    signal: new AbortController().signal,
+    emit,
+  });
+it("linked exec creates no thread grants, audits linked, and status/log remain observational", async () => {
+  await setupLinked();
+  const { linkedHostId: _linkedHostId, ...withoutHost } = linkedContext;
+  await invokeLinked(withoutHost as typeof linkedContext);
+  expect(store.listGrants()).toEqual([]);
+  expect(store.getPendingGrantRequests()).toEqual([]);
+  expect((await store.readAudit({ limit: 1 }))[0]?.authorization).toBe("linked");
+  const ctx = {
+    request: { ...request(""), context: linkedContext, input: {} },
+    environmentId: "env",
+    signal: new AbortController().signal,
+    emit: async () => {},
+  };
+  expect(await service.handlers.status!(ctx)).toMatchObject({ grant: "linked" });
+  expect(
+    await service.handlers.log!({ ...ctx, request: { ...ctx.request, input: { limit: 1 } } }),
+  ).toMatchObject({ entries: [expect.objectContaining({ authorization: "linked" })] });
+  config = { ...config, enabledEnvironmentIds: [] };
+  await expect(invokeLinked()).rejects.toMatchObject({ code: "REMOTE_DISABLED" });
+  expect(await service.handlers.status!(ctx)).toMatchObject({ enabled: false, grant: "linked" });
+  expect(
+    await service.handlers.log!({ ...ctx, request: { ...ctx.request, input: { limit: 1 } } }),
+  ).toMatchObject({ entries: expect.any(Array) });
+});
+it.each([
+  "environment",
+  "record",
+  "project",
+  "root",
+  "missing-project",
+  "missing-root",
+  "host",
+  "cwd",
+  "strict",
+])("falls back to the original prompt for invalid linked condition: %s", async (condition) => {
+  await setupLinked();
+  let context: import("@t3tools/contracts").DesktopChannelRequestContext = linkedContext;
+  if (condition === "record") config = { ...config, linkedProjects: [] };
+  if (condition === "environment")
+    config = {
+      ...config,
+      linkedProjects: [{ ...linkedRecord, environmentId: EnvironmentId.make("other") }],
+    };
+  if (condition === "project") context = { ...context, projectId: ProjectId.make("other") };
+  if (condition === "root") context = { ...context, workspaceRoot: "/other" };
+  if (condition === "missing-project") {
+    const { projectId: _projectId, ...rest } = context;
+    context = rest;
+  }
+  if (condition === "missing-root") {
+    const { workspaceRoot: _workspaceRoot, ...rest } = context;
+    context = rest;
+  }
+  if (condition === "host") context = { ...context, linkedHostId: "other" };
+  if (condition === "strict") config = { ...config, strictMode: true };
+  if (condition === "cwd") config = { ...config, allowlist: ["D:\\outside"] };
+  const pending = deferred<void>();
+  const operation = invokeLinked(
+    context as typeof linkedContext,
+    condition === "cwd" ? { winCwd: "D:\\outside" } : {},
+    async (event) => {
+      if (event.kind === "progress" && JSON.parse(event.data).type === "awaiting-grant")
+        pending.resolve();
+    },
+  );
+  const rejection = expect(operation).rejects.toMatchObject({ code: "GRANT_DENIED" });
+  await pending.promise;
+  await store.resolveGrant({
+    grantRequestId: store.getPendingGrantRequests()[0]!.grantRequestId,
+    decision: "deny",
+  });
+  await rejection;
+  expect(store.listGrants()).toEqual([]);
+  if (condition === "strict") {
+    config = { ...config, strictMode: false };
+    await expect(invokeLinked()).rejects.toMatchObject({ code: "GRANT_DENIED" });
+  }
+});
+it.each(["missing", "paused"])(
+  "skips private flush when %s without invoking PATH mutagen",
+  async (reason) => {
+    config = {
+      ...config,
+      mappings: [
+        { serverPath: "/work", winPath: "C:\\work", syncSession: linkedRecord.syncSession },
+      ],
+      linkedProjects: [{ ...linkedRecord, paused: reason === "paused" }],
+    };
+    await NodeFSP.writeFile(NodePath.join(dir, "mutagen"), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
+    syncEnvironment =
+      reason === "paused"
+        ? async () => ({
+            T3_MUTAGEN_EXE: NodePath.join(dir, "mutagen"),
+            T3_MUTAGEN_DATA_DIRECTORY: dir,
+          })
+        : async () => ({});
+    const events: Event[] = [];
+    expect(
+      await execute(
+        "",
+        async (event) => {
+          events.push(event);
+        },
+        {
+          env: {
+            PATH: `${dir}${NodePath.delimiter}${process.env.PATH}`,
+            T3_MUTAGEN_EXE: NodePath.join(dir, "mutagen"),
+            T3_MUTAGEN_DATA_DIRECTORY: dir,
+          },
+        },
+      ),
+    ).toMatchObject({ exitCode: 0 });
+    if (reason === "missing")
+      expect(events.some((event) => event.data.includes("sync-skipped"))).toBe(true);
+    expect(events.some((event) => event.data.includes('"type":"syncing"'))).toBe(false);
+  },
+);
+
+it.each([false, true])(
+  "status/log never authorize with the environment disabled (strict=%s)",
+  async (strictMode) => {
+    await setupLinked();
+    config = { ...config, enabledEnvironmentIds: [], strictMode };
+    const authorize = vi.spyOn(store, "authorize");
+    const ctx = {
+      request: { ...request(""), context: linkedContext, input: {} },
+      environmentId: "env",
+      signal: new AbortController().signal,
+      emit: vi.fn(async () => {}),
+    };
+    expect(await service.handlers.status!(ctx)).toMatchObject({
+      enabled: false,
+      strictMode,
+      grant: strictMode ? "none" : "linked",
+      allowlist: [linkedRecord.winPath],
+      mappings: expect.arrayContaining([
+        {
+          serverPath: linkedRecord.serverPath,
+          winPath: linkedRecord.winPath,
+          syncSession: linkedRecord.syncSession,
+        },
+      ]),
+    });
+    expect(
+      await service.handlers.log!({ ...ctx, request: { ...ctx.request, input: { limit: 1 } } }),
+    ).toEqual({ entries: [] });
+    expect(authorize).not.toHaveBeenCalled();
+    expect(ctx.emit).not.toHaveBeenCalled();
+    expect(store.getPendingGrantRequests()).toEqual([]);
+  },
+);
+it("status falls back to the existing grant on unmapped workspaces, and log needs no mapping", async () => {
+  const authorize = vi.spyOn(store, "authorize");
+  const ctx = {
+    request: {
+      ...request(""),
+      context: { ...linkedContext, workspaceRoot: "/unmapped" },
+      input: {},
+    },
+    environmentId: "env",
+    signal: new AbortController().signal,
+    emit: async () => {},
+  };
+  expect(await service.handlers.status!(ctx)).toMatchObject({ enabled: true, grant: "granted" });
+  expect(
+    await service.handlers.log!({ ...ctx, request: { ...ctx.request, input: { limit: 1 } } }),
+  ).toEqual({ entries: [] });
+  expect(authorize).not.toHaveBeenCalled();
 });

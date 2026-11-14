@@ -42,6 +42,10 @@ export const layer = Layer.effect(
     }
     yield* Effect.addFinalizer(() => Effect.promise(() => daemon.stop().catch(() => {})));
     return {
+      privateEnvironment: async () =>
+        daemon.running
+          ? { T3_MUTAGEN_EXE: paths.executable, T3_MUTAGEN_DATA_DIRECTORY: paths.dataDirectory }
+          : {},
       environment: async (environmentId: string) => {
         if (!daemon.running) return {};
         const host = syncHost(environmentId);

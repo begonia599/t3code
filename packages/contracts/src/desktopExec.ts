@@ -72,6 +72,7 @@ export const DesktopExecProgress = Schema.Union([
   Schema.Struct({ type: Schema.Literal("awaiting-grant") }),
   Schema.Struct({ type: Schema.Literal("syncing"), session: TrimmedNonEmptyString }),
   Schema.Struct({ type: Schema.Literal("queued") }),
+  Schema.Struct({ type: Schema.Literal("sync-skipped"), message: Schema.String }),
   Schema.Struct({
     type: Schema.Literal("started"),
     pid: NonNegativeInt,
@@ -139,6 +140,7 @@ export type DesktopExecLogInput = typeof DesktopExecLogInput.Type;
 /** One audit record; the desktop JSONL log is authoritative, the server table mirrors it. */
 export const DesktopExecLogEntry = Schema.Struct({
   requestId: TrimmedNonEmptyString,
+  authorization: Schema.optional(Schema.Literals(["linked", "prompt-or-session"])),
   startedAt: Schema.String,
   finishedAt: Schema.NullOr(Schema.String),
   threadId: Schema.NullOr(Schema.String),
@@ -176,7 +178,7 @@ export const DesktopStatusResult = Schema.Struct({
   enabled: Schema.Boolean,
   strictMode: Schema.Boolean,
   /** Grant state of request.context.threadId. */
-  grant: Schema.Literals(["granted", "none", "denied"]),
+  grant: Schema.Literals(["granted", "none", "denied", "linked"]),
   allowlist: Schema.Array(Schema.String),
   mappings: Schema.Array(DesktopPathMapping),
   running: NonNegativeInt,

@@ -1,3 +1,4 @@
+import { LinkedProjects } from "../sync/LinkedProjects.ts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -296,6 +297,8 @@ const startup = Effect.gen(function* () {
   yield* electronApp.setPath("userData", userDataPath);
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
   yield* desktopSettings.load;
+  // Reconcile only after loading local authority; an empty startup snapshot would delete valid sessions.
+  (yield* LinkedProjects).start();
 
   if (linuxElectronOptions !== null) {
     yield* logStartupInfo("linux password store configured", {

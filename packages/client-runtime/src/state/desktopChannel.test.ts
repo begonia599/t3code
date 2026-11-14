@@ -28,7 +28,10 @@ const request: DesktopChannelStreamEvent = {
   context: {},
   timeoutMs: 1000,
 };
-const setup = (next: DesktopChannelHostDependencies["bridge"]["next"]) => {
+const setup = (
+  next: DesktopChannelHostDependencies["bridge"]["next"],
+  onConnectionChange?: (connected: boolean) => void,
+) => {
   const options: DesktopChannelHostDependencies = {
     host: {
       hostId: "91d581f4-d87a-4efe-967c-2b60314575bb",
@@ -42,6 +45,7 @@ const setup = (next: DesktopChannelHostDependencies["bridge"]["next"]) => {
     rpc: { emit: vi.fn(async () => {}), respond: vi.fn(async () => {}) },
     clock: { now: () => 0 },
     onError: vi.fn(),
+    ...(onConnectionChange ? { onConnectionChange } : {}),
   };
   return { options, loop: createDesktopChannelHostLoop(options) };
 };
@@ -212,3 +216,56 @@ it("cancels an in-flight request when the stream reports a lost connection", asy
     registry.dispose();
   }
 });
+
+it("reports connection changes once, including replacement, disconnect and reconnect", async () => {
+  const changed = vi.fn();
+  const { loop } = setup(async () => ({ type: "result", ok: true, result: null }), changed);
+  await loop.receive(connected);
+  await loop.receive(connected);
+  expect(changed.mock.calls).toEqual([[true]]);
+  await loop.receive({ type: "connected", connectionId: "replacement" });
+  loop.disconnect();
+  loop.disconnect();
+  await loop.receive(connected);
+  loop.disconnect();
+  expect(changed.mock.calls).toEqual([[true], [false], [true], [false], [true], [false]]);
+});
+it("reports an initially disconnected stream only once", () => {
+  const changed = vi.fn();
+  const { loop } = setup(async () => ({ type: "result", ok: true, result: null }), changed);
+  loop.disconnect();
+  loop.disconnect();
+  expect(changed.mock.calls).toEqual([[false]]);
+});
+it.each(["null", "complete", "failure", "unmount"] as const)(
+  "reports disconnection on stream %s without duplicate finalizer notifications",
+  async (ending) => {
+    const online = deferred<void>();
+    const offline = deferred<void>();
+    const changed = vi.fn((value: boolean) => {
+      if (value) online.resolve();
+      else offline.resolve();
+    });
+    const { options } = setup(async () => ({ type: "result", ok: true, result: null }), changed);
+    const tail =
+      ending === "null"
+        ? Stream.fromIterable([null, null]).pipe(Stream.concat(Stream.never))
+        : ending === "failure"
+          ? Stream.fail(new Error("stream failed"))
+          : ending === "unmount"
+            ? Stream.never
+            : Stream.empty;
+    const registry = AtomRegistry.make();
+    try {
+      registry.mount(
+        Atom.make(runDesktopChannelHost(Stream.make(connected).pipe(Stream.concat(tail)), options)),
+      );
+      await online.promise;
+      if (ending === "unmount") registry.dispose();
+      await offline.promise;
+    } finally {
+      registry.dispose();
+    }
+    expect(changed.mock.calls).toEqual([[true], [false]]);
+  },
+);

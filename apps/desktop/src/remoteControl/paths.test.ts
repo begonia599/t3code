@@ -61,3 +61,38 @@ describe("Windows cwd", () => {
     expect(normalizeRemoteControlConfig({})).toEqual({});
   });
 });
+
+it("derives paths only for the owning environment without changing manual config", () => {
+  const linkedProjects = [
+    {
+      id: "link",
+      environmentId: "env",
+      projectId: "project",
+      hostId: "host",
+      serverPath: "/linked",
+      winPath: "W:\\linked",
+      syncSession: "link-session",
+      paused: false,
+      createdAt: "2026-11-14T00:00:00Z",
+    },
+  ] as unknown as readonly import("@t3tools/contracts").DesktopLinkedFolder[];
+  const combined = { ...config, linkedProjects };
+  expect(
+    resolveWindowsCwd({ serverCwd: "/linked/src", environmentId: "env" }, combined).winCwd,
+  ).toBe("W:\\linked\\src");
+  expect(
+    resolveWindowsCwd({ serverCwd: "/", winCwd: "w:\\LINKED", environmentId: "env" }, combined)
+      .mapping?.syncSession,
+  ).toBe("link-session");
+  expect(() =>
+    resolveWindowsCwd({ serverCwd: "/linked", environmentId: "other" }, combined),
+  ).toThrow();
+  expect(() =>
+    resolveWindowsCwd({ serverCwd: "/", winCwd: "W:\\linked", environmentId: "other" }, combined),
+  ).toThrow();
+  expect(resolveWindowsCwd({ serverCwd: "/work", environmentId: "other" }, combined).winCwd).toBe(
+    "D:\\work",
+  );
+  expect(combined.mappings).toHaveLength(2);
+  expect(combined.allowlist).toEqual(config.allowlist);
+});

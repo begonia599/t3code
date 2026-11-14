@@ -1,3 +1,4 @@
+import type { LinkedProjectsBridge } from "./desktopLink.ts";
 import * as Schema from "effect/Schema";
 import {
   DesktopChannelHost,
@@ -1235,6 +1236,7 @@ export interface RemoteControlBridge {
 
 export interface DesktopBridge {
   remoteControl: RemoteControlBridge;
+  linkedProjects: LinkedProjectsBridge;
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */
   getPathForFile?: (file: File) => string;

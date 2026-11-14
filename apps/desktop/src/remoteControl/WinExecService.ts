@@ -27,7 +27,7 @@ import { DesktopEnvironment } from "../app/DesktopEnvironment.ts";
 import { DesktopAppSettings, type DesktopSettings } from "../settings/DesktopAppSettings.ts";
 import { RemoteControlStore } from "./RemoteControlStore.ts";
 import type { RequestHandler } from "./RemoteControlRequestRouter.ts";
-import { resolveWindowsCwd } from "./paths.ts";
+import { resolveWindowsCwd, matchingLinkedProject, effectiveRemoteControlPaths } from "./paths.ts";
 import {
   cmdCommandLine,
   commandSummary,
@@ -352,7 +352,7 @@ export function createWinExecService(options: {
       const config = await options.getConfig();
       if (!config.enabledEnvironmentIds.includes(environmentId))
         throw fail("REMOTE_DISABLED", "Remote control is disabled for this environment");
-      const resolved = resolveWindowsCwd(input, config);
+      const resolved = resolveWindowsCwd({ ...input, environmentId }, config);
       const cwd = options.localDirectory?.(resolved.winCwd) ?? resolved.winCwd;
       entry = { ...entry, winCwd: resolved.winCwd };
       try {
@@ -363,6 +363,9 @@ export function createWinExecService(options: {
           `Directory does not exist or is inaccessible: ${resolved.winCwd}: ${String(cause)}`,
         );
       }
+      const linked =
+        !config.strictMode &&
+        matchingLinkedProject(config, environmentId, request.context, resolved.winCwd);
       await options.store.authorize(
         {
           environmentId,
@@ -376,27 +379,55 @@ export function createWinExecService(options: {
         },
         signal,
         () => progress(emit, { type: "awaiting-grant" }),
+        Boolean(linked),
       );
+      entry = { ...entry, authorization: linked ? "linked" : "prompt-or-session" };
       await acquire(signal, emit);
       acquired = true;
       if (signal.aborted) throw fail("CANCELLED");
-      const env = mergedEnvironment(
-        { ...input.env, ...(await options.syncEnvironment?.(environmentId)) },
-        options.platform,
+      const syncEnv: Readonly<Record<string, string>> =
+        (await options.syncEnvironment?.(environmentId).catch(() => ({}))) ?? {};
+      const env = mergedEnvironment({ ...input.env, ...syncEnv }, options.platform);
+      const paused = config.linkedProjects.some(
+        (link) =>
+          link.environmentId === environmentId &&
+          link.syncSession === resolved.mapping?.syncSession &&
+          link.paused,
       );
-      if (resolved.mapping?.syncSession && !input.noSync) {
+      if (
+        resolved.mapping?.syncSession &&
+        !input.noSync &&
+        !paused &&
+        (!syncEnv.T3_MUTAGEN_EXE || !syncEnv.T3_MUTAGEN_DATA_DIRECTORY)
+      ) {
+        await progress(emit, {
+          type: "sync-skipped",
+          message: "Desktop private Mutagen is unavailable; flush skipped",
+        });
+      }
+      if (
+        resolved.mapping?.syncSession &&
+        !input.noSync &&
+        !paused &&
+        syncEnv.T3_MUTAGEN_EXE &&
+        syncEnv.T3_MUTAGEN_DATA_DIRECTORY
+      ) {
         const session = resolved.mapping.syncSession;
         await progress(emit, { type: "syncing", session });
         let stderr = "";
         try {
-          const executable = await resolveExecutable("mutagen", cwd, env, options.platform);
+          const executable = syncEnv.T3_MUTAGEN_EXE;
           const result = await runProcess({
             platform: options.platform,
             executable,
             args: ["sync", "flush", session],
             cwd,
             winCwd: resolved.winCwd,
-            env,
+            env: {
+              ...process.env,
+              MUTAGEN_DATA_DIRECTORY: syncEnv.T3_MUTAGEN_DATA_DIRECTORY,
+              MUTAGEN_DISABLE_AUTOSTART: "1",
+            },
             timeoutMs: 60_000,
             signal,
             emit: async (event) => {
@@ -499,23 +530,39 @@ export function createWinExecService(options: {
   };
   const handlers: Record<string, RequestHandler> = {
     exec,
-    log: async ({ request }) => {
-      const input = decode(DesktopExecLogInput, request.input);
+    log: async (context) => {
+      const input = decode(DesktopExecLogInput, context.request.input);
       try {
         return { entries: await options.store.readAudit(input) };
       } catch (cause) {
         throw fail("INTERNAL", `Cannot read execution audit: ${String(cause)}`);
       }
     },
-    status: async ({ request, environmentId }) => {
+    status: async (context) => {
+      const { request, environmentId } = context;
       decode(DesktopStatusInput, request.input);
       const config = await options.getConfig();
+      let linked = false;
+      if (!config.strictMode && request.context.workspaceRoot) {
+        try {
+          const { winCwd } = resolveWindowsCwd(
+            { serverCwd: request.context.workspaceRoot, environmentId },
+            config,
+          );
+          linked = Boolean(matchingLinkedProject(config, environmentId, request.context, winCwd));
+        } catch {
+          /* Status remains available even when this workspace has no Windows mapping. */
+        }
+      }
+      const effective = effectiveRemoteControlPaths(config, environmentId);
       return {
         enabled: config.enabledEnvironmentIds.includes(environmentId),
         strictMode: config.strictMode,
-        grant: options.store.grantState(environmentId, request.context.threadId),
-        allowlist: config.allowlist,
-        mappings: config.mappings,
+        grant: linked
+          ? "linked"
+          : options.store.grantState(environmentId, request.context.threadId),
+        allowlist: effective.allowlist,
+        mappings: effective.mappings,
         running: active,
         shells: await getShells(),
       };

@@ -1,5 +1,6 @@
 import type {
   DesktopChannelCapabilities,
+  LinkedProjectsBridge,
   DesktopExecLogEntry,
   RemoteControlBridge,
   RemoteControlConfig,
@@ -177,4 +178,9 @@ export function useRemoteControlAudit() {
     }
   }, []);
   return { ...state, loading, refresh };
+}
+
+export function readLinkedProjectsBridge(): LinkedProjectsBridge | null {
+  if (!isElectron || typeof window === "undefined") return null;
+  return window.desktopBridge?.linkedProjects ?? null;
 }

@@ -2,6 +2,8 @@
 import * as NodePath from "node:path";
 import type {
   DesktopExecInput,
+  DesktopLinkedFolder,
+  DesktopChannelRequestContext,
   DesktopPathMapping,
   RemoteControlConfigPatch,
 } from "@t3tools/contracts";
@@ -70,13 +72,58 @@ export function withinWindowsPath(candidate: string, root: string) {
   );
 }
 
-export function resolveWindowsCwd(
-  input: Pick<DesktopExecInput, "winCwd" | "serverCwd">,
+export function effectiveRemoteControlPaths(
   config: {
     readonly allowlist: readonly string[];
     readonly mappings: readonly DesktopPathMapping[];
+    readonly linkedProjects?: readonly DesktopLinkedFolder[];
+  },
+  environmentId?: string,
+) {
+  const links = config.linkedProjects?.filter((link) => link.environmentId === environmentId) ?? [];
+  return {
+    allowlist: [...config.allowlist, ...links.map((link) => link.winPath)],
+    mappings: [
+      ...config.mappings,
+      ...links.map(({ serverPath, winPath, syncSession }) => ({
+        serverPath,
+        winPath,
+        syncSession,
+      })),
+    ],
+  };
+}
+
+export function matchingLinkedProject(
+  config: { readonly hostId: string; readonly linkedProjects: readonly DesktopLinkedFolder[] },
+  environmentId: string,
+  context: DesktopChannelRequestContext,
+  winCwd: string,
+) {
+  if (
+    !context.projectId ||
+    !context.workspaceRoot ||
+    (context.linkedHostId !== undefined && context.linkedHostId !== config.hostId)
+  )
+    return undefined;
+  return config.linkedProjects.find(
+    (link) =>
+      link.environmentId === environmentId &&
+      link.projectId === context.projectId &&
+      link.serverPath === context.workspaceRoot &&
+      withinWindowsPath(winCwd, link.winPath),
+  );
+}
+
+export function resolveWindowsCwd(
+  input: Pick<DesktopExecInput, "winCwd" | "serverCwd"> & { readonly environmentId?: string },
+  config: {
+    readonly allowlist: readonly string[];
+    readonly mappings: readonly DesktopPathMapping[];
+    readonly linkedProjects?: readonly DesktopLinkedFolder[];
   },
 ) {
+  config = effectiveRemoteControlPaths(config, input.environmentId);
   let mapping: DesktopPathMapping | undefined;
   let candidate = input.winCwd;
   if (candidate === undefined) {

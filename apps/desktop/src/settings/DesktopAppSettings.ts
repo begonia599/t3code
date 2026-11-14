@@ -1,5 +1,6 @@
 import {
   DesktopPathMapping,
+  DesktopLinkedFolder,
   type RemoteControlConfigPatch,
   DesktopServerExposureModeSchema,
   DesktopUpdateChannelSchema,
@@ -35,6 +36,7 @@ export interface DesktopSettings {
     readonly allowlist: readonly string[];
     readonly mappings: readonly DesktopPathMapping[];
     readonly strictMode: boolean;
+    readonly linkedProjects: readonly DesktopLinkedFolder[];
   };
   readonly localEnvironmentEnabled: boolean;
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
@@ -91,6 +93,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
     allowlist: [],
     mappings: [],
     strictMode: false,
+    linkedProjects: [],
   },
   localEnvironmentEnabled: true,
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
@@ -121,6 +124,7 @@ const DesktopSettingsDocument = Schema.Struct({
       allowlist: Schema.optionalKey(Schema.Array(Schema.String)),
       mappings: Schema.optionalKey(Schema.Array(DesktopPathMapping)),
       strictMode: Schema.optionalKey(Schema.Boolean),
+      linkedProjects: Schema.optionalKey(Schema.Array(DesktopLinkedFolder)),
     }),
   ),
   localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
@@ -185,6 +189,9 @@ export class RemoteControlConfigError extends Schema.TaggedError<RemoteControlCo
 export class DesktopAppSettings extends Context.Service<
   DesktopAppSettings,
   {
+    readonly setLinkedProjects: (
+      records: readonly DesktopLinkedFolder[],
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError | RemoteControlConfigError>;
     readonly updateRemoteControlConfig: (
       patch: RemoteControlConfigPatch,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError | RemoteControlConfigError>;
@@ -257,6 +264,23 @@ export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds |
   return Option.getOrNull(decodeDesktopWindowBounds(value));
 }
 
+export function normalizeLinkedProjects(
+  records: readonly DesktopLinkedFolder[],
+): DesktopLinkedFolder[] {
+  const projects = new Set<string>();
+  const paths = new Set<string>();
+  return records.map((record) => {
+    const mapping = normalizeRemoteControlConfig({ mappings: [record] }).mappings![0]!;
+    const key = JSON.stringify([record.environmentId, record.projectId]);
+    const path = mapping.winPath.toLowerCase();
+    if (projects.has(key) || paths.has(path))
+      throw new Error("Duplicate linked project or Windows folder");
+    projects.add(key);
+    paths.add(path);
+    return { ...record, ...mapping };
+  });
+}
+
 function normalizeDesktopSettingsDocument(
   parsed: DesktopSettingsDocument,
   appVersion: string,
@@ -284,6 +308,7 @@ function normalizeDesktopSettingsDocument(
       mappings: [],
       strictMode: false,
       ...normalizeRemoteControlConfig(parsed.remoteControl ?? {}),
+      linkedProjects: normalizeLinkedProjects(parsed.remoteControl?.linkedProjects ?? []),
     },
     localEnvironmentEnabled:
       parsed.localEnvironmentEnabled ?? defaultSettings.localEnvironmentEnabled,
@@ -594,6 +619,18 @@ export const make = Effect.gen(function* () {
 
   return DesktopAppSettings.of({
     get: SynchronizedRef.get(settingsRef),
+    setLinkedProjects: (records) =>
+      Effect.try({
+        try: () => normalizeLinkedProjects(records),
+        catch: (cause) => new RemoteControlConfigError({ message: String(cause) }),
+      }).pipe(
+        Effect.flatMap((linkedProjects) =>
+          persist((settings) => ({
+            ...settings,
+            remoteControl: { ...settings.remoteControl, linkedProjects },
+          })),
+        ),
+      ),
     updateRemoteControlConfig: (patch) =>
       Effect.try({
         try: () => normalizeRemoteControlConfig(patch),
@@ -700,6 +737,18 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
 
       return DesktopAppSettings.of({
         get: SynchronizedRef.get(settingsRef),
+        setLinkedProjects: (records) =>
+          Effect.try({
+            try: () => normalizeLinkedProjects(records),
+            catch: (cause) => new RemoteControlConfigError({ message: String(cause) }),
+          }).pipe(
+            Effect.flatMap((linkedProjects) =>
+              update((settings) => ({
+                ...settings,
+                remoteControl: { ...settings.remoteControl, linkedProjects },
+              })),
+            ),
+          ),
         updateRemoteControlConfig: (patch) =>
           Effect.try({
             try: () => normalizeRemoteControlConfig(patch),

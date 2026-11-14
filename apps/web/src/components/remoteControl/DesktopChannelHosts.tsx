@@ -6,6 +6,7 @@ import { useContext, useEffect } from "react";
 
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { isElectron } from "~/env";
+import { setWindowsProjectHostConnected } from "~/state/windowsProjects";
 import { useEnvironments } from "~/state/environments";
 
 const atoms = createDesktopChannelEnvironmentAtoms(connectionAtomRuntime);
@@ -28,6 +29,7 @@ export function DesktopChannelHosts() {
         if (!ids.includes(id)) {
           unmount();
           mounted.delete(id);
+          setWindowsProjectHostConnected(EnvironmentId.make(id), false);
         }
       }
       const [identity, capabilities] = await Promise.all([
@@ -46,10 +48,15 @@ export function DesktopChannelHosts() {
           if (settled._tag === "Failure") throw squashAtomCommandFailure(settled);
           return settled.value;
         };
+        // An old atom finalizer must not disconnect a replacement host.
+        let active = true;
         const consumer = atoms.host({
           host,
           bridge,
           clock: { now: Date.now },
+          onConnectionChange: (connected) => {
+            if (active && !disposed) setWindowsProjectHostConnected(environmentId, connected);
+          },
           rpc: {
             emit: (input) =>
               run(
@@ -72,7 +79,11 @@ export function DesktopChannelHosts() {
           },
           onError: (error) => console.error("Desktop channel host failed", error),
         });
-        mounted.set(environmentId, registry.mount(consumer));
+        const unmount = registry.mount(consumer);
+        mounted.set(environmentId, () => {
+          active = false;
+          unmount();
+        });
       }
     };
     const onError = (error: unknown) => console.error("Desktop channel setup failed", error);
@@ -89,7 +100,10 @@ export function DesktopChannelHosts() {
     return () => {
       disposed = true;
       unsubscribe();
-      for (const unmount of mounted.values()) unmount();
+      for (const [id, unmount] of mounted) {
+        unmount();
+        setWindowsProjectHostConnected(EnvironmentId.make(id), false);
+      }
     };
   }, [environmentIdsKey, registry]);
   return null;

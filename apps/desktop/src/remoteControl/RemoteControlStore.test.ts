@@ -232,3 +232,23 @@ describe("audit", () => {
     await expect(store.appendAudit(audit(1))).resolves.toBeUndefined();
   });
 });
+
+it("linked authorization does not create a grant and never bypasses denial or strict mode", async () => {
+  const awaiting = vi.fn(async () => {});
+  await store.authorize(input, new AbortController().signal, awaiting, true);
+  expect(awaiting).not.toHaveBeenCalled();
+  expect(store.listGrants()).toEqual([]);
+  const strict = store.authorize(
+    { ...input, strictMode: true },
+    new AbortController().signal,
+    awaiting,
+    true,
+  );
+  const rejected = expect(strict).rejects.toMatchObject({ code: "GRANT_DENIED" });
+  await decide("deny");
+  await rejected;
+  await expect(
+    store.authorize(input, new AbortController().signal, awaiting, true),
+  ).rejects.toMatchObject({ code: "GRANT_DENIED" });
+  expect(store.listGrants()).toEqual([]);
+});
