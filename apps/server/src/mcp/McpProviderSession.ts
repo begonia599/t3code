@@ -11,6 +11,7 @@ export interface McpProviderSessionConfig {
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly endpoint: string;
+  readonly winMcpEndpoint?: string;
   readonly authorizationHeader: string;
   /** Capabilities the session credential grants, including optional device and win access. */
   readonly capabilities: ReadonlySet<string>;
@@ -52,7 +53,10 @@ export function withAgentDeviceEnvironment(
 const sessionsByThread = new Map<ThreadId, McpProviderSessionConfig>();
 
 export function setMcpProviderSession(config: McpProviderSessionConfig): void {
-  sessionsByThread.set(config.threadId, config);
+  sessionsByThread.set(config.threadId, {
+    ...config,
+    winMcpEndpoint: new URL("/mcp-win", config.endpoint).href,
+  });
 }
 
 export function readMcpProviderSession(threadId: ThreadId): McpProviderSessionConfig | undefined {

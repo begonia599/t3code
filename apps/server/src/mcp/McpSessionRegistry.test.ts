@@ -117,6 +117,7 @@ it.effect("builds MCP endpoints from the bound server host", () =>
         capabilities: new Set(["preview"]),
       });
       expect(issued.config.endpoint).toBe(expectedEndpoint);
+      expect(issued.config.winMcpEndpoint).toBe(new URL("/mcp-win", expectedEndpoint).href);
     }
   }),
 );
@@ -307,4 +308,26 @@ it.effect("keeps other capabilities and the credential when win credential write
       expect(warnings).toHaveLength(1);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("checks scope liveness without refreshing credentials", () =>
+  Effect.gen(function* () {
+    let timestamp = 1000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("win-liveness"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["win"]),
+    });
+    expect(yield* registry.isActive(issued.config.providerSessionId)).toBe(true);
+    timestamp += 101;
+    expect(yield* registry.isActive(issued.config.providerSessionId)).toBe(false);
+    const next = yield* registry.issue({
+      threadId: ThreadId.make("win-liveness"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["win"]),
+    });
+    yield* registry.revokeProviderSession(next.config.providerSessionId);
+    expect(yield* registry.isActive(next.config.providerSessionId)).toBe(false);
+  }),
 );

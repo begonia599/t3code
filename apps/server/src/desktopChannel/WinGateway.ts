@@ -16,13 +16,11 @@ import {
   type WinGatewayStatusResponse,
   type WinGatewayLogResponse,
   type DesktopChannelHost,
-  type DesktopChannelRequestContext,
   type DesktopLinkedProject,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -30,6 +28,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as DesktopLinkService from "../desktopLink/DesktopLinkService.ts";
+import { resolveWindowsContext, windowsHostCandidates } from "./windowsHostContext.ts";
 import * as DesktopChannelBroker from "./DesktopChannelBroker.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
@@ -85,29 +84,12 @@ export class WinGateway extends Context.Service<
 const make = Effect.gen(function* () {
   const broker = yield* DesktopChannelBroker.DesktopChannelBroker;
   const sql = yield* SqlClient.SqlClient;
-  const query = yield* ProjectionSnapshotQuery;
-  const links = yield* DesktopLinkService.DesktopLinkService;
+  const projectServices = yield* Effect.context<
+    ProjectionSnapshotQuery | DesktopLinkService.DesktopLinkService
+  >();
   const trusted = Effect.fn("WinGateway.trustedContext")(
     function* ({ scope, label }: Invocation) {
-      const context: DesktopChannelRequestContext = {
-        threadId: scope.threadId,
-        provider: scope.providerInstanceId,
-        ...(label === undefined ? {} : { label }),
-      };
-      const thread = yield* query.getThreadShellById(scope.threadId);
-      if (Option.isNone(thread)) return { context, link: undefined };
-      const project = yield* query.getProjectShellById(thread.value.projectId);
-      if (Option.isNone(project)) return { context, link: undefined };
-      const link = Option.getOrUndefined(yield* links.getLinkForProject(project.value.id));
-      return {
-        context: {
-          ...context,
-          projectId: project.value.id,
-          workspaceRoot: project.value.workspaceRoot,
-          ...(link ? { linkedHostId: link.hostId } : {}),
-        },
-        link,
-      };
+      return yield* resolveWindowsContext(scope, label).pipe(Effect.provide(projectServices));
     },
     Effect.mapError(
       () =>
@@ -133,8 +115,9 @@ const make = Effect.gen(function* () {
     link?: DesktopLinkedProject,
   ) {
     const connected = yield* broker.listHosts();
+    const matches = windowsHostCandidates(connected, name, link?.hostId, execEnabled);
     if (!name && link) {
-      const host = connected.find((h) => h.hostId === link.hostId);
+      const host = matches[0];
       if (!host)
         return yield* new WinGatewayError({
           code: "HOST_OFFLINE",
@@ -144,10 +127,6 @@ const make = Effect.gen(function* () {
       return host;
     }
     if (name) {
-      const exact = connected.find((h) => h.hostId === name);
-      const matches = exact
-        ? [exact]
-        : connected.filter((h) => h.hostName.toLowerCase() === name.toLowerCase());
       if (!matches.length)
         return yield* new WinGatewayError({
           code: "HOST_NOT_FOUND",
@@ -162,7 +141,7 @@ const make = Effect.gen(function* () {
       if (!execEnabled(host)) return yield* disabled(matches);
       return host;
     }
-    const hosts = connected.filter(execEnabled);
+    const hosts = matches;
     if (!hosts.length) {
       if (connected.length) return yield* disabled(connected);
       return yield* new WinGatewayError({

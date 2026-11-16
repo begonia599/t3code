@@ -3317,6 +3317,20 @@ for (const linked of [false, true]) {
               runtimeMode: "full-access",
             });
             const options = factory.lastRuntime!.options;
+            NodeAssert.deepEqual(options.appServerArgs, [
+              "-c",
+              "mcp_servers.t3-code.url=http://127.0.0.1/mcp",
+              "-c",
+              'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+              ...(enabled
+                ? [
+                    "-c",
+                    "mcp_servers.t3-win.url=http://127.0.0.1/mcp-win",
+                    "-c",
+                    'mcp_servers.t3-win.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                  ]
+                : []),
+            ]);
             NodeAssert.equal(
               options.environment?.PATH,
               enabled ? "/win:/device:/provider" : "/provider",

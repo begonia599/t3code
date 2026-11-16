@@ -38,6 +38,8 @@ export interface McpSessionRegistryShape {
    * credential even when it goes a long time without touching an MCP tool.
    */
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
+  /** Check liveness without refreshing it or retaining the bearer. */
+  readonly isActive: (providerSessionId: string) => Effect.Effect<boolean>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeAll: Effect.Effect<void>;
@@ -212,6 +214,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerSessionId,
           providerInstanceId: scope.providerInstanceId,
           endpoint,
+          winMcpEndpoint: new URL("/mcp-win", endpoint).href,
           authorizationHeader: `Bearer ${rawToken}`,
           capabilities: scope.capabilities,
         },
@@ -273,6 +276,16 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     issue,
     resolve,
     touch,
+    isActive: (providerSessionId) =>
+      Effect.gen(function* () {
+        const timestamp = yield* currentTimeMillis;
+        const current = yield* SynchronizedRef.get(state);
+        return [...current.records.values()].some(
+          (record) =>
+            record.scope.providerSessionId === providerSessionId &&
+            timestamp - record.lastAliveAt <= livenessWindowMs,
+        );
+      }),
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
         yield* revokeWhere((record) => record.scope.providerSessionId === providerSessionId);

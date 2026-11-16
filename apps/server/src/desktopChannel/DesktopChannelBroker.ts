@@ -17,6 +17,7 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -78,6 +79,8 @@ export class DesktopChannelBroker extends Context.Service<
         }
       >
     >;
+    readonly hostChanges: Stream.Stream<DesktopChannelHost>;
+    readonly listKnownHosts: () => Effect.Effect<ReadonlyArray<DesktopChannelHost>>;
     readonly getLastCapabilities: (
       hostId: string,
     ) => Effect.Effect<DesktopChannelCapabilities | undefined>;
@@ -108,6 +111,9 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const options = yield* DesktopChannelBrokerOptions;
   const connections = new Map<string, Connection>();
+  const knownHosts = new Map<string, DesktopChannelHost>();
+  const changes = yield* PubSub.unbounded<DesktopChannelHost>();
+  yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
   const capabilities = new Map<string, DesktopChannelCapabilities>();
 
   const error = (
@@ -180,6 +186,8 @@ const make = Effect.gen(function* () {
       };
       connections.set(host.hostId, connection);
       capabilities.set(host.hostId, host.capabilities);
+      knownHosts.set(host.hostId, host);
+      PubSub.publishUnsafe(changes, host);
       Queue.offerUnsafe(messages, { type: "connected", connectionId });
       return connection;
     });
@@ -193,6 +201,7 @@ const make = Effect.gen(function* () {
             if (connections.get(host.hostId) !== connection) return;
             connections.delete(host.hostId);
             retireUnsafe(connection, "HOST_DISCONNECTED");
+            PubSub.publishUnsafe(changes, connection.host);
           }),
         ).pipe(
           Effect.map((connection) =>
@@ -305,6 +314,8 @@ const make = Effect.gen(function* () {
       if (!connection) return Effect.fail(stale(input));
       connection.host = { ...connection.host, capabilities: input.capabilities };
       capabilities.set(input.hostId, input.capabilities);
+      knownHosts.set(input.hostId, connection.host);
+      PubSub.publishUnsafe(changes, connection.host);
       return Effect.void;
     });
 
@@ -453,6 +464,8 @@ const make = Effect.gen(function* () {
           auth: { ...connection.auth },
         })),
       ),
+    hostChanges: Stream.fromPubSub(changes),
+    listKnownHosts: () => Effect.sync(() => [...knownHosts.values()]),
     getLastCapabilities: (hostId) => Effect.sync(() => capabilities.get(hostId)),
   });
 });

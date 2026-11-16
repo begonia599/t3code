@@ -502,7 +502,7 @@ it.effect("preserves unknown capabilities across schema decoding and encoding", 
           {
             id: "local",
             name: "Local MCP",
-            status: "connected",
+            status: "running",
             tools: [{ name: "read", description: "Read a file", inputSchema: { type: "object" } }],
           },
         ],

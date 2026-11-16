@@ -188,6 +188,7 @@ async function fixture(eventBufferCapacity = 256, linked = false) {
     revokeProviderSession: () => Effect.void,
     revokeThread: () => Effect.void,
     revokeAll: Effect.void,
+    isActive: () => Effect.succeed(true),
   };
   const { handler, dispose } = HttpRouter.toWebHandler(
     WinGateway.routes.pipe(

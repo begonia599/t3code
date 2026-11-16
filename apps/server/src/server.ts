@@ -70,6 +70,7 @@ import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as WinMcpHttpServer from "./desktopChannel/WinMcpHttpServer.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -625,7 +626,9 @@ export const makeRoutesLayer = Layer.mergeAll(
     websocketRpcRouteLayer,
     DesktopSyncRoutes.routes,
   ),
-  McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
+  Layer.mergeAll(McpHttpServer.layer, WinMcpHttpServer.layer).pipe(
+    Layer.provide(McpSessionRegistry.layer),
+  ),
   // Last, so no route layer can replace the server's one TracerDisabledWhen.
   untracedRequestsLayer,
 ).pipe(

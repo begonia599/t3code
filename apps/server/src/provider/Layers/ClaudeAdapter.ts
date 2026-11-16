@@ -5077,6 +5077,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(mcpSession
           ? {
               mcpServers: {
+                ...(mcpSession.capabilities.has("win")
+                  ? {
+                      "t3-win": {
+                        type: "http" as const,
+                        url:
+                          mcpSession.winMcpEndpoint ??
+                          new URL("/mcp-win", mcpSession.endpoint).href,
+                        headers: { Authorization: mcpSession.authorizationHeader },
+                      },
+                    }
+                  : {}),
                 "t3-code": {
                   type: "http",
                   url: mcpSession.endpoint,

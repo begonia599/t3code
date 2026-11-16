@@ -2,6 +2,7 @@ export const WIN_AGENT_INSTRUCTIONS = `A \`win\` command is on PATH. It runs com
 \`win -- <program> [args...]\` (argv, no shell), \`win ps '<PowerShell script>'\`, \`win status\`, \`win log [-n N]\`.
 Options: --cwd <Windows path>, --timeout <seconds> (default 600), --no-sync, --env K=V, --host <name|id>.
 Use it only when the task needs Windows (e.g. Unity, Windows builds or tools). Without --cwd the working directory is translated through the user's path mappings; if none covers it, pass --cwd with a Windows folder the user allowed. Single-quote Windows paths and other arguments containing backslashes (\`--cwd 'D:\\proj'\`), since the shell strips unquoted backslashes. The user approves each session on Windows.
+Windows local MCP tools have names like \`mcp__t3-win__<server>__<tool>\`; they execute on the user's Windows computer and may need to be loaded with ToolSearch first.
 Exit codes 120-127 and 130 come from the launcher (details on stderr): 120 unauthorized, 121 no Windows host available, 122 connection lost so the result is unknown (check \`win log\`), 123 rejected by host policy, 124 timeout, 125 usage error, 126 denied by the user, 127 program not found, 130 cancelled.`;
 
 /** Values are display text in a prompt, never instructions supplied by a client. */
@@ -23,5 +24,6 @@ export function buildWindowsProjectInstructions(input: {
 - Write code and instructions for Windows: Windows paths (${winPath}\\...), PowerShell or cmd syntax, and keep each file's existing line endings.
 - If \`win\` exits 121 the PC is offline, and 123 means remote control is turned off on the PC: tell the user and wait. Never fall back to running on the server. If \`win\` reports a sync conflict, tell the user which file instead of overwriting it.
 \`win\` reference: \`win -- <program> [args...]\` (argv, no shell), \`win ps '<PowerShell script>'\`, \`win status\`, \`win log [-n N]\`. Options: --cwd <Windows path>, --timeout <seconds> (default 600), --no-sync, --env K=V. Single-quote arguments containing backslashes (\`'C:\\path'\`), since the shell strips unquoted backslashes.
+Windows local MCP tools have names like \`mcp__t3-win__<server>__<tool>\`; they execute on the user's Windows computer and may need to be loaded with ToolSearch first.
 Exit codes 120-127 and 130 come from the launcher (details on stderr): 120 unauthorized, 121 PC offline, 122 connection lost so the result is unknown (check \`win log\`), 123 rejected by host policy, 124 timeout, 125 usage error, 126 denied by the user, 127 program not found, 130 cancelled. Any other exit code is the program's own.`;
 }

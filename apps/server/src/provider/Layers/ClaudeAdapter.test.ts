@@ -8647,6 +8647,16 @@ for (const linked of [false, true]) {
               runtimeMode: "full-access",
             });
             const options = harness.getLastCreateQueryInput()!.options;
+            assert.deepEqual(
+              options.mcpServers?.["t3-win"],
+              enabled
+                ? {
+                    type: "http",
+                    url: "http://127.0.0.1/mcp-win",
+                    headers: { Authorization: "Bearer fixture" },
+                  }
+                : undefined,
+            );
             assert.equal(options.env?.PATH, enabled ? "/win:/device:/provider" : "/provider");
             assert.equal(options.env?.T3_WIN_CREDENTIAL_FILE, enabled ? "/win.token" : undefined);
             assert.deepEqual(options.systemPrompt, {
