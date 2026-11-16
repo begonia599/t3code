@@ -1,3 +1,4 @@
+import { LocalMcpManager, createLocalMcpManager } from "../../remoteControl/LocalMcpManager.ts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -61,6 +62,8 @@ it.effect(
         store,
         getConfig: async () => fixtureConfig,
       });
+      const mcp = createLocalMcpManager({ save: async () => {} });
+      yield* Effect.addFinalizer(() => Effect.promise(() => mcp.dispose()));
       const identity = {
         hostId: "91d581f4-d87a-4efe-967c-2b60314575bb",
         hostName: "test",
@@ -77,6 +80,7 @@ it.effect(
           Effect.Error<ReturnType<(typeof Methods.methods)[number]["handler"]>>,
           | DesktopAppSettings
           | RemoteControlStore
+          | LocalMcpManager
           | WinExecService
           | ElectronWindow
           | RemoteControlRequestRouter
@@ -87,6 +91,7 @@ it.effect(
           Effect.provideService(DesktopAppSettings, settings),
           Effect.provideService(RemoteControlStore, store),
           Effect.provideService(WinExecService, service),
+          Effect.provideService(LocalMcpManager, mcp),
           Effect.provideService(ElectronWindow, windows),
           Effect.provideService(RemoteControlRequestRouter, {
             router,

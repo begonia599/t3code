@@ -658,6 +658,7 @@ it.effect("migrates remote-control fields and validates and persists normalized 
         hostId: "91d581f4-d87a-4efe-967c-2b60314575bb",
         enabledEnvironmentIds: ["env"],
         linkedProjects: [],
+        localMcpServers: [],
         allowlist: [],
         mappings: [],
         strictMode: false,
@@ -737,6 +738,68 @@ it.effect(
           (yield* settings.load).remoteControl.linkedProjects,
           reloaded.remoteControl.linkedProjects,
         );
+      }),
+    ),
+);
+
+it.effect(
+  "migrates malformed MCP entries independently, keeps first ids, and round trips MCP settings",
+  () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fs = yield* FileSystem.FileSystem;
+        const config = {
+          id: "unity",
+          name: "Unity",
+          enabled: true,
+          transport: {
+            type: "stdio" as const,
+            command: "uv",
+            args: ["run", "server.py"],
+            env: { TEST: "value" },
+            cwd: "C:\\Unity",
+          },
+        };
+        yield* fs.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fs.writeFileString(
+          environment.desktopSettingsPath,
+          yield* encodeUnknownJson({
+            localEnvironmentEnabled: false,
+            remoteControl: {
+              hostId: "91d581f4-d87a-4efe-967c-2b60314575bb",
+              enabledEnvironmentIds: ["env"],
+              localMcpServers: [
+                null,
+                { id: "bad" },
+                config,
+                { ...config, name: "duplicate" },
+                { ...config, id: "bad__id" },
+              ],
+            },
+          }),
+        );
+        const loaded = yield* settings.load;
+        assert.isFalse(loaded.localEnvironmentEnabled);
+        assert.deepEqual(loaded.remoteControl.enabledEnvironmentIds, ["env"]);
+        assert.deepEqual(loaded.remoteControl.localMcpServers, [config]);
+        const http = {
+          ...config,
+          id: "http",
+          enabled: false,
+          transport: {
+            type: "http" as const,
+            url: "http://127.0.0.1:8080/mcp",
+            headers: { Authorization: "Bearer test" },
+          },
+        };
+        yield* settings.setLocalMcpServers([config, http]);
+        assert.deepEqual((yield* settings.load).remoteControl.localMcpServers, [config, http]);
+        yield* settings.setLocalMcpServers([config, config]).pipe(Effect.flip);
+        assert.deepEqual((yield* settings.get).remoteControl.localMcpServers, [config, http]);
+        yield* settings.setLocalMcpServers([]);
+        assert.deepEqual((yield* settings.load).remoteControl.localMcpServers, []);
       }),
     ),
 );

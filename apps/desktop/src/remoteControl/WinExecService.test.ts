@@ -280,28 +280,38 @@ describe("execution", () => {
 it.each(["timeout", "cancel"])(
   "kills child and grandchild on %s and waits for pipe closure",
   async (mode) => {
-    const ready = deferred<number>();
-    const controller = new AbortController();
-    let parentPid = 0;
-    const script = `const {spawn} = require('node:child_process'); const child = spawn(process.execPath, ['-e', ${JSON.stringify(pipeOutput)} + 'process.stdout.write(String(process.pid)); setInterval(()=>{},1000)'], {stdio:['ignore','pipe','inherit']}); child.stdout.on('data', b=>process.stdout.write(b)); setInterval(()=>{},1000)`;
-    const result = execute(
-      script,
-      async (event) => {
-        if (event.kind === "progress" && JSON.parse(event.data).type === "started")
-          parentPid = JSON.parse(event.data).pid;
-        if (event.kind === "stdout") ready.resolve(Number(event.data));
-      },
-      { timeoutMs: mode === "timeout" ? 500 : 10_000 },
-      controller.signal,
-    );
-    const grandchildPid = await ready.promise;
-    if (mode === "cancel") controller.abort();
-    expect(await result).toMatchObject({ outcome: mode === "timeout" ? "timedOut" : "cancelled" });
-    for (const pid of [parentPid, grandchildPid]) {
-      expect(pid).toBeGreaterThan(0);
-      // Reparented grandchildren can remain zombies until init reaps them.
-      const state = await NodeFSP.readFile(`/proc/${pid}/stat`, "utf8").catch(() => "gone");
-      expect(state === "gone" || /^\d+ \(.*\) Z /.test(state)).toBe(true);
+    // Let the real grandchild report readiness before advancing the host deadline.
+    // Parallel SDK imports must not turn this process-tree test into a startup-speed test.
+    if (mode === "timeout") vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const ready = deferred<number>();
+      const controller = new AbortController();
+      let parentPid = 0;
+      const script = `const {spawn} = require('node:child_process'); const child = spawn(process.execPath, ['-e', ${JSON.stringify(pipeOutput)} + 'process.stdout.write(String(process.pid)); setInterval(()=>{},1000)'], {stdio:['ignore','pipe','inherit']}); child.stdout.on('data', b=>process.stdout.write(b)); setInterval(()=>{},1000)`;
+      const result = execute(
+        script,
+        async (event) => {
+          if (event.kind === "progress" && JSON.parse(event.data).type === "started")
+            parentPid = JSON.parse(event.data).pid;
+          if (event.kind === "stdout") ready.resolve(Number(event.data));
+        },
+        { timeoutMs: mode === "timeout" ? 500 : 10_000 },
+        controller.signal,
+      );
+      const grandchildPid = await ready.promise;
+      if (mode === "cancel") controller.abort();
+      else await vi.advanceTimersByTimeAsync(500);
+      expect(await result).toMatchObject({
+        outcome: mode === "timeout" ? "timedOut" : "cancelled",
+      });
+      for (const pid of [parentPid, grandchildPid]) {
+        expect(pid).toBeGreaterThan(0);
+        // Reparented grandchildren can remain zombies until init reaps them.
+        const state = await NodeFSP.readFile(`/proc/${pid}/stat`, "utf8").catch(() => "gone");
+        expect(state === "gone" || /^\d+ \(.*\) Z /.test(state)).toBe(true);
+      }
+    } finally {
+      vi.useRealTimers();
     }
   },
 );

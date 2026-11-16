@@ -23,6 +23,7 @@ import serverPackageJson from "../../server/package.json" with { type: "json" };
 import * as RemoteControlStore from "./remoteControl/RemoteControlStore.ts";
 import * as LinkedProjects from "./sync/LinkedProjects.ts";
 import * as DesktopSync from "./sync/DesktopSync.ts";
+import * as LocalMcpManager from "./remoteControl/LocalMcpManager.ts";
 import * as WinExecService from "./remoteControl/WinExecService.ts";
 import * as RemoteControlRequestRouter from "./remoteControl/RemoteControlRequestRouter.ts";
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
@@ -198,6 +199,7 @@ const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
 const desktopApplicationLayer = Layer.mergeAll(
   RemoteControlRequestRouter.layer.pipe(
     Layer.provideMerge(WinExecService.layer),
+    Layer.provideMerge(LocalMcpManager.layer),
     Layer.provideMerge(LinkedProjects.layer),
     Layer.provideMerge(DesktopSync.layer),
     Layer.provideMerge(RemoteControlStore.layer),

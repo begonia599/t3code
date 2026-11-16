@@ -1,5 +1,6 @@
 import {
   DesktopPathMapping,
+  LocalMcpServerConfig,
   DesktopLinkedFolder,
   type RemoteControlConfigPatch,
   DesktopServerExposureModeSchema,
@@ -37,6 +38,7 @@ export interface DesktopSettings {
     readonly mappings: readonly DesktopPathMapping[];
     readonly strictMode: boolean;
     readonly linkedProjects: readonly DesktopLinkedFolder[];
+    readonly localMcpServers: readonly LocalMcpServerConfig[];
   };
   readonly localEnvironmentEnabled: boolean;
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
@@ -94,6 +96,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
     mappings: [],
     strictMode: false,
     linkedProjects: [],
+    localMcpServers: [],
   },
   localEnvironmentEnabled: true,
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
@@ -125,6 +128,7 @@ const DesktopSettingsDocument = Schema.Struct({
       mappings: Schema.optionalKey(Schema.Array(DesktopPathMapping)),
       strictMode: Schema.optionalKey(Schema.Boolean),
       linkedProjects: Schema.optionalKey(Schema.Array(DesktopLinkedFolder)),
+      localMcpServers: Schema.optionalKey(Schema.Array(Schema.Unknown)),
     }),
   ),
   localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
@@ -189,6 +193,9 @@ export class RemoteControlConfigError extends Schema.TaggedError<RemoteControlCo
 export class DesktopAppSettings extends Context.Service<
   DesktopAppSettings,
   {
+    readonly setLocalMcpServers: (
+      records: readonly LocalMcpServerConfig[],
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError | RemoteControlConfigError>;
     readonly setLinkedProjects: (
       records: readonly DesktopLinkedFolder[],
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError | RemoteControlConfigError>;
@@ -281,6 +288,36 @@ export function normalizeLinkedProjects(
   });
 }
 
+const decodeLocalMcpConfig = Schema.decodeUnknownOption(LocalMcpServerConfig);
+const decodeLocalMcpConfigs = Schema.decodeUnknownEffect(Schema.Array(LocalMcpServerConfig));
+
+/** Invalid persisted entries are isolated so a damaged MCP config cannot reset other settings. */
+export function normalizeLocalMcpServers(records: readonly unknown[]): LocalMcpServerConfig[] {
+  const seen = new Set<string>();
+  const result: LocalMcpServerConfig[] = [];
+  for (const record of records) {
+    const decoded = decodeLocalMcpConfig(record);
+    if (Option.isNone(decoded) || seen.has(decoded.value.id)) continue;
+    seen.add(decoded.value.id);
+    result.push(decoded.value);
+  }
+  return result;
+}
+
+function validateLocalMcpServers(records: readonly LocalMcpServerConfig[]) {
+  return decodeLocalMcpConfigs(records).pipe(
+    Effect.mapError(
+      (cause) =>
+        new RemoteControlConfigError({ message: `Invalid local MCP config: ${String(cause)}` }),
+    ),
+    Effect.flatMap((configs) =>
+      new Set(configs.map((config) => config.id)).size === configs.length
+        ? Effect.succeed(configs)
+        : Effect.fail(new RemoteControlConfigError({ message: "Duplicate local MCP server id" })),
+    ),
+  );
+}
+
 function normalizeDesktopSettingsDocument(
   parsed: DesktopSettingsDocument,
   appVersion: string,
@@ -309,6 +346,7 @@ function normalizeDesktopSettingsDocument(
       strictMode: false,
       ...normalizeRemoteControlConfig(parsed.remoteControl ?? {}),
       linkedProjects: normalizeLinkedProjects(parsed.remoteControl?.linkedProjects ?? []),
+      localMcpServers: normalizeLocalMcpServers(parsed.remoteControl?.localMcpServers ?? []),
     },
     localEnvironmentEnabled:
       parsed.localEnvironmentEnabled ?? defaultSettings.localEnvironmentEnabled,
@@ -619,6 +657,15 @@ export const make = Effect.gen(function* () {
 
   return DesktopAppSettings.of({
     get: SynchronizedRef.get(settingsRef),
+    setLocalMcpServers: (records) =>
+      validateLocalMcpServers(records).pipe(
+        Effect.flatMap((localMcpServers) =>
+          persist((settings) => ({
+            ...settings,
+            remoteControl: { ...settings.remoteControl, localMcpServers },
+          })),
+        ),
+      ),
     setLinkedProjects: (records) =>
       Effect.try({
         try: () => normalizeLinkedProjects(records),
@@ -737,6 +784,15 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
 
       return DesktopAppSettings.of({
         get: SynchronizedRef.get(settingsRef),
+        setLocalMcpServers: (records) =>
+          validateLocalMcpServers(records).pipe(
+            Effect.flatMap((localMcpServers) =>
+              update((settings) => ({
+                ...settings,
+                remoteControl: { ...settings.remoteControl, localMcpServers },
+              })),
+            ),
+          ),
         setLinkedProjects: (records) =>
           Effect.try({
             try: () => normalizeLinkedProjects(records),

@@ -22,6 +22,7 @@ import {
   type DesktopExecLogEntry,
   type DesktopChannelCapabilities,
 } from "@t3tools/contracts";
+import { mergedEnvironment, killWindowsProcessTree } from "./nativeProcesses.ts";
 import { SyncEnvironment } from "../sync/SyncEnvironment.ts";
 import { DesktopEnvironment } from "../app/DesktopEnvironment.ts";
 import { DesktopAppSettings, type DesktopSettings } from "../settings/DesktopAppSettings.ts";
@@ -73,19 +74,6 @@ export async function resolveExecutable(
   throw fail("SPAWN_NOT_FOUND", `Program not found: ${command}`);
 }
 
-function mergedEnvironment(overlay: Readonly<Record<string, string>>, platform: NodeJS.Platform) {
-  const env = { ...process.env };
-  for (const [key, value] of Object.entries(overlay)) {
-    if (platform === "win32")
-      for (const existing of Object.keys(env))
-        if (existing.toLowerCase() === key.toLowerCase()) delete env[existing];
-    env[key] = value;
-  }
-  if (!Object.keys(env).some((key) => key.toUpperCase() === "PYTHONIOENCODING"))
-    env.PYTHONIOENCODING = "utf-8";
-  return env;
-}
-
 /** Wait for close (including both pipes), even after timeout, cancellation, or an emit failure. */
 export async function runProcess(options: {
   platform: NodeJS.Platform;
@@ -129,14 +117,7 @@ export async function runProcess(options: {
     delivery.abort();
     if (child.pid !== undefined) {
       if (options.platform === "win32") {
-        const killer = NodeChildProcess.spawn(
-          "taskkill.exe",
-          ["/T", "/F", "/PID", String(child.pid)],
-          {
-            windowsHide: true,
-            stdio: "ignore",
-          },
-        );
+        const killer = killWindowsProcessTree(child.pid);
         killer.on("error", () => {
           child.kill("SIGKILL");
         });

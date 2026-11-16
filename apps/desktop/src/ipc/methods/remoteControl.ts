@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import { webContents } from "electron";
 
 import * as NodeOS from "node:os";
+import { LocalMcpManager } from "../../remoteControl/LocalMcpManager.ts";
 import { WinExecService } from "../../remoteControl/WinExecService.ts";
 import { RemoteControlStore } from "../../remoteControl/RemoteControlStore.ts";
 
@@ -160,7 +161,8 @@ export const getCapabilities = makeIpcMethod({
   result: DesktopChannelCapabilities,
   handler: Effect.fn(function* () {
     const service = yield* WinExecService;
-    return yield* nativeCall(() => service.getCapabilities());
+    const mcp = yield* LocalMcpManager;
+    return { ...(yield* nativeCall(() => service.getCapabilities())), mcp: mcp.capabilities() };
   }),
 });
 export const getConfig = makeIpcMethod({

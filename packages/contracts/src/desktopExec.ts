@@ -146,7 +146,8 @@ export const DesktopExecLogEntry = Schema.Struct({
   threadId: Schema.NullOr(Schema.String),
   provider: Schema.NullOr(Schema.String),
   label: Schema.NullOr(Schema.String),
-  mode: Schema.Literals(["argv", "powershell"]),
+  /** "mcp" = a forwarded local MCP tool call; summary is `<serverId>__<toolName>`. */
+  mode: Schema.Literals(["argv", "powershell", "mcp"]),
   /** Command summary, at most DESKTOP_EXEC_SUMMARY_MAX_CHARS. */
   summary: Schema.String,
   winCwd: Schema.NullOr(Schema.String),

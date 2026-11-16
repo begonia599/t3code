@@ -152,3 +152,13 @@ export const LINKED_PROJECTS_FLUSH_CHANNEL = "linked-projects:flush";
 export const LINKED_PROJECTS_RESOLVE_CONFLICT_CHANNEL = "linked-projects:resolve-conflict";
 export const LINKED_PROJECTS_CHANGED_CHANNEL = "linked-projects:changed";
 export const LINKED_PROJECTS_STATUS_CHANGED_CHANNEL = "linked-projects:status-changed";
+
+export const LOCAL_MCP_LIST_CHANNEL = "desktop:local-mcp-list";
+export const LOCAL_MCP_UPSERT_CHANNEL = "desktop:local-mcp-upsert";
+export const LOCAL_MCP_REMOVE_CHANNEL = "desktop:local-mcp-remove";
+export const LOCAL_MCP_SET_ENABLED_CHANNEL = "desktop:local-mcp-set-enabled";
+export const LOCAL_MCP_RESTART_CHANNEL = "desktop:local-mcp-restart";
+export const LOCAL_MCP_PROBE_CHANNEL = "desktop:local-mcp-probe";
+export const LOCAL_MCP_CHANGED_CHANNEL = "desktop:local-mcp-changed";
+export const REMOTE_CONTROL_CAPABILITIES_CHANGED_CHANNEL =
+  "desktop:remote-control-capabilities-changed";

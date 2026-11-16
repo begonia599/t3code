@@ -1,4 +1,5 @@
 import type { LinkedProjectsBridge } from "./desktopLink.ts";
+import type { LocalMcpBridge } from "./desktopMcp.ts";
 import * as Schema from "effect/Schema";
 import {
   DesktopChannelHost,
@@ -1212,6 +1213,8 @@ export const RemoteControlNext = Schema.Union([
 export type RemoteControlNext = typeof RemoteControlNext.Type;
 export interface RemoteControlBridge {
   getCapabilities(): Promise<DesktopChannelCapabilities>;
+  /** Fires whenever exec or local MCP capabilities change (e.g. a local MCP catalog changed). */
+  onCapabilitiesChanged(listener: (capabilities: DesktopChannelCapabilities) => void): () => void;
   getConfig(): Promise<RemoteControlConfig>;
   updateConfig(patch: RemoteControlConfigPatch): Promise<RemoteControlConfig>;
   onConfigChanged(listener: (config: RemoteControlConfig) => void): () => void;
@@ -1237,6 +1240,7 @@ export interface RemoteControlBridge {
 export interface DesktopBridge {
   remoteControl: RemoteControlBridge;
   linkedProjects: LinkedProjectsBridge;
+  localMcp: LocalMcpBridge;
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */
   getPathForFile?: (file: File) => string;

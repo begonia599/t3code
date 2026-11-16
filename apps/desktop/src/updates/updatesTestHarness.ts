@@ -203,6 +203,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
                 ),
           setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
           setWslDistro: () => Effect.die("unexpected WSL distro change"),
+          setLocalMcpServers: () => Effect.die("unexpected setLocalMcpServers"),
           setLinkedProjects: () => Effect.die("unexpected linked projects update"),
           setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
           setWslOnly: () => Effect.die("unexpected WSL-only toggle"),

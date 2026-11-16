@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import type { LocalMcpManager } from "./LocalMcpManager.ts";
+import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   createRemoteControlRequestRouter,
   type RequestOwner,
@@ -178,3 +180,125 @@ it("preserves handler error messages", async () => {
     error: { code: "CWD_NOT_ALLOWED", message: "Directory does not exist: C:\\missing" },
   });
 });
+
+it("dispatches mcp.call with progress and audits tool errors as successful results without authorization", async () => {
+  const { createLocalMcpRequestHandler } = await import("./LocalMcpRequestHandler.ts");
+  const audit = vi.fn(async () => {});
+  const call = vi.fn<LocalMcpManager["Service"]["call"]>(
+    async (_server, _tool, _args, _signal, onProgress) => {
+      await onProgress?.({ progress: 1, total: 2, message: "working" });
+      return { content: [], structuredContent: { value: 1 }, isError: true };
+    },
+  );
+  const router = createRemoteControlRequestRouter({
+    identity: async () => identity,
+    now: () => 0,
+    handlers: {
+      "mcp.call": createLocalMcpRequestHandler({
+        manager: { call },
+        store: { appendAudit: audit },
+        enabledEnvironmentIds: async () => ["env"],
+      }),
+    },
+  });
+  router.start(
+    {
+      ...input("mcp.call"),
+      request: {
+        ...input("mcp.call").request,
+        input: { serverId: "unity", toolName: "echo", arguments: { value: 1 } },
+      },
+    },
+    owner,
+  );
+  expect(await router.next("r", 1)).toEqual({
+    type: "events",
+    events: [
+      { kind: "progress", data: JSON.stringify({ progress: 1, total: 2, message: "working" }) },
+    ],
+  });
+  expect(await router.next("r", 1)).toMatchObject({
+    type: "result",
+    ok: true,
+    result: { isError: true },
+  });
+  expect(audit).toHaveBeenCalledOnce();
+  expect(audit).toHaveBeenCalledWith(
+    expect.objectContaining({
+      mode: "mcp",
+      summary: "unity__echo",
+      winCwd: null,
+      exitCode: null,
+      outcome: "exited",
+      errorCode: null,
+    }),
+  );
+  router.dispose();
+});
+
+it.each(["disabled", "invalid", "cancelled"])(
+  "audits %s MCP calls and forwards their errors",
+  async (mode) => {
+    const { createLocalMcpRequestHandler } = await import("./LocalMcpRequestHandler.ts");
+    const audited = deferred<void>();
+    const received = deferred<void>();
+    const audit = vi.fn(async () => {
+      audited.resolve();
+    });
+    const call = vi.fn<LocalMcpManager["Service"]["call"]>(
+      async (_server, _tool, _args, signal) => {
+        received.resolve();
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+        throw new Error("cancelled");
+      },
+    );
+    const router = createRemoteControlRequestRouter({
+      identity: async () => identity,
+      now: () => 0,
+      handlers: {
+        "mcp.call": createLocalMcpRequestHandler({
+          manager: { call },
+          store: { appendAudit: audit },
+          enabledEnvironmentIds: async () => (mode === "disabled" ? [] : ["env"]),
+        }),
+      },
+    });
+    router.start(
+      {
+        ...input("mcp.call"),
+        request: {
+          ...input("mcp.call").request,
+          input: mode === "invalid" ? {} : { serverId: "unity", toolName: "echo" },
+        },
+      },
+      owner,
+    );
+    if (mode === "cancelled") {
+      await received.promise;
+      router.cancel("r", owner.id);
+    }
+    expect(await router.next("r", 1)).toMatchObject({
+      ok: false,
+      error: {
+        code:
+          mode === "disabled"
+            ? "REMOTE_DISABLED"
+            : mode === "invalid"
+              ? "BAD_REQUEST"
+              : "CANCELLED",
+      },
+    });
+    await audited.promise;
+    expect(audit).toHaveBeenCalledOnce();
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "mcp",
+        outcome: mode === "cancelled" ? "cancelled" : "error",
+      }),
+    );
+    if (mode !== "cancelled") expect(call).not.toHaveBeenCalled();
+    router.dispose();
+  },
+);

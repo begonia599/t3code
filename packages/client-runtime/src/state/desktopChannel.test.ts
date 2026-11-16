@@ -1,7 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
   type DesktopChannelStreamEvent,
@@ -269,3 +270,99 @@ it.each(["null", "complete", "failure", "unmount"] as const)(
     expect(changed.mock.calls).toEqual([[true], [false]]);
   },
 );
+
+it("publishes capabilities per current connection, ignores a late snapshot, and refreshes on reconnect", async () => {
+  const { options } = setup(async () => ({ type: "result", ok: true, result: null }));
+  const initial = deferred<import("@t3tools/contracts").DesktopChannelCapabilities>();
+  let changed!: (value: import("@t3tools/contracts").DesktopChannelCapabilities) => void;
+  const off = vi.fn();
+  const latest = { enabled: true, mcp: { version: "1", servers: [] } };
+  const updated = deferred<void>();
+  const reconnected = deferred<void>();
+  const pushed: import("@t3tools/contracts").DesktopChannelUpdateCapabilities[] = [];
+  const getCapabilities = vi.fn().mockReturnValueOnce(initial.promise).mockResolvedValue(latest);
+  const loop = createDesktopChannelHostLoop({
+    ...options,
+    bridge: {
+      ...options.bridge,
+      getCapabilities,
+      onCapabilitiesChanged: (listener) => {
+        changed = listener;
+        return off;
+      },
+    },
+    rpc: {
+      ...options.rpc,
+      updateCapabilities: async (value) => {
+        pushed.push(value);
+        if (value.connectionId === "first") updated.resolve();
+        else reconnected.resolve();
+      },
+    },
+  });
+  try {
+    const connecting = loop.receive({ type: "connected", connectionId: "first" });
+    changed(latest);
+    await updated.promise;
+    initial.resolve({ enabled: true });
+    await connecting;
+    expect(pushed).toEqual([
+      { hostId: options.host.hostId, connectionId: "first", capabilities: latest },
+    ]);
+    loop.disconnect();
+    changed({ enabled: false });
+    await loop.receive({ type: "connected", connectionId: "second" });
+    await reconnected.promise;
+    expect(pushed.at(-1)).toEqual({
+      hostId: options.host.hostId,
+      connectionId: "second",
+      capabilities: latest,
+    });
+    expect(getCapabilities).toHaveBeenCalledTimes(2);
+  } finally {
+    loop.dispose();
+  }
+  expect(off).toHaveBeenCalledOnce();
+});
+
+it("serializes capability updates under backpressure and skips deliveries for a replaced connection", async () => {
+  const { options } = setup(async () => ({ type: "result", ok: true, result: null }));
+  let changed!: (value: import("@t3tools/contracts").DesktopChannelCapabilities) => void;
+  const started = deferred<void>();
+  const release = deferred<void>();
+  const done = deferred<void>();
+  const pushed: import("@t3tools/contracts").DesktopChannelUpdateCapabilities[] = [];
+  const loop = createDesktopChannelHostLoop({
+    ...options,
+    bridge: {
+      ...options.bridge,
+      onCapabilitiesChanged: (listener) => {
+        changed = listener;
+        return () => {};
+      },
+    },
+    rpc: {
+      ...options.rpc,
+      updateCapabilities: async (value) => {
+        pushed.push(value);
+        if (value.connectionId === "old") {
+          started.resolve();
+          await release.promise;
+        } else done.resolve();
+      },
+    },
+  });
+  try {
+    await loop.receive({ type: "connected", connectionId: "old" });
+    changed({ enabled: true });
+    await started.promise;
+    changed({ enabled: false });
+    await loop.receive({ type: "connected", connectionId: "new" });
+    changed({ enabled: true, mcp: { version: "1", servers: [] } });
+    release.resolve();
+    await done.promise;
+    expect(pushed.map((value) => value.connectionId)).toEqual(["old", "new"]);
+  } finally {
+    loop.dispose();
+  }
+});

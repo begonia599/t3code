@@ -12,6 +12,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
+import { LocalMcpManager } from "../remoteControl/LocalMcpManager.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
@@ -296,7 +297,9 @@ const startup = Effect.gen(function* () {
   const userDataPath = yield* appIdentity.resolveUserDataPath;
   yield* electronApp.setPath("userData", userDataPath);
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
-  yield* desktopSettings.load;
+  const loadedSettings = yield* desktopSettings.load;
+  const localMcp = yield* LocalMcpManager;
+  yield* Effect.promise(() => localMcp.initialize(loadedSettings.remoteControl.localMcpServers));
   // Reconcile only after loading local authority; an empty startup snapshot would delete valid sessions.
   (yield* LinkedProjects).start();
 

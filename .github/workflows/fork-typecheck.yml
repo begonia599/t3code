@@ -79,6 +79,7 @@ jobs:
           apps/desktop/src/ipc/methods/remoteControl.test.ts
           apps/desktop/src/ipc/methods/remoteControl.management.test.ts
           apps/desktop/src/ipc/methods/linkedProjects.test.ts
+          apps/desktop/src/ipc/methods/localMcp.test.ts
           apps/desktop/src/settings/DesktopAppSettings.test.ts
           packages/client-runtime/src/state/desktopChannel.test.ts
           apps/web/src/components/remoteControl

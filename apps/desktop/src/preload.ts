@@ -285,6 +285,23 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       };
     },
   },
+  localMcp: {
+    list: () => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_LIST_CHANNEL),
+    upsert: (config) => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_UPSERT_CHANNEL, config),
+    remove: (id) => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_REMOVE_CHANNEL, { id }),
+    setEnabled: (id, enabled) =>
+      ipcRenderer.invoke(IpcChannels.LOCAL_MCP_SET_ENABLED_CHANNEL, { id, enabled }),
+    restart: (id) => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_RESTART_CHANNEL, { id }),
+    probe: (config) => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_PROBE_CHANNEL, config),
+    onChanged: (listener) => {
+      const handler = (
+        _event: unknown,
+        value: readonly import("@t3tools/contracts").LocalMcpServerView[],
+      ) => listener(value);
+      ipcRenderer.on(IpcChannels.LOCAL_MCP_CHANGED_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(IpcChannels.LOCAL_MCP_CHANGED_CHANNEL, handler);
+    },
+  },
   linkedProjects: {
     pickFolder: () => ipcRenderer.invoke(IpcChannels.LINKED_PROJECTS_PICK_FOLDER_CHANNEL),
     register: (input) => ipcRenderer.invoke(IpcChannels.LINKED_PROJECTS_REGISTER_CHANNEL, input),
@@ -315,6 +332,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     },
   },
   remoteControl: {
+    onCapabilitiesChanged: (listener) => {
+      const handler = (
+        _event: unknown,
+        value: import("@t3tools/contracts").DesktopChannelCapabilities,
+      ) => listener(value);
+      ipcRenderer.on(IpcChannels.REMOTE_CONTROL_CAPABILITIES_CHANGED_CHANNEL, handler);
+      return () =>
+        ipcRenderer.removeListener(
+          IpcChannels.REMOTE_CONTROL_CAPABILITIES_CHANGED_CHANNEL,
+          handler,
+        );
+    },
     getCapabilities: () => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_CAPABILITIES_CHANNEL),
     getConfig: () => ipcRenderer.invoke(IpcChannels.REMOTE_CONTROL_GET_CONFIG_CHANNEL),
     updateConfig: (patch) =>

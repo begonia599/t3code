@@ -1,6 +1,8 @@
 import {
   WS_METHODS,
   type DesktopChannelEmit,
+  type DesktopChannelCapabilities,
+  type DesktopChannelUpdateCapabilities,
   type DesktopChannelHost,
   type DesktopChannelResponse,
   type DesktopChannelStreamEvent,
@@ -18,9 +20,11 @@ import { createEnvironmentRpcCommand, followStreamInEnvironment } from "./runtim
 
 export interface DesktopChannelHostDependencies {
   readonly host: DesktopChannelHost;
-  readonly bridge: Pick<RemoteControlBridge, "start" | "next" | "cancel">;
+  readonly bridge: Pick<RemoteControlBridge, "start" | "next" | "cancel"> &
+    Partial<Pick<RemoteControlBridge, "getCapabilities" | "onCapabilitiesChanged">>;
   readonly rpc: {
     readonly emit: (input: DesktopChannelEmit) => Promise<unknown>;
+    readonly updateCapabilities?: (input: DesktopChannelUpdateCapabilities) => Promise<unknown>;
     readonly respond: (input: DesktopChannelResponse) => Promise<unknown>;
   };
   readonly clock: { readonly now: () => number };
@@ -30,6 +34,28 @@ export interface DesktopChannelHostDependencies {
 
 export function createDesktopChannelHostLoop(options: DesktopChannelHostDependencies) {
   let connectionId: string | null = null;
+  let capabilityRevision = 0;
+  let capabilityDelivery = Promise.resolve();
+  const pushCapabilities = (capabilities: DesktopChannelCapabilities) => {
+    const id = connectionId;
+    if (!id || !options.rpc.updateCapabilities) return;
+    capabilityDelivery = capabilityDelivery.then(async () => {
+      if (connectionId !== id) return;
+      try {
+        await options.rpc.updateCapabilities!({
+          hostId: options.host.hostId,
+          connectionId: id,
+          capabilities,
+        });
+      } catch (cause) {
+        if (connectionId === id) options.onError(cause);
+      }
+    });
+  };
+  const unsubscribe = options.bridge.onCapabilitiesChanged?.((capabilities) => {
+    capabilityRevision++;
+    pushCapabilities(capabilities);
+  });
   let lastConnectionState: boolean | undefined;
   const reportConnection = (connected: boolean) => {
     if (lastConnectionState === connected) return;
@@ -64,6 +90,12 @@ export function createDesktopChannelHostLoop(options: DesktopChannelHostDependen
       if (connectionId !== null && connectionId !== event.connectionId) disconnect();
       connectionId = event.connectionId;
       reportConnection(true);
+      const revision = capabilityRevision;
+      const id = connectionId;
+      if (options.bridge.getCapabilities) {
+        const capabilities = await options.bridge.getCapabilities();
+        if (connectionId === id && revision === capabilityRevision) pushCapabilities(capabilities);
+      }
       return;
     }
     if (event.type === "cancel") {
@@ -127,7 +159,14 @@ export function createDesktopChannelHostLoop(options: DesktopChannelHostDependen
       if (active.get(event.requestId) === state) active.delete(event.requestId);
     }
   };
-  return { receive, disconnect };
+  return {
+    receive,
+    disconnect,
+    dispose: () => {
+      unsubscribe?.();
+      disconnect();
+    },
+  };
 }
 
 /**
@@ -136,6 +175,7 @@ export function createDesktopChannelHostLoop(options: DesktopChannelHostDependen
  */
 export function desktopChannelEvents(
   host: DesktopChannelHost,
+  getCapabilities?: () => Promise<DesktopChannelCapabilities>,
 ): Stream.Stream<DesktopChannelStreamEvent | null, never, EnvironmentSupervisor> {
   return Stream.unwrap(
     Effect.gen(function* () {
@@ -145,7 +185,16 @@ export function desktopChannelEvents(
           Option.match({
             onNone: () => Stream.succeed(null),
             onSome: (session) =>
-              session.client[WS_METHODS.desktopChannelConnect](host).pipe(
+              Stream.unwrap(
+                Effect.promise(async () => ({
+                  ...host,
+                  capabilities: getCapabilities ? await getCapabilities() : host.capabilities,
+                })).pipe(
+                  Effect.map((latestHost) =>
+                    session.client[WS_METHODS.desktopChannelConnect](latestHost),
+                  ),
+                ),
+              ).pipe(
                 Stream.concat(Stream.succeed(null)),
                 Stream.catchCause((cause) =>
                   Stream.fromEffect(Effect.logWarning("Desktop channel disconnected", cause)).pipe(
@@ -180,7 +229,7 @@ export function runDesktopChannelHost<E, R>(
           else void loop.receive(event).catch(options.onError);
         }),
       ),
-      Effect.ensuring(Effect.sync(() => loop.disconnect())),
+      Effect.ensuring(Effect.sync(() => loop.dispose())),
     );
   });
 }
@@ -196,7 +245,7 @@ export function createDesktopChannelEnvironmentAtoms<R, E>(
           runDesktopChannelHost(
             followStreamInEnvironment(
               options.host.environmentId,
-              desktopChannelEvents(options.host),
+              desktopChannelEvents(options.host, options.bridge.getCapabilities),
             ),
             options,
           ),
@@ -205,6 +254,10 @@ export function createDesktopChannelEnvironmentAtoms<R, E>(
     emit: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:desktop-channel:emit",
       tag: WS_METHODS.desktopChannelEmit,
+    }),
+    updateCapabilities: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:desktop-channel:update-capabilities",
+      tag: WS_METHODS.desktopChannelUpdateCapabilities,
     }),
     respond: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:desktop-channel:respond",

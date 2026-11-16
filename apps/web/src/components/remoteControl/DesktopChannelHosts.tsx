@@ -58,6 +58,15 @@ export function DesktopChannelHosts() {
             if (active && !disposed) setWindowsProjectHostConnected(environmentId, connected);
           },
           rpc: {
+            updateCapabilities: (input) =>
+              run(
+                runAtomCommand(
+                  registry,
+                  atoms.updateCapabilities,
+                  { environmentId, input },
+                  { reportFailure: false, reportDefect: false },
+                ),
+              ),
             emit: (input) =>
               run(
                 runAtomCommand(

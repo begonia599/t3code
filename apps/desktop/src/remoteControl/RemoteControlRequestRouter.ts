@@ -1,9 +1,10 @@
-import type {
-  DesktopChannelEmit,
-  DesktopChannelRequest,
-  RemoteControlHostIdentity,
-  RemoteControlNext,
-  RemoteControlStart,
+import {
+  DESKTOP_MCP_CALL_KIND,
+  type DesktopChannelEmit,
+  type DesktopChannelRequest,
+  type RemoteControlHostIdentity,
+  type RemoteControlNext,
+  type RemoteControlStart,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,9 @@ import * as Layer from "effect/Layer";
 import * as Clock from "effect/Clock";
 import * as NodeOS from "node:os";
 
+import { LocalMcpManager } from "./LocalMcpManager.ts";
+import { createLocalMcpRequestHandler } from "./LocalMcpRequestHandler.ts";
+import { RemoteControlStore } from "./RemoteControlStore.ts";
 import { WinExecService } from "./WinExecService.ts";
 import { DesktopAppSettings } from "../settings/DesktopAppSettings.ts";
 import { DesktopEnvironment } from "../app/DesktopEnvironment.ts";
@@ -204,6 +208,8 @@ export const layer = Layer.effect(
     const environment = yield* DesktopEnvironment;
     const clock = yield* Clock.Clock;
     const exec = yield* WinExecService;
+    const manager = yield* LocalMcpManager;
+    const store = yield* RemoteControlStore;
     const getHostIdentity = Effect.gen(function* () {
       const platform = environment.platform;
       if (platform !== "win32" && platform !== "linux" && platform !== "darwin") {
@@ -220,7 +226,16 @@ export const layer = Layer.effect(
     const router = createRemoteControlRequestRouter({
       identity: () => Effect.runPromiseWith(runIdentity)(getHostIdentity),
       now: () => clock.currentTimeMillisUnsafe(),
-      handlers: exec.handlers,
+      handlers: {
+        ...exec.handlers,
+        [DESKTOP_MCP_CALL_KIND]: createLocalMcpRequestHandler({
+          manager,
+          store,
+          enabledEnvironmentIds: async () =>
+            (await Effect.runPromiseWith(runIdentity)(settings.get)).remoteControl
+              .enabledEnvironmentIds,
+        }),
+      },
     });
     yield* Effect.addFinalizer(() => Effect.sync(() => router.dispose()));
     return { router, getHostIdentity };

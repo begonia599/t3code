@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { EnvironmentId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { LocalMcpServerStatus, LocalMcpTool } from "./desktopMcp.ts";
 
 export const DesktopChannelCapabilities = Schema.StructWithRest(
   Schema.Struct({
@@ -18,14 +19,8 @@ export const DesktopChannelCapabilities = Schema.StructWithRest(
           Schema.Struct({
             id: TrimmedNonEmptyString,
             name: TrimmedNonEmptyString,
-            status: TrimmedNonEmptyString,
-            tools: Schema.Array(
-              Schema.Struct({
-                name: TrimmedNonEmptyString,
-                description: Schema.optional(Schema.String),
-                inputSchema: Schema.Unknown,
-              }),
-            ),
+            status: LocalMcpServerStatus,
+            tools: Schema.Array(LocalMcpTool),
           }),
         ),
       }),
