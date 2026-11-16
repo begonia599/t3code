@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 120
     env:
       T3CODE_BUILD_BUNDLE_MUTAGEN: "1"
+      T3CODE_BUILD_BUNDLE_WIN_TOOLS: "1"
       NODE_OPTIONS: --max-old-space-size=8192
       T3CODE_BUILD_DISABLE_AUTO_UPDATE: "1"
       T3CODE_BUILD_LOCAL_ENVIRONMENT_DEFAULT_OFF: "1"
@@ -79,6 +80,45 @@ jobs:
             if ($null -eq $entry) { throw "mutagen.exe missing from verified archive" }
             [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, "$destination/mutagen.exe", $true)
           } finally { $zip.Dispose() }
+
+      - name: Prepare Windows search tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $destination = Join-Path $env:GITHUB_WORKSPACE "apps/desktop/prod-resources/win-tools"
+          New-Item -ItemType Directory -Force $destination | Out-Null
+          $tools = @(
+            @{
+              Name = "ripgrep"
+              Url = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+              Sha256 = "d0f534024c42afd6cb4d38907c25cd2b249b79bbe6cc1dbee8e3e37c2b6e25a1"
+              Prefix = "ripgrep-14.1.1-x86_64-pc-windows-msvc/"
+              Files = @("rg.exe", "LICENSE-MIT", "UNLICENSE")
+            },
+            @{
+              Name = "es"
+              Url = "https://www.voidtools.com/ES-1.1.0.30.x64.zip"
+              Sha256 = "30147feadae528d4bbfb3bcb4597a4c7d9f52a0f9f708ea6577b6028bd8dd268"
+              Prefix = ""
+              Files = @("es.exe")
+            }
+          )
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          foreach ($tool in $tools) {
+            $archive = Join-Path $env:RUNNER_TEMP "$($tool.Name).zip"
+            Invoke-WebRequest $tool.Url -OutFile $archive
+            if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $tool.Sha256) {
+              throw "$($tool.Name) archive SHA256 mismatch"
+            }
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+            try {
+              foreach ($file in $tool.Files) {
+                $entry = $zip.GetEntry("$($tool.Prefix)$file")
+                if ($null -eq $entry) { throw "$file missing from verified $($tool.Name) archive" }
+                [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $destination $file), $true)
+              }
+            } finally { $zip.Dispose() }
+          }
 
       # Also install web dependencies: this job builds the JS bundle locally.
       - name: Install build dependencies

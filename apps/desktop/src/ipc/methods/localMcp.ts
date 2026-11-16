@@ -1,10 +1,19 @@
+// @effect-diagnostics globalDate:off -- Native discovery stamps the local scan time.
+// @effect-diagnostics nodeBuiltinImport:off -- Read-only local app configuration discovery.
 import {
+  LocalMcpDiscoveryResult,
   LocalMcpServerConfig,
   LocalMcpServerView,
   LocalMcpProbeResult,
   LocalMcpServerIdInput,
   LocalMcpSetEnabledInput,
 } from "@t3tools/contracts";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import {
+  discoverLocalMcpServers,
+  MAX_MCP_DISCOVERY_FILE_BYTES,
+} from "../../remoteControl/LocalMcpDiscovery.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { LocalMcpManager } from "../../remoteControl/LocalMcpManager.ts";
@@ -73,6 +82,43 @@ export const probe = makeIpcMethod({
   handler: Effect.fn(function* (config) {
     const manager = yield* LocalMcpManager;
     return yield* nativeCall(() => manager.probe(config));
+  }),
+});
+
+export const discover = makeIpcMethod({
+  channel: Channels.LOCAL_MCP_DISCOVER_CHANNEL,
+  payload: Schema.Void,
+  result: LocalMcpDiscoveryResult,
+  handler: Effect.fn(function* () {
+    const manager = yield* LocalMcpManager;
+    return yield* nativeCall(() =>
+      discoverLocalMcpServers(
+        {
+          home: NodeOS.homedir(),
+          ...(process.env.APPDATA === undefined ? {} : { appData: process.env.APPDATA }),
+          env: process.env,
+          now: () => new Date(),
+          readFile: async (file) => {
+            try {
+              if ((await NodeFSP.stat(file)).size > MAX_MCP_DISCOVERY_FILE_BYTES) {
+                throw new Error("MCP config exceeds 8 MB");
+              }
+              return await NodeFSP.readFile(file, "utf8");
+            } catch (cause) {
+              if (
+                typeof cause === "object" &&
+                cause !== null &&
+                "code" in cause &&
+                cause.code === "ENOENT"
+              )
+                return undefined;
+              throw cause;
+            }
+          },
+        },
+        manager.views().map((view) => view.config),
+      ),
+    );
   }),
 });
 

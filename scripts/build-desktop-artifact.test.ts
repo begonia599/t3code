@@ -68,6 +68,9 @@ import {
   stageMutagen,
   MutagenResourceMissingError,
   MUTAGEN_EXTRA_RESOURCES,
+  stageWinTools,
+  WinToolsResourceMissingError,
+  WIN_TOOLS_EXTRA_RESOURCES,
   stageLinuxCaptureHelper,
   stageWslRuntimeArchive,
   bundlesWslRuntime,
@@ -915,6 +918,78 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           );
         }),
       ),
+  );
+
+  it.effect("stages verified Windows search tools and notices only when enabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-win-tools-stage-" });
+        const stageResourcesDir = path.join(repoRoot, "stage");
+        const input = { repoRoot, stageResourcesDir, platform: "win" as const };
+        const config = (enabled: boolean) =>
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: enabled ? { T3CODE_BUILD_BUNDLE_WIN_TOOLS: "1" } : {} }),
+          );
+        yield* stageWinTools(input).pipe(Effect.provide(config(false)));
+        assert.isFalse(yield* fs.exists(stageResourcesDir));
+        const error = yield* stageWinTools(input).pipe(Effect.provide(config(true)), Effect.flip);
+        assert.instanceOf(error, WinToolsResourceMissingError);
+
+        const source = path.join(repoRoot, "apps/desktop/prod-resources/win-tools");
+        yield* fs.makeDirectory(source, { recursive: true });
+        const files = ["rg.exe", "es.exe", "LICENSE-MIT", "UNLICENSE"];
+        for (const name of [...files, "unrelated.zip"])
+          yield* fs.writeFileString(path.join(source, name), name);
+        // Every required executable and notice must be present before staging starts.
+        for (const name of files) {
+          yield* fs.remove(path.join(source, name));
+          const missing = yield* stageWinTools(input).pipe(
+            Effect.provide(config(true)),
+            Effect.flip,
+          );
+          assert.instanceOf(missing, WinToolsResourceMissingError);
+          assert.equal(missing.path, path.join(source, name));
+          assert.isFalse(yield* fs.exists(stageResourcesDir));
+          yield* fs.writeFileString(path.join(source, name), name);
+        }
+        yield* stageWinTools(input).pipe(Effect.provide(config(true)));
+        assert.deepStrictEqual(
+          (yield* fs.readDirectory(path.join(stageResourcesDir, "win-tools"))).toSorted(),
+          files.toSorted(),
+        );
+        for (const name of files)
+          assert.equal(
+            yield* fs.readFileString(path.join(stageResourcesDir, "win-tools", name)),
+            name,
+          );
+
+        for (const platform of ["win", "linux", "mac"] as const) {
+          yield* stageWinTools({ ...input, repoRoot: "/missing", platform }).pipe(
+            Effect.provide(config(platform !== "win")),
+          );
+          for (const enabled of [false, true]) {
+            const build = yield* createBuildConfig(
+              platform,
+              platform === "win" ? "nsis" : platform === "mac" ? "dmg" : "AppImage",
+              "0.0.1",
+              false,
+              false,
+              undefined,
+              undefined,
+            ).pipe(Effect.provide(config(enabled)));
+            const bundled = (build.extraResources as { to: string }[]).filter(
+              (resource) => resource.to === "win-tools",
+            );
+            assert.deepStrictEqual(
+              bundled,
+              platform === "win" && enabled ? [...WIN_TOOLS_EXTRA_RESOURCES] : [],
+            );
+          }
+        }
+      }),
+    ),
   );
 
   it.effect("stages a cached resource monitor without invoking Cargo", () =>

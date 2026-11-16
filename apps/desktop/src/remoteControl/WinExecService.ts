@@ -45,6 +45,21 @@ type Emit = Parameters<RequestHandler>[0]["emit"];
 const progress = (emit: Emit, value: DesktopExecProgress) =>
   emit({ kind: "progress", data: JSON.stringify(value) });
 
+/** Prepend bundled tools after merging request overrides, retaining Windows PATH casing. */
+export async function buildExecEnvironment(
+  overlay: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform,
+  resourcesPath: string | undefined,
+) {
+  const env = mergedEnvironment(overlay, platform);
+  if (platform !== "win32" || !resourcesPath) return env;
+  const tools = NodePath.join(resourcesPath, "win-tools");
+  if (!(await NodeFSP.stat(tools).catch(() => undefined))?.isDirectory()) return env;
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  env[pathKey] = env[pathKey] ? `${tools};${env[pathKey]}` : tools;
+  return env;
+}
+
 export async function resolveExecutable(
   command: string,
   cwd: string,
@@ -242,6 +257,7 @@ export async function runProcess(options: {
 
 export function createWinExecService(options: {
   platform: NodeJS.Platform;
+  resourcesPath?: string;
   getConfig: () => Promise<DesktopSettings["remoteControl"]>;
   store: RemoteControlStore["Service"];
   /** Allows Linux tests to run the same execution pipeline against a real temporary directory. */
@@ -368,7 +384,11 @@ export function createWinExecService(options: {
       if (signal.aborted) throw fail("CANCELLED");
       const syncEnv: Readonly<Record<string, string>> =
         (await options.syncEnvironment?.(environmentId).catch(() => ({}))) ?? {};
-      const env = mergedEnvironment({ ...input.env, ...syncEnv }, options.platform);
+      const env = await buildExecEnvironment(
+        { ...input.env, ...syncEnv },
+        options.platform,
+        options.resourcesPath,
+      );
       const paused = config.linkedProjects.some(
         (link) =>
           link.environmentId === environmentId &&
@@ -585,6 +605,7 @@ export const layer = Layer.effect(
     const run = Effect.runPromiseWith(yield* Effect.context<never>());
     const service = createWinExecService({
       platform: environment.platform,
+      resourcesPath: environment.resourcesPath,
       getConfig: async () => (await run(settings.get)).remoteControl,
       store,
       syncEnvironment: sync.environment,

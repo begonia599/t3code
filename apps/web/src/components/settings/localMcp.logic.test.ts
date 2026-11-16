@@ -1,14 +1,23 @@
-import type { LocalMcpServerConfig } from "@t3tools/contracts";
+import type {
+  LocalMcpDiscoveredServer,
+  LocalMcpDiscoveryResult,
+  LocalMcpServerConfig,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   describeLocalMcpTransport,
+  discoverySourceApps,
   draftFromConfig,
   draftToConfig,
   emptyLocalMcpDraft,
+  localMcpErrorExplanation,
   localMcpStatusPresentation,
   parsePairsText,
   parsePastedLocalMcpConfig,
+  pathBaseName,
+  pendingDiscoveredServers,
+  skippedDiscoveryNotes,
   slugifyLocalMcpId,
   uniqueLocalMcpId,
   withDraftName,
@@ -211,5 +220,79 @@ describe("presentation helpers", () => {
     expect(localMcpStatusPresentation("failed", true).tone).toBe("error");
     expect(localMcpStatusPresentation("starting", true).pulse).toBe(true);
     expect(localMcpStatusPresentation("running", false).label).toBe("Turned off");
+  });
+});
+
+const discovered = (
+  key: string,
+  name: string,
+  extra: Partial<LocalMcpDiscoveredServer> = {},
+): LocalMcpDiscoveredServer => ({
+  key,
+  config: {
+    id: name.toLowerCase(),
+    name,
+    enabled: true,
+    transport: { type: "http", url: `http://127.0.0.1:8080/${key}`, headers: {} },
+  },
+  sources: [{ app: "cursor", file: "C:\\Users\\x\\.cursor\\mcp.json", name }],
+  ...extra,
+});
+
+describe("local MCP discovery presentation", () => {
+  const result: LocalMcpDiscoveryResult = {
+    servers: [
+      discovered("a1", "unityMCP", {
+        sources: [
+          {
+            app: "claude-code",
+            file: "C:\\Users\\x\\.claude.json",
+            name: "unityMCP",
+            project: "E:\\Game\\",
+          },
+          { app: "codex", file: "C:\\Users\\x\\.codex\\config.toml", name: "unityMCP" },
+          { app: "claude-code", file: "C:\\Users\\x\\.claude.json", name: "unityMCP" },
+        ],
+      }),
+      discovered("b2", "github", { addedAs: "github" }),
+      discovered("c3", "blender"),
+    ],
+    skipped: [
+      { source: { app: "codex", file: "c", name: "UnityMCP" }, reason: "disabled" },
+      { source: { app: "vscode", file: "v", name: "old" }, reason: "sse" },
+      { source: { app: "vscode", file: "v2", name: "OLD" }, reason: "sse" },
+      { source: { app: "windsurf", file: "w", name: "" }, reason: "invalid" },
+    ],
+    scannedAt: "2026-11-16T00:00:00.000Z",
+  };
+
+  it("lists only servers that are not added yet", () => {
+    expect(pendingDiscoveredServers(result, new Set()).map((server) => server.key)).toEqual([
+      "a1",
+      "c3",
+    ]);
+    expect(pendingDiscoveredServers(result, new Set(["c3"])).map((server) => server.key)).toEqual([
+      "a1",
+    ]);
+  });
+
+  it("names each source app once, in source order", () => {
+    expect(discoverySourceApps(result.servers[0]!.sources)).toEqual(["Claude Code", "Codex"]);
+    expect(pathBaseName("E:\\Game\\")).toBe("Game");
+    expect(pathBaseName("/home/x/proj")).toBe("proj");
+  });
+
+  it("hides skips that were found usable elsewhere and repeats", () => {
+    expect(skippedDiscoveryNotes(result)).toEqual([
+      { app: "VS Code", name: "old", reason: "sse" },
+      { app: "Windsurf", name: "", reason: "invalid" },
+    ]);
+  });
+
+  it("explains every error kind", () => {
+    for (const kind of ["unreachable", "http", "spawn", "closed", "timeout", "protocol"] as const) {
+      expect(localMcpErrorExplanation(kind)).toMatch(/\w/);
+    }
+    expect(localMcpErrorExplanation("unreachable")).toContain("Unity");
   });
 });

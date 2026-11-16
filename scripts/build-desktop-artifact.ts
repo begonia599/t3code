@@ -1072,6 +1072,46 @@ export const MUTAGEN_EXTRA_RESOURCES = [
     filter: ["mutagen.exe", "ssh.exe", "scp.exe"],
   },
 ] as const;
+export const WIN_TOOLS_EXTRA_RESOURCES = [
+  {
+    from: "apps/desktop/prod-resources/win-tools",
+    to: "win-tools",
+    filter: ["rg.exe", "es.exe", "LICENSE-MIT", "UNLICENSE"],
+  },
+] as const;
+
+const bundleWinTools = (platform: typeof BuildPlatform.Type) =>
+  platform === "win"
+    ? Config.Boolean("T3CODE_BUILD_BUNDLE_WIN_TOOLS").pipe(Config.withDefault(false))
+    : Effect.succeed(false);
+
+export class WinToolsResourceMissingError extends Schema.TaggedError<WinToolsResourceMissingError>()(
+  "WinToolsResourceMissingError",
+  { path: Schema.String },
+) {}
+
+/** CI prepares pinned, verified search tools and ripgrep notices; local builds opt out. */
+export const stageWinTools = Effect.fn("stageWinTools")(function* (input: {
+  repoRoot: string;
+  stageResourcesDir: string;
+  platform: typeof BuildPlatform.Type;
+}) {
+  if (!(yield* bundleWinTools(input.platform))) return;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const resource = WIN_TOOLS_EXTRA_RESOURCES[0];
+  const source = path.join(input.repoRoot, resource.from);
+  const destination = path.join(input.stageResourcesDir, resource.to);
+  for (const name of resource.filter) {
+    const file = path.join(source, name);
+    const info = yield* fs.stat(file).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "File")
+      return yield* new WinToolsResourceMissingError({ path: file });
+  }
+  yield* fs.makeDirectory(destination, { recursive: true });
+  for (const name of resource.filter)
+    yield* fs.copyFile(path.join(source, name), path.join(destination, name));
+});
 
 const bundleMutagen = (platform: typeof BuildPlatform.Type) =>
   platform === "win"
@@ -2724,6 +2764,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...((yield* bundleMutagen(platform)) ? MUTAGEN_EXTRA_RESOURCES : []),
+      ...((yield* bundleWinTools(platform)) ? WIN_TOOLS_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
@@ -3635,6 +3676,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
   }
   yield* stageMutagen({ repoRoot, stageResourcesDir, platform: options.platform });
+  yield* stageWinTools({ repoRoot, stageResourcesDir, platform: options.platform });
   yield* stageResourceMonitor({
     repoRoot,
     stageResourcesDir,

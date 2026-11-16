@@ -116,6 +116,7 @@ it("hosts every enabled environment and forwards live capabilities through the e
     setEnabled: async () => [],
     restart: async () => [],
     probe: async () => ({ ok: false, error: "unused" }),
+    discover: async () => ({ servers: [], skipped: [], scannedAt: "2026-11-16T00:00:00Z" }),
     onChanged: () => () => {},
   };
   vi.stubGlobal("window", { desktopBridge: { remoteControl, localMcp } });

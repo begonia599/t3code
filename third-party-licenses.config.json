@@ -1,6 +1,19 @@
 {
   "customNotices": [
     {
+      "bundles": ["desktop"],
+      "license": "MIT",
+      "name": "Everything Command-line Interface (ES)",
+      "sourceUrl": "https://www.voidtools.com/ES-1.1.0.30.x64.zip",
+      "version": "1.1.0.30",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) voidtools"]
+        }
+      ]
+    },
+    {
       "bundles": ["assets", "desktop", "web"],
       "license": "CC0-1.0",
       "name": "Notification Sound 1 by deadrobotmusic",

@@ -164,10 +164,20 @@ it.effect.each([
         .pipe(Effect.forkScoped);
       const request = yield* h.next;
       yield* h.error(request.requestId, code);
-      expect(yield* Fiber.join(call)).toMatchObject({
+      const result = yield* Fiber.join(call);
+      expect(result).toMatchObject({
         isError: true,
         content: [{ text: expect.stringContaining(`[${code}]`) }],
       });
+      if (code === "MCP_SERVER_UNAVAILABLE") {
+        expect(result.content).toMatchObject([
+          {
+            text: expect.stringContaining(
+              "Windows 电脑 Work PC 上的 MCP 服务暂时不可用（可能没启动或正在重启），几秒后重试；一直失败请在 T3 桌面版「本机 MCP 服务器」里查看状态。",
+            ),
+          },
+        ]);
+      }
     }),
   ).pipe(Effect.provide(testLayer())),
 );

@@ -30,6 +30,7 @@ import * as NodeOS from "node:os";
 import * as NodeUtil from "node:util";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
+import { classifyLocalMcpError } from "./localMcpErrors.ts";
 import { DesktopAppSettings } from "../settings/DesktopAppSettings.ts";
 import { mergedEnvironment, killWindowsProcessTree } from "./nativeProcesses.ts";
 
@@ -109,6 +110,7 @@ function createSession(config: LocalMcpServerConfig, platform: NodeJS.Platform) 
       stderr = Buffer.concat([stderr, Buffer.from(chunk)]).subarray(-4096);
     });
   }
+  let connected = false;
   let closing: Promise<void> | undefined;
   let spawnedPid: number | null = null;
   return {
@@ -120,6 +122,7 @@ function createSession(config: LocalMcpServerConfig, platform: NodeJS.Platform) 
       // start() spawns synchronously; retain our PID even if initialization closes the transport.
       if (transport instanceof StdioClientTransport) spawnedPid = transport.pid;
       await connection;
+      connected = true;
       const receive = transport.onmessage;
       let incoming = Promise.resolve();
       // SDK notification handlers run in a microtask. Preserve wire order when stdio delivers
@@ -134,8 +137,13 @@ function createSession(config: LocalMcpServerConfig, platform: NodeJS.Platform) 
           });
       };
     },
-    error: (cause: unknown) =>
-      `${message(cause)}${stderr.length ? `\n${stderr.toString("utf8")}` : ""}`,
+    error: (cause: unknown) => {
+      const error = classifyLocalMcpError(cause, { transport: config.transport.type, connected });
+      return {
+        ...error,
+        detail: `${error.detail}${stderr.length ? `\n${stderr.toString("utf8")}` : ""}`,
+      };
+    },
     close: () =>
       (closing ??= (async () => {
         // Capture only our own child PID, before the SDK clears it during close.
@@ -167,6 +175,8 @@ type Entry = {
   status: LocalMcpServerView["status"];
   tools: readonly LocalMcpTool[];
   error?: string;
+  errorKind?: LocalMcpServerView["errorKind"];
+  fail?: (cause: unknown) => Promise<void>;
   toolsUpdatedAt?: string;
   session?: Session;
   lifetime: AbortController;
@@ -200,6 +210,7 @@ export function createLocalMcpManager(options: {
       status: entry.status,
       tools: entry.tools,
       ...(entry.error === undefined ? {} : { error: entry.error }),
+      ...(entry.errorKind === undefined ? {} : { errorKind: entry.errorKind }),
       ...(entry.toolsUpdatedAt === undefined ? {} : { toolsUpdatedAt: entry.toolsUpdatedAt }),
     }));
   const publish = () => {
@@ -219,6 +230,7 @@ export function createLocalMcpManager(options: {
     if (shutdown.signal.aborted || entry.lifetime.signal.aborted) return;
     entry.status = "starting";
     delete entry.error;
+    delete entry.errorKind;
     publish();
     let session: Session;
     const failed = async (cause: unknown) => {
@@ -226,7 +238,14 @@ export function createLocalMcpManager(options: {
       if (shutdown.signal.aborted || entry.lifetime.signal.aborted) return;
       delete entry.session;
       entry.status = "failed";
-      entry.error = session ? session.error(cause) : message(cause);
+      const error = session
+        ? session.error(cause)
+        : classifyLocalMcpError(cause, {
+            transport: entry.config.transport.type,
+            connected: false,
+          });
+      entry.error = error.detail;
+      entry.errorKind = error.kind;
       publish();
       await session?.close();
       if (shutdown.signal.aborted || entry.lifetime.signal.aborted) return;
@@ -238,6 +257,7 @@ export function createLocalMcpManager(options: {
         delays[Math.min(entry.attempts++, delays.length - 1)] ?? 30000,
       );
     };
+    entry.fail = failed;
     try {
       session = createSession(entry.config, platform);
       entry.session = session;
@@ -413,6 +433,7 @@ export function createLocalMcpManager(options: {
         options.callTimeoutMs ?? DESKTOP_MCP_CALL_TIMEOUT_MS,
       );
       let acquired = false;
+      let calling: { entry: Entry; session: Session } | undefined;
       try {
         await acquire(limit.signal);
         acquired = true;
@@ -423,6 +444,7 @@ export function createLocalMcpManager(options: {
           throw new LocalMcpError("MCP_SERVER_UNAVAILABLE", entry.error);
         if (!entry.tools.some((tool) => tool.name === toolName))
           throw new LocalMcpError("MCP_TOOL_NOT_FOUND");
+        calling = { entry, session: entry.session };
         let progress = Promise.resolve();
         const timeout = options.callTimeoutMs ?? DESKTOP_MCP_CALL_TIMEOUT_MS;
         const result = await abortable(
@@ -449,7 +471,21 @@ export function createLocalMcpManager(options: {
       } catch (cause) {
         if (limit.signal.aborted) throw limit.signal.reason;
         if (cause instanceof LocalMcpError) throw cause;
-        throw new LocalMcpError("MCP_PROTOCOL_ERROR", message(cause));
+        const error = calling
+          ? calling.session.error(cause)
+          : classifyLocalMcpError(cause, {
+              transport: "http",
+              connected: false,
+            });
+        if (error.kind === "timeout") throw new LocalMcpError("TIMEOUT", error.detail);
+        if (error.kind !== "protocol") {
+          // Mark this session failed, but never replay a possibly executed tool call.
+          if (calling && current(calling.entry, calling.session)) {
+            track(calling.entry.fail?.(cause) ?? Promise.resolve());
+          }
+          throw new LocalMcpError("MCP_SERVER_UNAVAILABLE", error.detail);
+        }
+        throw new LocalMcpError("MCP_PROTOCOL_ERROR", error.detail);
       } finally {
         if (acquired) release();
         limit.dispose();
@@ -472,7 +508,13 @@ export function createLocalMcpManager(options: {
               ...(info ? { serverName: info.name, serverVersion: info.version } : {}),
             };
           } catch (cause) {
-            return { ok: false, error: session ? session.error(cause) : message(cause) };
+            const error = session
+              ? session.error(cause)
+              : classifyLocalMcpError(cause, {
+                  transport: config.transport.type,
+                  connected: false,
+                });
+            return { ok: false, error: error.detail, errorKind: error.kind };
           } finally {
             limit.dispose();
             // The caller deadline includes cleanup; finalization still waits for any SDK grace period.

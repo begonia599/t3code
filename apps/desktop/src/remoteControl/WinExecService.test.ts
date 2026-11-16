@@ -16,7 +16,7 @@ import {
   DESKTOP_EXEC_OUTPUT_LIMIT_BYTES,
   DESKTOP_EXEC_CHUNK_BYTES,
 } from "@t3tools/contracts";
-import { createWinExecService, runProcess } from "./WinExecService.ts";
+import { buildExecEnvironment, createWinExecService, runProcess } from "./WinExecService.ts";
 import { createRemoteControlStore } from "./RemoteControlStore.ts";
 import { DEFAULT_DESKTOP_SETTINGS, type DesktopSettings } from "../settings/DesktopAppSettings.ts";
 import type { RequestHandler } from "./RemoteControlRequestRouter.ts";
@@ -120,6 +120,60 @@ beforeEach(async () => {
 afterEach(async () => {
   await service.disconnectAll();
   await NodeFSP.rm(dir, { recursive: true, force: true });
+});
+
+describe("bundled search tools environment", () => {
+  it.each(["Path", "PATH", "path"])(
+    "prepends tools and keeps a single %s variable",
+    async (key) => {
+      const tools = NodePath.join(dir, "win-tools");
+      await NodeFSP.mkdir(tools);
+      const parentEnv = { ...process.env };
+      const env = await buildExecEnvironment(
+        { PATH: "C:\\parent", [key]: "D:\\custom;C:\\Windows" },
+        "win32",
+        dir,
+      );
+      expect(Object.keys(env).filter((name) => name.toLowerCase() === "path")).toEqual([key]);
+      expect(env[key]).toBe(`${tools};D:\\custom;C:\\Windows`);
+      expect(process.env).toEqual(parentEnv);
+    },
+  );
+
+  it("uses inherited PATH casing and handles absent or empty PATH", async () => {
+    await NodeFSP.mkdir(NodePath.join(dir, "win-tools"));
+    try {
+      for (const key of Object.keys(process.env))
+        if (key.toLowerCase() === "path") vi.stubEnv(key, undefined);
+      vi.stubEnv("Path", "C:\\Windows");
+      const inherited = await buildExecEnvironment({}, "win32", dir);
+      expect(Object.keys(inherited).filter((name) => name.toLowerCase() === "path")).toEqual([
+        "Path",
+      ]);
+      expect(inherited.Path).toBe(`${NodePath.join(dir, "win-tools")};C:\\Windows`);
+      vi.stubEnv("Path", undefined);
+      for (const overlay of [{}, { Path: "" }]) {
+        const env = await buildExecEnvironment(overlay, "win32", dir);
+        const keys = Object.keys(env).filter((name) => name.toLowerCase() === "path");
+        expect(keys).toHaveLength(1);
+        expect(env[keys[0]!]).toBe(NodePath.join(dir, "win-tools"));
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("skips missing resources, non-directories and non-Windows platforms", async () => {
+    const overlay = { Path: "C:\\Windows" };
+    expect((await buildExecEnvironment(overlay, "win32", undefined)).Path).toBe(overlay.Path);
+    expect((await buildExecEnvironment(overlay, "win32", dir)).Path).toBe(overlay.Path);
+    await NodeFSP.writeFile(NodePath.join(dir, "win-tools"), "not a directory");
+    expect((await buildExecEnvironment(overlay, "win32", dir)).Path).toBe(overlay.Path);
+    await NodeFSP.rm(NodePath.join(dir, "win-tools"));
+    await NodeFSP.mkdir(NodePath.join(dir, "win-tools"));
+    for (const platform of ["linux", "darwin"] as const)
+      expect((await buildExecEnvironment(overlay, platform, dir)).Path).toBe(overlay.Path);
+  });
 });
 
 describe("execution", () => {

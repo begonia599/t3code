@@ -286,6 +286,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     },
   },
   localMcp: {
+    discover: () => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_DISCOVER_CHANNEL),
     list: () => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_LIST_CHANNEL),
     upsert: (config) => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_UPSERT_CHANNEL, config),
     remove: (id) => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_REMOVE_CHANNEL, { id }),

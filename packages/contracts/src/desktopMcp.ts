@@ -69,12 +69,32 @@ export type LocalMcpTool = typeof LocalMcpTool.Type;
 export const LocalMcpServerStatus = Schema.Literals(["stopped", "starting", "running", "failed"]);
 export type LocalMcpServerStatus = typeof LocalMcpServerStatus.Type;
 
+/**
+ * Why a local MCP could not be reached or failed, so the UI can explain it in plain words.
+ * - `unreachable`: nothing listening at the HTTP address (connection refused, DNS, fetch failed)
+ * - `http`: the address answered with a non-success HTTP status (401/404/500…)
+ * - `spawn`: the stdio command could not be started (not found, exited during startup)
+ * - `closed`: the connection dropped after it was up (server restarted or crashed)
+ * - `timeout`: connect or tools/list did not finish in time
+ * - `protocol`: the server answered but not as a valid MCP server
+ */
+export const LocalMcpErrorKind = Schema.Literals([
+  "unreachable",
+  "http",
+  "spawn",
+  "closed",
+  "timeout",
+  "protocol",
+]);
+export type LocalMcpErrorKind = typeof LocalMcpErrorKind.Type;
+
 /** Config + live state, for the settings UI. */
 export const LocalMcpServerView = Schema.Struct({
   config: LocalMcpServerConfig,
   status: LocalMcpServerStatus,
-  /** Last start/list error, human readable. */
+  /** Last start/list error, raw detail (shown under the plain-words explanation). */
   error: Schema.optional(Schema.String),
+  errorKind: Schema.optional(LocalMcpErrorKind),
   /** Last successfully listed tools; kept while failed so the catalog stays stable. */
   tools: Schema.Array(LocalMcpTool),
   /** ISO time of the last successful tools/list. */
@@ -89,9 +109,74 @@ export const LocalMcpProbeResult = Schema.Union([
     serverVersion: Schema.optional(Schema.String),
     tools: Schema.Array(LocalMcpTool),
   }),
-  Schema.Struct({ ok: Schema.Literal(false), error: Schema.String }),
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    error: Schema.String,
+    errorKind: Schema.optional(LocalMcpErrorKind),
+  }),
 ]);
 export type LocalMcpProbeResult = typeof LocalMcpProbeResult.Type;
+
+/** Apps whose MCP config files the desktop scans on this PC. */
+export const LocalMcpDiscoveryApp = Schema.Literals([
+  "claude-code",
+  "codex",
+  "cursor",
+  "vscode",
+  "claude-desktop",
+  "windsurf",
+]);
+export type LocalMcpDiscoveryApp = typeof LocalMcpDiscoveryApp.Type;
+
+/** One place a discovered MCP config was found. */
+export const LocalMcpDiscoverySource = Schema.Struct({
+  app: LocalMcpDiscoveryApp,
+  /** Absolute Windows path of the config file. */
+  file: Schema.String,
+  /** Server name as written in that file (e.g. `unityMCP`). */
+  name: Schema.String,
+  /** Project path for project-scoped entries (Claude Code `projects.*`), else omitted. */
+  project: Schema.optional(Schema.String),
+});
+export type LocalMcpDiscoverySource = typeof LocalMcpDiscoverySource.Type;
+
+/**
+ * An MCP server configured in another app on this PC, deduplicated by normalized transport.
+ * Stays on the desktop (env/header values included); never sent to the server.
+ */
+export const LocalMcpDiscoveredServer = Schema.Struct({
+  /** Stable across scans: hash of the normalized transport. */
+  key: TrimmedNonEmptyString,
+  /** Ready to save: `enabled: true`, id unique against current local configs. */
+  config: LocalMcpServerConfig,
+  /** Every file/entry that produced this transport, most specific first. */
+  sources: Schema.Array(LocalMcpDiscoverySource),
+  /** Id of the existing local config with the same transport, if already added. */
+  addedAs: Schema.optional(LocalMcpServerId),
+});
+export type LocalMcpDiscoveredServer = typeof LocalMcpDiscoveredServer.Type;
+
+export const LocalMcpDiscoverySkipReason = Schema.Literals([
+  /** Legacy SSE transport (only stdio and Streamable HTTP are supported). */
+  "sse",
+  /** Uses `${input:…}`-style placeholders that only the original app can fill in. */
+  "placeholder",
+  /** Disabled in the original app. */
+  "disabled",
+  /** Anything else we could not turn into a valid config. */
+  "invalid",
+]);
+export type LocalMcpDiscoverySkipReason = typeof LocalMcpDiscoverySkipReason.Type;
+
+export const LocalMcpDiscoveryResult = Schema.Struct({
+  servers: Schema.Array(LocalMcpDiscoveredServer),
+  skipped: Schema.Array(
+    Schema.Struct({ source: LocalMcpDiscoverySource, reason: LocalMcpDiscoverySkipReason }),
+  ),
+  /** ISO time of the scan. */
+  scannedAt: Schema.String,
+});
+export type LocalMcpDiscoveryResult = typeof LocalMcpDiscoveryResult.Type;
 
 export const LocalMcpServerIdInput = Schema.Struct({ id: LocalMcpServerId });
 export const LocalMcpSetEnabledInput = Schema.Struct({
@@ -153,5 +238,7 @@ export interface LocalMcpBridge {
   restart(id: string): Promise<readonly LocalMcpServerView[]>;
   /** Connect with an unsaved config, list tools, disconnect. Never throws for MCP failures. */
   probe(config: LocalMcpServerConfig): Promise<LocalMcpProbeResult>;
+  /** Scan other apps' MCP config files on this PC. Read-only; never throws for bad files. */
+  discover(): Promise<LocalMcpDiscoveryResult>;
   onChanged(listener: (servers: readonly LocalMcpServerView[]) => void): () => void;
 }

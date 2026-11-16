@@ -9,6 +9,9 @@
  */
 import type {
   LocalMcpBridge,
+  LocalMcpDiscoveredServer,
+  LocalMcpDiscoveryResult,
+  LocalMcpErrorKind,
   LocalMcpProbeResult,
   LocalMcpServerConfig,
   LocalMcpServerView,
@@ -21,10 +24,10 @@ import {
   PlusIcon,
   RefreshCwIcon,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { isElectron } from "~/env";
-import { useT } from "~/i18n";
+import { useInterfaceLanguage, useT } from "~/i18n";
 import { cn } from "~/lib/utils";
 
 import { bridgeErrorMessage } from "../remoteControl/remoteControl.logic";
@@ -46,12 +49,20 @@ import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  DISCOVERY_APPS,
   describeLocalMcpTransport,
+  discoveryAppLabel,
+  discoverySourceApps,
   draftFromConfig,
   draftToConfig,
   emptyLocalMcpDraft,
+  localMcpErrorExplanation,
   localMcpStatusPresentation,
   parsePastedLocalMcpConfig,
+  pathBaseName,
+  pendingDiscoveredServers,
+  skippedDiscoveryNotes,
+  skippedReasonText,
   toolCountText,
   uniqueLocalMcpId,
   withDraftName,
@@ -97,14 +108,92 @@ function useLocalMcpServers(bridge: LocalMcpBridge) {
   return { servers, error, replace: setServers };
 }
 
+type DiscoveryState =
+  | { readonly kind: "unsupported" }
+  | { readonly kind: "loading" }
+  | { readonly kind: "error"; readonly message: string }
+  | { readonly kind: "done"; readonly result: LocalMcpDiscoveryResult };
+
+/** Scans other apps' MCP configs once on open; `scan()` rescans. Older desktops lack `discover`. */
+function useLocalMcpDiscovery(bridge: LocalMcpBridge) {
+  const supported = typeof bridge.discover === "function";
+  const [state, setState] = useState<DiscoveryState>(
+    supported ? { kind: "loading" } : { kind: "unsupported" },
+  );
+  const [scanning, setScanning] = useState(false);
+  const live = useRef(true);
+  const apply = useCallback((outcome: DiscoveryState) => {
+    if (!live.current) return;
+    // A failed rescan keeps the last good list.
+    setState((current) =>
+      outcome.kind === "error" && current.kind === "done" ? current : outcome,
+    );
+  }, []);
+  const discover = useCallback(
+    () =>
+      bridge.discover().then(
+        (result): DiscoveryState => ({ kind: "done", result }),
+        (cause: unknown): DiscoveryState => ({
+          kind: "error",
+          message: bridgeErrorMessage(cause),
+        }),
+      ),
+    [bridge],
+  );
+  useEffect(() => {
+    live.current = true;
+    if (supported) void discover().then(apply);
+    return () => {
+      live.current = false;
+    };
+  }, [apply, discover, supported]);
+  const scan = useCallback(async () => {
+    if (!supported) return;
+    setScanning(true);
+    apply(await discover());
+    if (live.current) setScanning(false);
+  }, [apply, discover, supported]);
+  return { state, scanning, scan };
+}
+
 type Editing = { readonly kind: "new" } | { readonly kind: "edit"; readonly id: string } | null;
 
 export function LocalMcpSettings() {
   const t = useT();
   const bridge = readLocalMcpBridge()!;
   const { servers, error, replace } = useLocalMcpServers(bridge);
+  const discovery = useLocalMcpDiscovery(bridge);
   const [editing, setEditing] = useState<Editing>(null);
+  const [addedKeys, setAddedKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [adding, setAdding] = useState<ReadonlySet<string>>(() => new Set());
   const ids = new Set((servers ?? []).map((view) => view.config.id));
+  const pending =
+    discovery.state.kind === "done"
+      ? pendingDiscoveredServers(discovery.state.result, addedKeys)
+      : [];
+
+  const addDiscovered = async (candidates: readonly LocalMcpDiscoveredServer[]) => {
+    setAdding(new Set(candidates.map((candidate) => candidate.key)));
+    // Ids were made unique at scan time; re-check so an add never replaces a newer server.
+    const taken = new Set(ids);
+    try {
+      for (const candidate of candidates) {
+        const id = uniqueLocalMcpId(candidate.config.id, taken);
+        taken.add(id);
+        replace(await bridge.upsert({ ...candidate.config, id }));
+        setAddedKeys((current) => new Set(current).add(candidate.key));
+      }
+    } catch (cause) {
+      toastManager.add({
+        type: "error",
+        title: t("Couldn't add the MCP server"),
+        description: bridgeErrorMessage(cause),
+      });
+    } finally {
+      setAdding(new Set());
+      void discovery.scan();
+    }
+  };
 
   return (
     <SettingsSection
@@ -136,9 +225,11 @@ export function LocalMcpSettings() {
               {error}
             </p>
           ) : servers === null ? null : servers.length === 0 && editing?.kind !== "new" ? (
-            <p className="border-t border-border/50 py-2.5 text-sm text-muted-foreground">
-              {t("No MCP servers yet.")}
-            </p>
+            pending.length > 0 ? null : (
+              <p className="border-t border-border/50 py-2.5 text-sm text-muted-foreground">
+                {t("No MCP servers yet.")}
+              </p>
+            )
           ) : (
             servers.map((view) =>
               editing?.kind === "edit" && editing.id === view.config.id ? (
@@ -176,8 +267,262 @@ export function LocalMcpSettings() {
             />
           ) : null}
         </div>
+        {discovery.state.kind === "unsupported" || error ? null : (
+          <DiscoveredServers
+            state={discovery.state}
+            scanning={discovery.scanning}
+            pending={pending}
+            adding={adding}
+            onScan={() => void discovery.scan()}
+            onAdd={(candidates) => void addDiscovered(candidates)}
+          />
+        )}
       </div>
     </SettingsSection>
+  );
+}
+
+/** MCP servers already set up in Claude Code, Codex, Cursor, … on this PC, one click to add. */
+function DiscoveredServers({
+  state,
+  scanning,
+  pending,
+  adding,
+  onScan,
+  onAdd,
+}: {
+  state: Exclude<DiscoveryState, { kind: "unsupported" }>;
+  scanning: boolean;
+  pending: readonly LocalMcpDiscoveredServer[];
+  adding: ReadonlySet<string>;
+  onScan: () => void;
+  onAdd: (candidates: readonly LocalMcpDiscoveredServer[]) => void;
+}) {
+  const t = useT();
+  const [skippedOpen, setSkippedOpen] = useState(false);
+  const busy = adding.size > 0;
+  const notes = state.kind === "done" ? skippedDiscoveryNotes(state.result) : [];
+  const listSeparator = useInterfaceLanguage() === "zh-CN" ? "、" : ", ";
+  const appNames = DISCOVERY_APPS.map(discoveryAppLabel).join(listSeparator);
+
+  return (
+    <div className="mt-3 border-t border-border/50 pt-3">
+      <div className="flex min-h-7 items-center gap-2">
+        <p className="text-xs font-medium">{t("Already set up in other apps")}</p>
+        <div className="ms-auto flex items-center gap-1">
+          {pending.length > 1 ? (
+            <Button size="xs" variant="ghost" disabled={busy} onClick={() => onAdd(pending)}>
+              {t("Add all")}
+            </Button>
+          ) : null}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-sm"
+                  variant="ghost-muted"
+                  aria-label={t("Scan again")}
+                  disabled={scanning || busy}
+                  onClick={onScan}
+                />
+              }
+            >
+              <RefreshCwIcon className={cn("size-3.5", scanning && "animate-spin")} />
+            </TooltipTrigger>
+            <TooltipPopup side="top">{t("Scan again")}</TooltipPopup>
+          </Tooltip>
+        </div>
+      </div>
+
+      {state.kind === "loading" ? (
+        <p className="flex items-center gap-1.5 py-1.5 text-xs text-muted-foreground">
+          <Spinner className="size-3.5" />
+          {t("Looking for MCP servers set up in other apps…")}
+        </p>
+      ) : state.kind === "error" ? (
+        <p className="py-1.5 text-xs text-muted-foreground">
+          {t("Couldn't look through other apps' settings.")}{" "}
+          <span className="wrap-anywhere">{state.message}</span>
+        </p>
+      ) : pending.length === 0 ? (
+        <p className="py-1.5 text-xs text-muted-foreground">
+          {state.result.servers.length > 0
+            ? t("Everything found in other apps is already added.")
+            : t("Didn't find any in {apps}.").replace("{apps}", appNames)}
+        </p>
+      ) : (
+        <>
+          <p className="pb-1 text-xs text-muted-foreground">
+            {t("Add one and agents can use its tools. Nothing to fill in again.")}
+          </p>
+          <div className="divide-y divide-border/50">
+            {pending.map((candidate) => (
+              <DiscoveredRow
+                key={candidate.key}
+                candidate={candidate}
+                adding={adding.has(candidate.key)}
+                disabled={busy}
+                onAdd={() => onAdd([candidate])}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {notes.length > 0 ? (
+        <div className="pt-1.5">
+          <button
+            type="button"
+            className="inline-flex items-center gap-0.5 rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:outline-1 focus-visible:outline-ring"
+            aria-expanded={skippedOpen}
+            onClick={() => setSkippedOpen((open) => !open)}
+          >
+            {t(
+              notes.length === 1
+                ? "1 more can't be added automatically"
+                : "{count} more can't be added automatically",
+            ).replace("{count}", String(notes.length))}
+            <ChevronDownIcon
+              aria-hidden
+              className={cn("size-3 transition-transform", skippedOpen && "rotate-180")}
+            />
+          </button>
+          {skippedOpen ? (
+            <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+              {notes.map((note) => (
+                <li key={`${note.app}:${note.name}:${note.reason}`} className="wrap-anywhere">
+                  {note.name === ""
+                    ? t("{app}: config file couldn't be read").replace("{app}", note.app)
+                    : t("{name} ({app}): {reason}")
+                        .replace("{name}", note.name)
+                        .replace("{app}", note.app)
+                        .replace("{reason}", t(skippedReasonText(note.reason)))}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DiscoveredRow({
+  candidate,
+  adding,
+  disabled,
+  onAdd,
+}: {
+  candidate: LocalMcpDiscoveredServer;
+  adding: boolean;
+  disabled: boolean;
+  onAdd: () => void;
+}) {
+  const t = useT();
+  const listSeparator = useInterfaceLanguage() === "zh-CN" ? "、" : ", ";
+  const { config, sources } = candidate;
+  const apps = discoverySourceApps(sources).join(listSeparator);
+
+  return (
+    <div className="flex items-center gap-3 py-2.5">
+      <span
+        aria-hidden
+        className="size-2 shrink-0 rounded-full border border-dashed border-muted-foreground/60"
+      />
+      <div className="min-w-0 flex-1">
+        <p className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate text-sm font-medium">{config.name}</span>
+          <span className="shrink-0 font-mono text-2xs text-muted-foreground">{config.id}__</span>
+        </p>
+        <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+          <Tooltip>
+            <TooltipTrigger
+              render={<span className="max-w-full shrink-0 cursor-default truncate" />}
+            >
+              {t("From {apps}").replace("{apps}", apps)}
+            </TooltipTrigger>
+            <TooltipPopup side="top" className="max-w-96">
+              <ul className="space-y-0.5">
+                {sources.map((source) => (
+                  <li
+                    key={`${source.file}:${source.project ?? ""}:${source.name}`}
+                    className="wrap-anywhere"
+                  >
+                    <span className="font-medium">{discoveryAppLabel(source.app)}</span>
+                    {source.project
+                      ? ` · ${t("project {name}").replace("{name}", pathBaseName(source.project))}`
+                      : ""}
+                    <span className="block font-mono text-2xs opacity-70">{source.file}</span>
+                  </li>
+                ))}
+              </ul>
+            </TooltipPopup>
+          </Tooltip>
+          {/* The app list keeps its width (capped at the line); the transport takes what is left. */}
+          <span className="min-w-0 truncate">
+            <span aria-hidden>· </span>
+            <span className="font-mono text-2xs">{describeLocalMcpTransport(config)}</span>
+          </span>
+        </p>
+      </div>
+      <Button size="xs" variant="outline" className="shrink-0" disabled={disabled} onClick={onAdd}>
+        {adding ? <Spinner className="size-3.5" /> : <PlusIcon className="size-3.5" />}
+        {t("Add")}
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Plain-words explanation with the raw detail one click away. Without a kind
+ * (older desktop, or a bridge failure) only the raw text is available.
+ */
+function LocalMcpFailure({
+  kind,
+  detail,
+  retrying = false,
+}: {
+  kind: LocalMcpErrorKind | undefined;
+  detail: string | undefined;
+  retrying?: boolean;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  if (!kind) {
+    return detail ? (
+      <pre className="max-h-24 overflow-auto rounded-md bg-destructive/6 px-2.5 py-1.5 font-mono text-2xs leading-relaxed whitespace-pre-wrap text-destructive-foreground">
+        {detail}
+      </pre>
+    ) : null;
+  }
+  return (
+    <div className="min-w-0">
+      <p className="text-xs leading-relaxed text-destructive-foreground">
+        {t(localMcpErrorExplanation(kind))}
+        {retrying ? (
+          <span className="ms-1.5 text-muted-foreground">{t("Retrying automatically")}</span>
+        ) : null}
+        {detail ? (
+          <button
+            type="button"
+            className="ms-1.5 inline-flex items-center gap-0.5 rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-1 focus-visible:outline-ring"
+            aria-expanded={open}
+            onClick={() => setOpen((next) => !next)}
+          >
+            {t("Details")}
+            <ChevronDownIcon
+              aria-hidden
+              className={cn("size-3 transition-transform", open && "rotate-180")}
+            />
+          </button>
+        ) : null}
+      </p>
+      {open && detail ? (
+        <pre className="mt-1 max-h-24 overflow-auto rounded-md bg-muted/50 px-2.5 py-1.5 font-mono text-2xs leading-relaxed whitespace-pre-wrap text-muted-foreground">
+          {detail}
+        </pre>
+      ) : null}
+    </div>
   );
 }
 
@@ -326,10 +671,10 @@ function LocalMcpRow({
         </div>
       </div>
 
-      {config.enabled && view.status === "failed" && view.error ? (
-        <pre className="ms-5 mt-1.5 max-h-24 overflow-auto rounded-md bg-destructive/6 px-2.5 py-1.5 font-mono text-2xs leading-relaxed whitespace-pre-wrap text-destructive-foreground">
-          {view.error}
-        </pre>
+      {config.enabled && view.status === "failed" && (view.error || view.errorKind) ? (
+        <div className="ms-5 mt-1">
+          <LocalMcpFailure kind={view.errorKind} detail={view.error} retrying />
+        </div>
       ) : null}
 
       {toolsOpen && config.enabled ? (
@@ -691,9 +1036,9 @@ function ProbeStatus({ probe }: { probe: ProbeState }) {
   const { result } = probe;
   if (!result.ok) {
     return (
-      <p className="min-w-0 flex-1 basis-56 text-xs wrap-anywhere text-destructive-foreground">
-        {result.error}
-      </p>
+      <div className="min-w-0 flex-1 basis-56 wrap-anywhere">
+        <LocalMcpFailure kind={result.errorKind} detail={result.error} />
+      </div>
     );
   }
   const count = result.tools.length;

@@ -1115,4 +1115,37 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Line {line}: use NAME=value.": "第 {line} 行：请用 NAME=value 格式。",
   "Enter an http:// or https:// address.": "请输入 http:// 或 https:// 开头的地址。",
   "Line {line}: use Name: value.": "第 {line} 行：请用 Name: value 格式。",
+  "Nothing is answering at this address. Open the program that provides it first — Unity MCP only runs while the Unity editor is open.":
+    "这个地址没有响应。请先打开提供它的程序——Unity MCP 只在 Unity 编辑器打开时运行。",
+  "The address answered with an error. Check the URL and any token in the headers.":
+    "地址返回了错误。请检查地址，以及请求头里的令牌。",
+  "The command couldn't start. Check that the program is installed and the command is spelled right.":
+    "命令启动不了。请检查程序是否已安装、命令有没有写错。",
+  "The connection dropped. The server may be restarting or may have quit.":
+    "连接断开了，服务可能正在重启，或者已经退出。",
+  "The server didn't respond in time.": "服务响应超时。",
+  "Something answered, but not as an MCP server. Check the address path (often /mcp) or the command.":
+    "有程序在响应，但不是 MCP 服务。请检查地址路径（通常是 /mcp）或命令。",
+  "Retrying automatically": "正在自动重试",
+  Details: "详情",
+  "Couldn't add the MCP server": "无法添加 MCP 服务器",
+  "Already set up in other apps": "其他软件里已配好的",
+  "Add all": "全部添加",
+  "Scan again": "重新扫描",
+  "Looking for MCP servers set up in other apps…": "正在查找其他软件里配好的 MCP 服务器…",
+  "Couldn't look through other apps' settings.": "读取其他软件的设置失败。",
+  "Everything found in other apps is already added.": "其他软件里配好的都已添加。",
+  "Didn't find any in {apps}.": "在 {apps} 里都没有找到。",
+  "Add one and agents can use its tools. Nothing to fill in again.":
+    "点「添加」就能给智能体使用，不用再填一遍。",
+  "1 more can't be added automatically": "还有 1 个没法自动添加",
+  "{count} more can't be added automatically": "还有 {count} 个没法自动添加",
+  "{app}: config file couldn't be read": "{app}：配置文件读不了",
+  "{name} ({app}): {reason}": "{name}（{app}）：{reason}",
+  "uses the older SSE transport": "用的是旧版 SSE 传输",
+  "needs values only that app can fill in": "含有只有原软件才能填的变量",
+  "turned off there": "在原软件里已关闭",
+  "config not recognized": "配置无法识别",
+  "From {apps}": "来自 {apps}",
+  "project {name}": "项目 {name}",
 };

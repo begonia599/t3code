@@ -107,7 +107,7 @@ const failure = (code: string, hostName: string, detail = ""): CallToolResult =>
     BAD_REQUEST: "Windows MCP 调用参数不合法。",
     MCP_SERVER_NOT_FOUND: "Windows 电脑上找不到这个 MCP 服务，请检查本机 MCP 设置。",
     MCP_SERVER_DISABLED: "Windows 电脑上的这个 MCP 服务已停用，请在本机 MCP 设置中启用。",
-    MCP_SERVER_UNAVAILABLE: "Windows 电脑上的 MCP 服务不可用，请检查启动错误和本机 MCP 设置。",
+    MCP_SERVER_UNAVAILABLE: `Windows 电脑${host}上的 MCP 服务暂时不可用（可能没启动或正在重启），几秒后重试；一直失败请在 T3 桌面版「本机 MCP 服务器」里查看状态。`,
     MCP_TOOL_NOT_FOUND: "Windows MCP 工具不存在，请重新加载工具目录。",
     MCP_PROTOCOL_ERROR: "Windows MCP 服务返回了协议错误。",
     MCP_RESULT_TOO_LARGE: "Windows MCP 工具结果过大，请缩小查询范围后重试。",

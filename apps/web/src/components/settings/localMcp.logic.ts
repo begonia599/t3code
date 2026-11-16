@@ -5,6 +5,12 @@
  * @module localMcp.logic
  */
 import type {
+  LocalMcpDiscoveredServer,
+  LocalMcpDiscoveryApp,
+  LocalMcpDiscoveryResult,
+  LocalMcpDiscoverySkipReason,
+  LocalMcpDiscoverySource,
+  LocalMcpErrorKind,
   LocalMcpServerConfig,
   LocalMcpServerStatus,
   LocalMcpServerView,
@@ -342,4 +348,106 @@ export function localMcpStatusPresentation(
 export function toolCountText(view: LocalMcpServerView): { text: string; count: number } {
   const count = view.tools.length;
   return { text: count === 1 ? "1 tool" : "{count} tools", count };
+}
+
+/**
+ * What went wrong, in plain words (English source text for `t()`). The raw
+ * detail from the desktop stays available underneath for troubleshooting.
+ */
+export function localMcpErrorExplanation(kind: LocalMcpErrorKind): string {
+  switch (kind) {
+    case "unreachable":
+      return "Nothing is answering at this address. Open the program that provides it first — Unity MCP only runs while the Unity editor is open.";
+    case "http":
+      return "The address answered with an error. Check the URL and any token in the headers.";
+    case "spawn":
+      return "The command couldn't start. Check that the program is installed and the command is spelled right.";
+    case "closed":
+      return "The connection dropped. The server may be restarting or may have quit.";
+    case "timeout":
+      return "The server didn't respond in time.";
+    case "protocol":
+      return "Something answered, but not as an MCP server. Check the address path (often /mcp) or the command.";
+  }
+}
+
+const DISCOVERY_APP_LABELS: Readonly<Record<LocalMcpDiscoveryApp, string>> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+  vscode: "VS Code",
+  "claude-desktop": "Claude Desktop",
+  windsurf: "Windsurf",
+};
+
+/** Every app the desktop scans, in display order. */
+export const DISCOVERY_APPS = Object.keys(DISCOVERY_APP_LABELS) as readonly LocalMcpDiscoveryApp[];
+
+export function discoveryAppLabel(app: LocalMcpDiscoveryApp): string {
+  return DISCOVERY_APP_LABELS[app];
+}
+
+/** App names a discovered server came from, deduplicated, in source order. */
+export function discoverySourceApps(sources: readonly LocalMcpDiscoverySource[]): string[] {
+  return [...new Set(sources.map((source) => discoveryAppLabel(source.app)))];
+}
+
+/** Last path segment of a Windows or POSIX path (project folder name). */
+export function pathBaseName(path: string): string {
+  return (
+    path
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .at(-1) ?? path
+  );
+}
+
+/** Discovered servers that aren't added yet, minus ones added during this session. */
+export function pendingDiscoveredServers(
+  result: LocalMcpDiscoveryResult,
+  addedKeys: ReadonlySet<string>,
+): LocalMcpDiscoveredServer[] {
+  return result.servers.filter((server) => !server.addedAs && !addedKeys.has(server.key));
+}
+
+export interface LocalMcpSkippedNote {
+  readonly app: string;
+  /** Empty when a whole config file couldn't be read. */
+  readonly name: string;
+  readonly reason: LocalMcpDiscoverySkipReason;
+}
+
+/**
+ * Entries worth explaining: drops ones whose name also turned up as a usable
+ * server elsewhere (e.g. disabled in Codex but working in Cursor) and repeats.
+ */
+export function skippedDiscoveryNotes(result: LocalMcpDiscoveryResult): LocalMcpSkippedNote[] {
+  const usable = new Set(
+    result.servers.flatMap((server) => server.sources.map((source) => source.name.toLowerCase())),
+  );
+  const seen = new Set<string>();
+  const notes: LocalMcpSkippedNote[] = [];
+  for (const { source, reason } of result.skipped) {
+    if (source.name !== "" && usable.has(source.name.toLowerCase())) continue;
+    const note = { app: discoveryAppLabel(source.app), name: source.name, reason };
+    const key = `${note.app}\u0000${note.name.toLowerCase()}\u0000${reason}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    notes.push(note);
+  }
+  return notes;
+}
+
+/** Why one entry couldn't be added (English source text for `t()`). */
+export function skippedReasonText(reason: LocalMcpDiscoverySkipReason): string {
+  switch (reason) {
+    case "sse":
+      return "uses the older SSE transport";
+    case "placeholder":
+      return "needs values only that app can fill in";
+    case "disabled":
+      return "turned off there";
+    case "invalid":
+      return "config not recognized";
+  }
 }

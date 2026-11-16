@@ -1,8 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Isolated filesystem fixtures for native IPC discovery.
 import { expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type { LocalMcpServerConfig } from "@t3tools/contracts";
 import { DesktopAppSettings, layerTest } from "../../settings/DesktopAppSettings.ts";
 import {
@@ -17,12 +21,66 @@ import * as Methods from "./localMcp.ts";
 import * as Channels from "../channels.ts";
 
 vi.mock("electron", () => ({ webContents: { fromId: () => undefined } }));
+vi.mock("node:os", { spy: true });
 const config: LocalMcpServerConfig = {
   id: "unity",
   name: "Unity",
   enabled: false,
   transport: { type: "stdio", command: "t3-missing-mcp-fixture", args: [], env: {} },
 };
+
+it.effect(
+  "discovers through validated IPC using local paths without saving or publishing capabilities",
+  () =>
+    Effect.gen(function* () {
+      const directory = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-mcp-discovery-")),
+      );
+      const save = vi.fn(async () => {});
+      const manager = createLocalMcpManager({ save });
+      const onChanged = vi.fn();
+      manager.onChanged(onChanged);
+      try {
+        vi.spyOn(NodeOS, "homedir").mockReturnValue(directory);
+        vi.stubEnv("APPDATA", directory);
+        const url = "http://127.0.0.1:8080/mcp";
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(
+            NodePath.join(directory, ".claude.json"),
+            `{"mcpServers":{"unityMCP":{"type":"http","url":"${url}"}}}`,
+          );
+          await manager.initialize([{ ...config, transport: { type: "http", url, headers: {} } }]);
+        });
+        save.mockClear();
+        onChanged.mockClear();
+        const capabilities = manager.capabilities();
+        const result = yield* Methods.discover
+          .handler(undefined)
+          .pipe(Effect.provideService(LocalMcpManager, manager));
+        expect(result).toMatchObject({
+          servers: [
+            {
+              config: { id: "unity-2", enabled: true },
+              addedAs: "unity",
+              sources: [{ app: "claude-code" }],
+            },
+          ],
+          skipped: [],
+          scannedAt: expect.any(String),
+        });
+        expect(save).not.toHaveBeenCalled();
+        expect(onChanged).not.toHaveBeenCalled();
+        expect(manager.capabilities()).toEqual(capabilities);
+      } finally {
+        yield* Effect.promise(async () => {
+          vi.restoreAllMocks();
+          vi.unstubAllEnvs();
+          await manager.dispose();
+          await NodeFSP.rm(directory, { recursive: true, force: true });
+        });
+      }
+    }),
+);
 
 it.effect("local MCP IPC validates, persists, lists, toggles, restarts, probes, and removes", () =>
   Effect.gen(function* () {

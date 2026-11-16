@@ -46,12 +46,129 @@ function waitFor(
 }
 async function setup(options: Partial<Parameters<typeof createLocalMcpManager>[0]> = {}) {
   const manager = createLocalMcpManager({ save: async () => {}, ...options });
-  const ready = waitFor(manager, (view) => view.status === "running");
+  const ready = waitFor(manager, (view) => view.status === "running" || view.status === "failed");
   await manager.initialize([config]);
   await ready;
+  if (manager.views()[0]?.status !== "running") {
+    const error = manager.views()[0]?.error;
+    await manager.dispose();
+    throw new Error(error);
+  }
   return manager;
 }
 const signal = () => new AbortController().signal;
+
+async function listen(http: NodeHttp.Server) {
+  await new Promise<void>((resolve, reject) => {
+    http.once("error", reject);
+    http.listen(0, "127.0.0.1", () => {
+      http.removeListener("error", reject);
+      resolve();
+    });
+  });
+  const address = http.address();
+  if (!address || typeof address === "string") throw new Error("missing port");
+  return `http://127.0.0.1:${address.port}/mcp`;
+}
+async function closeHttp(http: NodeHttp.Server) {
+  http.closeAllConnections();
+  await new Promise<void>((resolve) => http.close(() => resolve()));
+}
+
+it("classifies a refused loopback connection and a live HTTP 404 in probes and views", async () => {
+  const http = NodeHttp.createServer((_request, response) => {
+    response.writeHead(404).end();
+  });
+  const url = await listen(http);
+  const manager = createLocalMcpManager({ save: async () => {}, retryDelaysMs: [60000] });
+  const httpConfig: LocalMcpServerConfig = {
+    ...config,
+    transport: { type: "http", url, headers: {} },
+  };
+  try {
+    expect(await manager.probe(httpConfig)).toMatchObject({
+      ok: false,
+      errorKind: "http",
+      error: expect.stringContaining("HTTP 404 Not Found"),
+    });
+    const failed = waitFor(manager, (view) => view.status === "failed");
+    await manager.initialize([httpConfig]);
+    await failed;
+    expect(manager.views()[0]).toMatchObject({ errorKind: "http" });
+    await closeHttp(http);
+    // A fresh port that nothing listens on: reusing the 404 server's port could hit
+    // fetch's pooled keep-alive socket and fail with UND_ERR_SOCKET instead.
+    const vacant = NodeHttp.createServer();
+    const vacantUrl = await listen(vacant);
+    await closeHttp(vacant);
+    const refusedConfig: LocalMcpServerConfig = {
+      ...config,
+      transport: { type: "http", url: vacantUrl, headers: {} },
+    };
+    expect(await manager.probe(refusedConfig)).toMatchObject({
+      ok: false,
+      errorKind: "unreachable",
+      error: expect.stringContaining("ECONNREFUSED"),
+    });
+    const refused = waitFor(
+      manager,
+      (view) => view.status === "failed" && view.errorKind === "unreachable",
+    );
+    await manager.upsert(refusedConfig);
+    await refused;
+    expect(manager.views()[0]?.error).toContain("ECONNREFUSED");
+  } finally {
+    await manager.dispose();
+    await closeHttp(http);
+  }
+});
+
+it("reports an HTTP MCP disconnect during a call as unavailable and closed without replaying it", async () => {
+  const server = new Server({ name: "disconnect", version: "1" }, { capabilities: { tools: {} } });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [{ name: "hang", inputSchema: { type: "object" } }],
+  }));
+  const finish = deferred<void>();
+  let calls = 0;
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    calls++;
+    await extra.sendNotification({
+      method: "notifications/progress",
+      params: { progressToken: request.params._meta!.progressToken!, progress: 1 },
+    });
+    await finish.promise;
+    return { content: [] };
+  });
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => "disconnect-session",
+  });
+  await server.connect(transport as Parameters<Server["connect"]>[0]);
+  const http = NodeHttp.createServer((request, response) => {
+    void transport.handleRequest(request, response);
+  });
+  const url = await listen(http);
+  const manager = createLocalMcpManager({ save: async () => {}, retryDelaysMs: [60000] });
+  try {
+    const ready = waitFor(manager, (view) => view.status === "running");
+    await manager.initialize([{ ...config, transport: { type: "http", url, headers: {} } }]);
+    await ready;
+    const started = deferred<void>();
+    const failed = waitFor(manager, (view) => view.status === "failed");
+    const call = manager.call(config.id, "hang", {}, signal(), async () => started.resolve());
+    const rejected = expect(call).rejects.toMatchObject({ code: "MCP_SERVER_UNAVAILABLE" });
+    await started.promise;
+    http.closeAllConnections();
+    await rejected;
+    await failed;
+    expect(manager.views()[0]).toMatchObject({ errorKind: "closed" });
+    expect(calls).toBe(1);
+  } finally {
+    finish.resolve();
+    await manager.dispose();
+    await server.close();
+    await closeHttp(http);
+  }
+});
 
 describe("LocalMcpManager SDK stdio", () => {
   it("starts, lists all pages, forwards results including tool errors, progress, and list changes", async () => {
@@ -177,12 +294,44 @@ describe("LocalMcpManager SDK stdio", () => {
           transport: {
             type: "stdio",
             command: process.execPath,
-            args: ["-e", "process.stdin.resume()"],
+            args: [
+              "-e",
+              'require("node:fs").createReadStream("", { fd: 0, autoClose: false }).resume()',
+            ],
             env: {},
           },
         }),
-      ).toMatchObject({ ok: false, error: "TIMEOUT" });
+      ).toMatchObject({ ok: false, error: "TIMEOUT", errorKind: "timeout" });
       expect(manager.views()).toEqual([]);
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("publishes a timeout kind when the startup deadline expires", async () => {
+    const manager = createLocalMcpManager({
+      save: async () => {},
+      probeTimeoutMs: 50,
+      retryDelaysMs: [60000],
+    });
+    try {
+      const failed = waitFor(manager, (view) => view.status === "failed");
+      await manager.initialize([
+        {
+          ...config,
+          transport: {
+            type: "stdio",
+            command: process.execPath,
+            args: [
+              "-e",
+              'require("node:fs").createReadStream("", { fd: 0, autoClose: false }).resume()',
+            ],
+            env: {},
+          },
+        },
+      ]);
+      await failed;
+      expect(manager.views()[0]).toMatchObject({ errorKind: "timeout", error: "TIMEOUT" });
     } finally {
       await manager.dispose();
     }
@@ -194,9 +343,13 @@ describe("LocalMcpManager SDK stdio", () => {
       const tools = manager.views()[0]!.tools;
       const failed = waitFor(manager, (view) => view.status === "failed");
       await expect(manager.call("unity", "crash", {}, signal())).rejects.toMatchObject({
-        code: "MCP_PROTOCOL_ERROR",
+        code: "MCP_SERVER_UNAVAILABLE",
       });
       await failed;
+      expect(manager.views()[0]).toMatchObject({
+        errorKind: "closed",
+        error: expect.stringContaining("fixture crashed deliberately"),
+      });
       expect(manager.capabilities().servers[0]).toMatchObject({ status: "failed", tools });
       await expect(manager.call("unity", "echo", {}, signal())).rejects.toMatchObject({
         code: "MCP_SERVER_UNAVAILABLE",
@@ -269,7 +422,18 @@ describe("LocalMcpManager SDK stdio", () => {
           ...config,
           transport: { type: "stdio", command: "t3-missing-mcp-fixture", args: [], env: {} },
         }),
-      ).toMatchObject({ ok: false, error: expect.any(String) });
+      ).toMatchObject({ ok: false, errorKind: "spawn", error: expect.stringContaining("ENOENT") });
+      expect(
+        await manager.probe({
+          ...config,
+          transport: {
+            type: "stdio",
+            command: process.execPath,
+            args: ["-e", "process.exit(1)"],
+            env: {},
+          },
+        }),
+      ).toMatchObject({ ok: false, errorKind: "spawn" });
       expect(manager.views()).toEqual([]);
     } finally {
       await manager.dispose();
@@ -298,9 +462,7 @@ it("connects to a real loopback Streamable HTTP MCP with configured headers", as
     headers.push(request.headers["authorization"]);
     void transport.handleRequest(request, response);
   });
-  await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
-  const address = http.address();
-  if (!address || typeof address === "string") throw new Error("missing port");
+  const url = await listen(http);
   const manager = createLocalMcpManager({ save: async () => {} });
   try {
     const ready = waitFor(manager, (view) => view.status === "running");
@@ -309,7 +471,7 @@ it("connects to a real loopback Streamable HTTP MCP with configured headers", as
         ...config,
         transport: {
           type: "http",
-          url: `http://127.0.0.1:${address.port}/mcp`,
+          url,
           headers: { Authorization: "Bearer fixture" },
         },
       },
@@ -323,7 +485,6 @@ it("connects to a real loopback Streamable HTTP MCP with configured headers", as
   } finally {
     await manager.dispose();
     await server.close();
-    http.closeAllConnections();
-    await new Promise<void>((resolve) => http.close(() => resolve()));
+    await closeHttp(http);
   }
 });
