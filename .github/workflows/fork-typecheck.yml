@@ -66,6 +66,7 @@ jobs:
           apps/server/src/auth/RpcAuthorization.test.ts
           apps/server/src/mcp/McpSessionRegistry.test.ts
           apps/server/src/mcp/McpProviderSession.test.ts
+          apps/server/src/mcp/McpHttpServer.test.ts
           apps/server/src/provider/Layers/ProviderService.test.ts
           apps/server/src/provider/Layers/ClaudeAdapter.test.ts
           apps/server/src/provider/Layers/CodexAdapter.test.ts
@@ -83,6 +84,7 @@ jobs:
           apps/desktop/src/settings/DesktopAppSettings.test.ts
           packages/client-runtime/src/state/desktopChannel.test.ts
           apps/web/src/components/remoteControl
+          apps/web/src/components/settings/localMcp.logic.test.ts
           apps/web/src/state/windowsProjects.logic.test.ts
           apps/web/src/state/windowsProjects.test.ts
           scripts/build-desktop-artifact.test.ts
