@@ -174,7 +174,9 @@ export const routes = HttpRouter.use((router) =>
       ).pipe(
         Effect.catch(() => close(current).pipe(Effect.as(new Response(null, { status: 400 })))),
       );
-      if (request.method === "DELETE" || !current.transport.sessionId) yield* close(current);
+      // A rejected DELETE (e.g. unsupported protocol version) leaves the SDK session alive.
+      if ((request.method === "DELETE" && response.ok) || !current.transport.sessionId)
+        yield* close(current);
       else if (!id) {
         const siblings = [...sessions.values()].filter(
           (candidate) => candidate.owner === scope.providerSessionId,
