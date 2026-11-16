@@ -131,6 +131,107 @@ describe("win launcher", () => {
     expect(f.output.stderr).toMatch(/^\[win\] /);
     expect(f.requests).toHaveLength(0);
   });
+  it.each([
+    ["mcp"],
+    ["mcp", "unknown"],
+    ["mcp", "add"],
+    ["mcp", "add", "key", "extra"],
+    ["mcp", "add", "--json", "broken"],
+    ["mcp", "add", "--json", "[]"],
+    ["mcp", "add", "key", "--json", "{}"],
+    ["mcp", "list", "key"],
+    ["mcp", "list", "--cwd", "C:\\work"],
+    ["mcp", "list", "-n", "1"],
+  ])("rejects malformed MCP arguments %j", async (...args) => {
+    const f = fixture(args);
+    expect(await f.run()).toBe(125);
+    expect(f.requests).toHaveLength(0);
+  });
+  it("prints safe MCP summaries or original JSON and explains empty candidates", async () => {
+    const catalog = {
+      servers: [{ id: "unity", name: "Unity", status: "running", toolCount: 3 }],
+      candidates: [
+        {
+          key: "abc",
+          name: "Browser",
+          apps: ["cursor", "codex"],
+          transport: { type: "http", origin: "https://example.com" },
+        },
+        {
+          key: "def",
+          name: "Local",
+          apps: ["claude-code"],
+          transport: { type: "stdio", command: "uvx.exe" },
+        },
+      ],
+      skipped: 2,
+    };
+    for (const json of [false, true]) {
+      const f = fixture(["mcp", "list", "--host", "Work", ...(json ? ["--json"] : [])]);
+      f.io.fetch = async (url, init) => {
+        expect(String(url)).toBe("http://localhost/agent-win/v1/mcp?host=Work");
+        expect(init!.method).toBe("GET");
+        return new Response(JSON.stringify(catalog));
+      };
+      expect(await f.run()).toBe(0);
+      expect(f.output.stdout).toContain(
+        json ? JSON.stringify(catalog) : "  unity  Unity  running  3 tools",
+      );
+      if (!json) {
+        expect(f.output.stdout).toContain(
+          "  abc  Browser  from cursor, codex  https://example.com",
+        );
+        expect(f.output.stdout).toContain("  def  Local  from claude-code  uvx.exe");
+      }
+    }
+    const empty = fixture(["mcp", "list"]);
+    empty.io.fetch = async () => new Response('{"servers":[],"candidates":[],"skipped":0}');
+    expect(await empty.run()).toBe(0);
+    expect(empty.output.stdout).toContain(
+      "Set up in other apps on the PC (add with `win mcp add <key>`):\n  (none)",
+    );
+  });
+  it.each(["key", "config"])(
+    "posts MCP add %s, prints waiting and tool discovery guidance",
+    async (type) => {
+      const config = { name: "Unity", transport: { type: "stdio", command: "uvx", args: [] } };
+      const f = fixture([
+        "--host",
+        "Work",
+        "mcp",
+        "add",
+        ...(type === "key" ? ["abc"] : ["--json", JSON.stringify(config)]),
+      ]);
+      f.io.fetch = async (url, init) => {
+        expect(String(url)).toBe("http://localhost/agent-win/v1/mcp/add?host=Work");
+        expect(init!.method).toBe("POST");
+        expect(JSON.parse(init!.body as string)).toEqual(
+          type === "key" ? { key: "abc" } : { config },
+        );
+        expect(f.output.stderr).toContain("Waiting for the user to confirm on the Windows PC");
+        return new Response(
+          '{"id":"unity","name":"Unity","status":"running","toolCount":4,"toolPrefix":"mcp__t3-win__unity__"}',
+        );
+      };
+      expect(await f.run()).toBe(0);
+      expect(f.output.stdout).toContain("unity  Unity  running  4 tools");
+      expect(f.output.stdout).toContain(
+        "Its tools are named mcp__t3-win__unity__<tool> and may need to be loaded with ToolSearch.",
+      );
+    },
+  );
+  it.each([
+    ["GRANT_DENIED", 126],
+    ["TIMEOUT", 124],
+    ["HOST_OFFLINE", 121],
+    ["HOST_DISABLED", 123],
+    ["REMOTE_DISABLED", 123],
+    ["BAD_REQUEST", 125],
+  ])("maps MCP add error %s", async (code, exit) => {
+    const f = fixture(["mcp", "add", "abc"], [{ type: "error", code, message: "MCP add failed" }]);
+    expect(await f.run()).toBe(exit);
+    expect(f.output.stderr).toContain(`${code}: MCP add failed`);
+  });
   it("prints help without credentials", async () => {
     const f = fixture(["--help"]);
     f.io.env = {};

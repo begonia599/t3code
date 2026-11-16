@@ -6,6 +6,10 @@ describe("Windows project instructions", () => {
     WIN_AGENT_INSTRUCTIONS,
     buildWindowsProjectInstructions({ hostName: "PC", winPath: "C:\\work", serverPath: "/work" }),
   ])("prefers bundled Windows search tools and explains the Everything fallback", (text) => {
+    expect(text).toContain("win mcp list");
+    expect(text).toContain("win mcp add <key>");
+    expect(text).toContain("win mcp add --json '<config>'");
+    expect(text).toContain("after a denial (exit 126) do not ask again");
     expect(text).toContain("`rg` (ripgrep) is on the Windows PATH");
     expect(text).toContain("prefer it for file contents and `rg --files` for file lists");
     expect(text).toContain(

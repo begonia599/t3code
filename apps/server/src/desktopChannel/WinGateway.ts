@@ -1,5 +1,10 @@
 // @effect-diagnostics preferSchemaOverJson:off - NDJSON wire encoding.
 import {
+  DESKTOP_MCP_LIST_KIND,
+  DESKTOP_MCP_ADD_KIND,
+  DesktopMcpListResult,
+  DesktopMcpAddInput,
+  DesktopMcpAddResult,
   DESKTOP_EXEC_GRANT_WAIT_MS,
   DESKTOP_EXEC_TIMEOUT_GRACE_MS,
   DESKTOP_EXEC_LOG_RETAINED,
@@ -57,6 +62,11 @@ const decodeProgress = Schema.decodeUnknownEffect(Schema.fromJsonString(DesktopE
 const decodeExecRequest = Schema.decodeUnknownEffect(WinGatewayExecRequest, {
   onExcessProperty: "error",
 });
+const decodeMcpListResult = Schema.decodeUnknownEffect(DesktopMcpListResult);
+const decodeMcpAddResult = Schema.decodeUnknownEffect(DesktopMcpAddResult);
+const decodeMcpAddInput = Schema.decodeUnknownEffect(DesktopMcpAddInput, {
+  onExcessProperty: "error",
+});
 const decodeLogEntries = Schema.decodeUnknownEffect(Schema.Array(DesktopExecLogEntry));
 const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 const execEnabled = (host: DesktopChannelHost) =>
@@ -65,6 +75,15 @@ const execEnabled = (host: DesktopChannelHost) =>
 export class WinGateway extends Context.Service<
   WinGateway,
   {
+    readonly listMcp: (
+      host: string | undefined,
+      invocation: Invocation,
+    ) => Effect.Effect<DesktopMcpListResult, WinGatewayError>;
+    readonly addMcp: (
+      input: DesktopMcpAddInput,
+      host: string | undefined,
+      invocation: Invocation,
+    ) => Effect.Effect<DesktopMcpAddResult, WinGatewayError>;
     readonly exec: (
       request: WinGatewayExecRequest,
       invocation: Invocation,
@@ -343,7 +362,64 @@ const make = Effect.gen(function* () {
       return { source: "server", entries: rows };
     },
   );
-  return WinGateway.of({ exec, status, log });
+  const invokeMcp = Effect.fn("WinGateway.invokeMcp")(function* (
+    kind: string,
+    input: unknown,
+    timeoutMs: number,
+    host: string | undefined,
+    invocation: Invocation,
+  ) {
+    const { context, link } = yield* trusted(invocation);
+    const selected = yield* select(host, link);
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* broker.invoke({
+          hostId: selected.hostId,
+          kind,
+          input,
+          timeoutMs,
+          context,
+        });
+        yield* Effect.addFinalizer(() => handle.cancel);
+        yield* Stream.runDrain(handle.events).pipe(Effect.forkScoped);
+        return yield* handle.result;
+      }),
+    ).pipe(Effect.mapError((error) => new WinGatewayError(errorLine(error))));
+  });
+  const listMcp: WinGateway["Service"]["listMcp"] = Effect.fn("WinGateway.listMcp")(
+    function* (host, invocation) {
+      return yield* invokeMcp(DESKTOP_MCP_LIST_KIND, {}, 30_000, host, invocation).pipe(
+        Effect.flatMap(decodeMcpListResult),
+        Effect.mapError((error) =>
+          error instanceof WinGatewayError
+            ? error
+            : new WinGatewayError({
+                code: "INTERNAL",
+                message: "Invalid desktop MCP list result.",
+              }),
+        ),
+      );
+    },
+  );
+  const addMcp: WinGateway["Service"]["addMcp"] = Effect.fn("WinGateway.addMcp")(
+    function* (input, host, invocation) {
+      return yield* invokeMcp(
+        DESKTOP_MCP_ADD_KIND,
+        input,
+        DESKTOP_EXEC_GRANT_WAIT_MS + 20_000 + DESKTOP_EXEC_TIMEOUT_GRACE_MS,
+        host,
+        invocation,
+      ).pipe(
+        Effect.flatMap(decodeMcpAddResult),
+        Effect.mapError((error) =>
+          error instanceof WinGatewayError
+            ? error
+            : new WinGatewayError({ code: "INTERNAL", message: "Invalid desktop MCP add result." }),
+        ),
+      );
+    },
+  );
+  return WinGateway.of({ exec, status, log, listMcp, addMcp });
 });
 
 export const layer = Layer.effect(WinGateway, make);
@@ -401,6 +477,20 @@ const handler = Effect.gen(function* () {
         contentType: "application/x-ndjson",
         headers: { "cache-control": "no-store", "content-type": "application/x-ndjson" },
       },
+    );
+  }
+  if (request.method === "GET" && url.pathname === `${WIN_GATEWAY_PATH_PREFIX}/mcp`)
+    return yield* gateway.listMcp(host, invocation).pipe(
+      Effect.map(HttpServerResponse.jsonUnsafe),
+      Effect.catch((error) => Effect.succeed(ndjson(errorLine(error)))),
+    );
+  if (request.method === "POST" && url.pathname === `${WIN_GATEWAY_PATH_PREFIX}/mcp/add`) {
+    const decoded = yield* request.json.pipe(Effect.flatMap(decodeMcpAddInput), Effect.result);
+    if (decoded._tag === "Failure")
+      return ndjson({ type: "error", code: "BAD_REQUEST", message: "Invalid MCP add request." });
+    return yield* gateway.addMcp(decoded.success, host, invocation).pipe(
+      Effect.map(HttpServerResponse.jsonUnsafe),
+      Effect.catch((error) => Effect.succeed(ndjson(errorLine(error)))),
     );
   }
   if (request.method === "GET" && url.pathname === `${WIN_GATEWAY_PATH_PREFIX}/status`)

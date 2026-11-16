@@ -1,5 +1,9 @@
 // @effect-diagnostics preferSchemaOverJson:off - Standalone launcher uses only Node builtins.
-import type { DesktopExecResult } from "@t3tools/contracts";
+import type {
+  DesktopExecResult,
+  DesktopMcpListResult,
+  DesktopMcpAddResult,
+} from "@t3tools/contracts";
 
 export interface WinLauncherRuntime {
   args: string[];
@@ -22,7 +26,7 @@ export interface WinLauncherRuntime {
 
 /** Self-contained: serialized into the generated launcher, with all dependencies supplied. */
 export async function runWinLauncher(io: WinLauncherRuntime): Promise<number> {
-  const usage = `Usage: win [options] -- <program> [args...]\n       win [options] ps '<PowerShell script>' (or - for stdin)\n       win status [--host X] [--json]\n       win log [-n N] [--host X] [--json]\nOptions: --cwd <Windows path>, --timeout <seconds> (default 600), --no-sync,\n         --env K=V (repeatable), --host <name|id>, -h/--help\n`;
+  const usage = `Usage: win [options] -- <program> [args...]\n       win [options] ps '<PowerShell script>' (or - for stdin)\n       win status [--host X] [--json]\n       win log [-n N] [--host X] [--json]\n       win mcp list [--json] [--host X]\n       win mcp add <key> [--host X]\n       win mcp add --json '<config JSON>' [--host X]\nOptions: --cwd <Windows path>, --timeout <seconds> (default 600), --no-sync,\n         --env K=V (repeatable), --host <name|id>, -h/--help\n`;
   const report = async (message: string, code: number) => {
     await io.stderr(`[win] ${message}\n`);
     return code;
@@ -35,6 +39,7 @@ export async function runWinLauncher(io: WinLauncherRuntime): Promise<number> {
   let timeoutMs = io.constants.defaultTimeoutMs;
   let noSync = false;
   let json = false;
+  let mcpInput: { key: string } | { config: unknown } | undefined;
   let limit = 20;
   let hasLimit = false;
   const env: Record<string, string> = Object.create(null);
@@ -59,8 +64,15 @@ export async function runWinLauncher(io: WinLauncherRuntime): Promise<number> {
         break;
       }
       if (arg === "--host") host = value();
-      else if (arg === "--json") json = true;
-      else if (arg === "-n") {
+      else if (arg === "--json") {
+        if (command === "mcp/add") {
+          if (mcpInput) throw new Error("mcp add accepts either a key or --json config");
+          const config: unknown = JSON.parse(value());
+          if (!config || typeof config !== "object" || Array.isArray(config))
+            throw new Error("--json expects a config object");
+          mcpInput = { config };
+        } else json = true;
+      } else if (arg === "-n") {
         hasLimit = true;
         const n = value();
         limit = Number(n);
@@ -91,6 +103,14 @@ export async function runWinLauncher(io: WinLauncherRuntime): Promise<number> {
             throw new Error("--env expects K=V");
           env[key] = pair.slice(equal + 1);
         }
+      } else if (arg === "mcp" && !command) {
+        const subcommand = value();
+        if (subcommand !== "list" && subcommand !== "add")
+          throw new Error("mcp requires list or add");
+        command = subcommand === "list" ? "mcp" : "mcp/add";
+      } else if (command === "mcp/add" && !mcpInput && !arg.startsWith("-")) {
+        if (!arg.trim()) throw new Error("mcp key is empty");
+        mcpInput = { key: arg };
       } else if (["status", "log", "ps"].includes(arg) && !command) {
         command = arg === "ps" ? "exec" : arg;
         if (arg === "ps") {
@@ -100,6 +120,8 @@ export async function runWinLauncher(io: WinLauncherRuntime): Promise<number> {
         }
       } else throw new Error(`unexpected argument: ${arg}`);
     }
+    if (command === "mcp/add" && (!mcpInput || json))
+      throw new Error("mcp add requires a key or --json '<config JSON>'");
     if (!command) throw new Error("a command is required (see --help)");
     if (command !== "exec" && execFlags.length)
       throw new Error(`${execFlags[0]} requires an exec command`);
@@ -132,14 +154,17 @@ export async function runWinLauncher(io: WinLauncherRuntime): Promise<number> {
       if (host) url.searchParams.set("host", host);
       if (command === "log") url.searchParams.set("n", String(limit));
     }
+    if (command === "mcp/add")
+      await io.stderr("[win] Waiting for the user to confirm on the Windows PC…\n");
     const response = await io.fetch(url, {
-      method: command === "exec" ? "POST" : "GET",
+      method: command === "exec" || command === "mcp/add" ? "POST" : "GET",
       signal: controller.signal,
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
         ...(io.env.T3_WIN_LABEL ? { "x-t3-win-label": io.env.T3_WIN_LABEL } : {}),
       },
+      ...(command === "mcp/add" ? { body: JSON.stringify(mcpInput) } : {}),
       ...(command === "exec"
         ? {
             body: JSON.stringify({
@@ -166,7 +191,28 @@ export async function runWinLauncher(io: WinLauncherRuntime): Promise<number> {
       const body = JSON.parse(text);
       if (body.type === "error")
         return report(`${body.code}: ${body.message}`, io.constants.errorCodes[body.code] ?? 123);
-      if (json) await io.stdout(text.endsWith("\n") ? text : `${text}\n`);
+      if (command === "mcp/add") {
+        const added: DesktopMcpAddResult = body;
+        await io.stdout(
+          `${added.id}  ${added.name}  ${added.status}  ${added.toolCount} tools${added.errorKind ? ` (${added.errorKind})` : ""}\nIts tools are named ${added.toolPrefix}<tool> and may need to be loaded with ToolSearch.\n`,
+        );
+      } else if (command === "mcp" && !json) {
+        const catalog: DesktopMcpListResult = body;
+        await io.stdout("Added MCP servers:\n");
+        for (const server of catalog.servers)
+          await io.stdout(
+            `  ${server.id}  ${server.name}  ${server.status}  ${server.toolCount} tools\n`,
+          );
+        if (!catalog.servers.length) await io.stdout("  (none)\n");
+        await io.stdout("Set up in other apps on the PC (add with `win mcp add <key>`):\n");
+        for (const candidate of catalog.candidates)
+          await io.stdout(
+            `  ${candidate.key}  ${candidate.name}  from ${candidate.apps.join(", ")}  ${candidate.transport.type === "stdio" ? candidate.transport.command : candidate.transport.origin}\n`,
+          );
+        if (!catalog.candidates.length) await io.stdout("  (none)\n");
+        if (catalog.skipped)
+          await io.stdout(`Skipped ${catalog.skipped} entries that could not be read.\n`);
+      } else if (json) await io.stdout(text.endsWith("\n") ? text : `${text}\n`);
       else if (command === "status") {
         await io.stdout(`Windows hosts: ${body.hosts.length}\n`);
         for (const h of body.hosts)

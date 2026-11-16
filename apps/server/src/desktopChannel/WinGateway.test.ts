@@ -747,3 +747,90 @@ effectIt.effect(
       ),
     ),
 );
+
+describe("Windows MCP gateway", () => {
+  it("forwards list and add with trusted context, explicit hosts and confirmation deadlines", async () => {
+    const f = await fixture();
+    const desktop = await f.startHost();
+    const catalog = { servers: [], candidates: [], skipped: 0 };
+    const listing = f.request("mcp?host=Windows%20Work", { label: "worker" });
+    const list = await desktop.next();
+    if (list.type !== "request") throw new Error("Expected list request");
+    expect(list).toMatchObject({
+      kind: "mcp.list",
+      input: {},
+      context: { threadId: "thread", provider: "codex", label: "worker" },
+    });
+    await desktop.respond(list.requestId, catalog);
+    expect(await (await listing).json()).toEqual(catalog);
+    const config = { name: "Unity", transport: { type: "stdio", command: "uvx", args: [] } };
+    for (const body of [{ key: "abc" }, { config }]) {
+      const adding = f.request("mcp/add", { body });
+      const add = await desktop.next();
+      if (add.type !== "request") throw new Error("Expected add request");
+      expect(add).toMatchObject({ kind: "mcp.add", input: body, timeoutMs: 170_000 });
+      const result = {
+        id: "unity",
+        name: "Unity",
+        status: "failed",
+        errorKind: "spawn",
+        toolCount: 0,
+        toolPrefix: "mcp__t3-win__unity__",
+      };
+      await desktop.respond(add.requestId, result);
+      expect(await (await adding).json()).toEqual(result);
+    }
+  });
+  it("rejects unauthorized, malformed, offline and disabled MCP requests", async () => {
+    const f = await fixture();
+    expect((await f.request("mcp", { token: "no-win" })).status).toBe(401);
+    expect(
+      await (await f.request("mcp/add", { body: { key: "abc", config: {} } })).json(),
+    ).toMatchObject({ code: "BAD_REQUEST" });
+    expect(await (await f.request("mcp")).json()).toMatchObject({ code: "HOST_OFFLINE" });
+    await f.startHost({ ...host, capabilities: { enabled: false } });
+    expect(await (await f.request("mcp/add", { body: { key: "abc" } })).json()).toMatchObject({
+      code: "HOST_DISABLED",
+    });
+  });
+  it("requires host selection when ambiguous and pins linked MCP operations to their PC", async () => {
+    const f = await fixture(256, true);
+    const linked = await f.startHost();
+    await f.startHost({ ...host, hostId: secondHostId, hostName: "Other" });
+    const listing = f.request("mcp");
+    const request = await linked.next();
+    if (request.type !== "request") throw new Error("Expected MCP request");
+    expect(request.context).toMatchObject({ linkedHostId: hostId });
+    await linked.respond(request.requestId, { servers: [], candidates: [], skipped: 0 });
+    expect(await (await listing).json()).toHaveProperty("skipped", 0);
+    const unlinked = await fixture();
+    await unlinked.startHost();
+    await unlinked.startHost({ ...host, hostId: secondHostId, hostName: "Other" });
+    expect(await (await unlinked.request("mcp")).json()).toMatchObject({ code: "HOST_AMBIGUOUS" });
+  });
+  it("cancels a pending add when the launcher disconnects", async () => {
+    const f = await fixture();
+    const desktop = await f.startHost();
+    const controller = new AbortController();
+    const response = f
+      .request("mcp/add", { body: { key: "abc" }, signal: controller.signal })
+      .catch((error: unknown) => error);
+    const request = await desktop.next();
+    if (request.type !== "request") throw new Error("Expected MCP request");
+    controller.abort();
+    expect(await desktop.next()).toMatchObject({ type: "cancel", requestId: request.requestId });
+    await response;
+  });
+  it.each(["GRANT_DENIED", "TIMEOUT", "REMOTE_DISABLED", "HOST_BUSY"])(
+    "preserves desktop add error %s",
+    async (code) => {
+      const f = await fixture();
+      const desktop = await f.startHost();
+      const response = f.request("mcp/add", { body: { key: "abc" } });
+      const add = await desktop.next();
+      if (add.type !== "request") throw new Error("Expected add request");
+      await desktop.error(add.requestId, code);
+      expect(await (await response).json()).toMatchObject({ type: "error", code });
+    },
+  );
+});

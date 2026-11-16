@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Isolated filesystem fixtures for native IPC discovery.
+// @effect-diagnostics preferSchemaOverJson:off -- Assert no credentials appear anywhere in a serialized IPC payload.
 import { expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
@@ -17,6 +18,11 @@ import {
 import { WinExecService } from "../../remoteControl/WinExecService.ts";
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
 import { getCapabilities } from "./remoteControl.ts";
+import { createLocalMcpManagement } from "../../remoteControl/LocalMcpManagement.ts";
+import {
+  createRemoteControlRequestRouter,
+  RemoteControlRequestRouter,
+} from "../../remoteControl/RemoteControlRequestRouter.ts";
 import * as Methods from "./localMcp.ts";
 import * as Channels from "../channels.ts";
 
@@ -169,6 +175,104 @@ it.effect("merges exec and MCP capabilities and forwards changed snapshots to re
         disconnectAll: async () => {},
         getCapabilities: async () => ({ enabled: true, exec: { version: "1", shells: ["pwsh"] } }),
       }),
+    );
+  }).pipe(Effect.scoped),
+);
+
+it.effect("MCP proposal IPC resolves only pending main-issued ids and forwards snapshots", () =>
+  Effect.gen(function* () {
+    const manager = createLocalMcpManager({ save: async () => {} });
+    const mcp = createLocalMcpManagement({
+      manager,
+      enabledEnvironmentIds: async () => ["env"],
+      discover: async () => ({ servers: [], skipped: [], scannedAt: "now" }),
+    });
+    const router = createRemoteControlRequestRouter({
+      mcp,
+      identity: async () => ({
+        hostId: "host",
+        hostName: "PC",
+        platform: "win32",
+        appVersion: "1",
+      }),
+      now: () => 0,
+    });
+    yield* Effect.addFinalizer(() =>
+      Effect.promise(async () => {
+        mcp.dispose();
+        router.dispose();
+        await manager.dispose();
+      }),
+    );
+    const messages: unknown[] = [];
+    let notify!: () => void;
+    const pushed = new Promise<void>((resolve) => {
+      notify = resolve;
+    });
+    const windows = Layer.mock(ElectronWindow)({
+      sendAll: (channel, payload) =>
+        Effect.sync(() => {
+          expect(channel).toBe(Channels.LOCAL_MCP_ADD_PROPOSALS_CHANGED_CHANNEL);
+          messages.push(payload);
+          notify();
+        }),
+    });
+    yield* Effect.gen(function* () {
+      yield* Methods.installProposalEventForwarding();
+      expect(yield* Methods.listAddProposals.handler(undefined)).toEqual([]);
+      expect(
+        Exit.isFailure(
+          yield* Methods.resolveAddProposal
+            .handler({ proposalId: "forged", decision: "add" })
+            .pipe(Effect.exit),
+        ),
+      ).toBe(true);
+      const result = mcp.handlers["mcp.add"]({
+        environmentId: "env",
+        request: {
+          requestId: "r",
+          kind: "mcp.add",
+          input: {
+            config: {
+              name: "Unity",
+              transport: {
+                type: "stdio",
+                command: "uvx",
+                args: [],
+                env: { TOKEN: "ipc-secret" },
+              },
+            },
+          },
+          context: {},
+          timeoutMs: 170_000,
+        },
+        signal: AbortSignal.timeout(170_000),
+        emit: async () => {},
+      }).catch((error: unknown) => error);
+      yield* Effect.promise(() => pushed);
+      const proposals = mcp.listAddProposals();
+      expect(yield* Methods.listAddProposals.handler(undefined)).toEqual(proposals);
+      // Values found in other apps are kept out in LocalMcpManagement; this only relays.
+      expect(messages.at(-1)).toEqual(proposals);
+      yield* Methods.resolveAddProposal.handler({
+        proposalId: proposals[0]!.proposalId,
+        decision: "deny",
+      });
+      expect(yield* Effect.promise(() => result)).toMatchObject({ code: "GRANT_DENIED" });
+      expect(
+        Exit.isFailure(
+          yield* Methods.resolveAddProposal
+            .handler({ proposalId: proposals[0]!.proposalId, decision: "add" })
+            .pipe(Effect.exit),
+        ),
+      ).toBe(true);
+      expect(manager.views()).toEqual([]);
+    }).pipe(
+      Effect.provideService(RemoteControlRequestRouter, {
+        router,
+        getHostIdentity: Effect.die("unused"),
+      }),
+      Effect.provide(windows),
     );
   }).pipe(Effect.scoped),
 );

@@ -1,11 +1,13 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Version advertised in `DesktopChannelCapabilities.mcp.version`. */
 export const DESKTOP_MCP_VERSION = "1";
 /** Desktop channel request kind for one forwarded `tools/call`. */
 export const DESKTOP_MCP_CALL_KIND = "mcp.call";
+export const DESKTOP_MCP_LIST_KIND = "mcp.list";
+export const DESKTOP_MCP_ADD_KIND = "mcp.add";
 /** Hard deadline for one forwarded tool call, including progress time. */
 export const DESKTOP_MCP_CALL_TIMEOUT_MS = 120_000;
 /** Max concurrent forwarded calls per Windows host (all environments together). */
@@ -228,7 +230,119 @@ export type DesktopMcpErrorCode = typeof DesktopMcpErrorCode.Type;
 /** Max serialized size of one `mcp.call` result sent over the channel. */
 export const DESKTOP_MCP_MAX_RESULT_BYTES = 8 * 1024 * 1024;
 
+/** Agent-facing summaries intentionally exclude raw config and error text. */
+export const DesktopMcpListInput = Schema.Struct({});
+export type DesktopMcpListInput = typeof DesktopMcpListInput.Type;
+export const DesktopMcpListResult = Schema.Struct({
+  servers: Schema.Array(
+    Schema.Struct({
+      id: LocalMcpServerId,
+      name: Schema.String,
+      enabled: Schema.Boolean,
+      status: LocalMcpServerStatus,
+      errorKind: Schema.optional(LocalMcpErrorKind),
+      toolCount: NonNegativeInt,
+    }),
+  ),
+  candidates: Schema.Array(
+    Schema.Struct({
+      key: Schema.String,
+      name: Schema.String,
+      apps: Schema.Array(LocalMcpDiscoveryApp),
+      transport: Schema.Union([
+        Schema.Struct({ type: Schema.Literal("stdio"), command: Schema.String }),
+        Schema.Struct({ type: Schema.Literal("http"), origin: Schema.String }),
+      ]),
+      envNames: Schema.optional(Schema.Array(Schema.String)),
+      headerNames: Schema.optional(Schema.Array(Schema.String)),
+    }),
+  ),
+  skipped: NonNegativeInt,
+});
+export type DesktopMcpListResult = typeof DesktopMcpListResult.Type;
+export const LocalMcpAgentConfig = Schema.Struct({
+  id: Schema.optional(LocalMcpServerId),
+  name: TrimmedNonEmptyString,
+  transport: Schema.Union([
+    Schema.Struct({
+      type: Schema.Literal("stdio"),
+      command: TrimmedNonEmptyString,
+      args: Schema.Array(Schema.String),
+      cwd: Schema.optional(Schema.String),
+      env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    }),
+    Schema.Struct({
+      type: Schema.Literal("http"),
+      url: Schema.String.check(
+        Schema.makeFilter((value: string) => {
+          try {
+            const url = new URL(value);
+            return url.protocol === "http:" || url.protocol === "https:";
+          } catch {
+            return false;
+          }
+        }),
+      ),
+      headers: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    }),
+  ]),
+});
+export const DesktopMcpAddInput = Schema.Union([
+  Schema.Struct({ key: TrimmedNonEmptyString }),
+  Schema.Struct({ config: LocalMcpAgentConfig }),
+]);
+export type DesktopMcpAddInput = typeof DesktopMcpAddInput.Type;
+export const DesktopMcpAddResult = Schema.Struct({
+  id: LocalMcpServerId,
+  name: Schema.String,
+  status: LocalMcpServerStatus,
+  errorKind: Schema.optional(LocalMcpErrorKind),
+  toolCount: NonNegativeInt,
+  toolPrefix: Schema.String,
+});
+export type DesktopMcpAddResult = typeof DesktopMcpAddResult.Type;
+export const LocalMcpAddProposal = Schema.Struct({
+  proposalId: Schema.String,
+  environmentId: Schema.String,
+  threadId: Schema.NullOr(Schema.String),
+  provider: Schema.NullOr(Schema.String),
+  label: Schema.NullOr(Schema.String),
+  origin: Schema.Literals(["discovered", "agent"]),
+  sources: Schema.optional(Schema.Array(LocalMcpDiscoverySource)),
+  name: Schema.String,
+  id: LocalMcpServerId,
+  transport: Schema.Union([
+    Schema.Struct({
+      type: Schema.Literal("stdio"),
+      command: Schema.String,
+      args: Schema.Array(Schema.String),
+      cwd: Schema.optional(Schema.String),
+      envNames: Schema.Array(Schema.String),
+      /** Only on agent-written proposals: the agent chose these values, so the user should see them. */
+      env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    }),
+    Schema.Struct({
+      type: Schema.Literal("http"),
+      url: Schema.String,
+      headerNames: Schema.Array(Schema.String),
+      /** Only on agent-written proposals, as with `env`. */
+      headers: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    }),
+  ]),
+  requestedAt: Schema.String,
+  expiresAt: Schema.String,
+});
+export type LocalMcpAddProposal = typeof LocalMcpAddProposal.Type;
+export const LocalMcpAddDecision = Schema.Struct({
+  proposalId: Schema.String,
+  decision: Schema.Literals(["add", "deny"]),
+});
+export type LocalMcpAddDecision = typeof LocalMcpAddDecision.Type;
+
 export interface LocalMcpBridge {
+  listAddProposals(): Promise<readonly LocalMcpAddProposal[]>;
+  resolveAddProposal(decision: LocalMcpAddDecision): Promise<void>;
+  onAddProposalsChanged(listener: (proposals: readonly LocalMcpAddProposal[]) => void): () => void;
   list(): Promise<readonly LocalMcpServerView[]>;
   /** Create or replace by id. Rejects invalid configs. Restarts the server if enabled. */
   upsert(config: LocalMcpServerConfig): Promise<readonly LocalMcpServerView[]>;

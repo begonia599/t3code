@@ -301,11 +301,17 @@ export function parsePastedLocalMcpConfig(text: string): PasteResult {
 }
 
 /** Short, single-line description of how the server is started. */
+/** One line for an argv; parts with spaces or quotes are quoted, backslashes kept as typed. */
+export function formatCommandLine(command: string, args: readonly string[]): string {
+  const quote = (part: string) =>
+    part === "" || /[\s"]/.test(part) ? `"${part.replaceAll('"', '\\"')}"` : part;
+  return [command, ...args].map(quote).join(" ");
+}
+
 export function describeLocalMcpTransport(config: LocalMcpServerConfig): string {
   const transport = config.transport;
   if (transport.type === "http") return transport.url;
-  const quote = (part: string) => (/\s/.test(part) ? `"${part}"` : part);
-  return [transport.command, ...transport.args].map(quote).join(" ");
+  return formatCommandLine(transport.command, transport.args);
 }
 
 export interface LocalMcpStatusPresentation {

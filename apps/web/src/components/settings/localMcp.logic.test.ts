@@ -7,6 +7,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   describeLocalMcpTransport,
+  formatCommandLine,
   discoverySourceApps,
   draftFromConfig,
   draftToConfig,
@@ -237,6 +238,15 @@ const discovered = (
   },
   sources: [{ app: "cursor", file: "C:\\Users\\x\\.cursor\\mcp.json", name }],
   ...extra,
+});
+
+describe("formatCommandLine", () => {
+  it("quotes only parts that need it and keeps Windows backslashes", () => {
+    expect(formatCommandLine("uvx", ["--from", "C:\\My Tools\\srv", "", 'say "hi"'])).toBe(
+      'uvx --from "C:\\My Tools\\srv" "" "say \\"hi\\""',
+    );
+    expect(formatCommandLine("C:\\tools\\mcp.exe", [])).toBe("C:\\tools\\mcp.exe");
+  });
 });
 
 describe("local MCP discovery presentation", () => {

@@ -1,5 +1,7 @@
 import {
   DESKTOP_MCP_CALL_KIND,
+  type LocalMcpAddDecision,
+  type LocalMcpAddProposal,
   type DesktopChannelEmit,
   type DesktopChannelRequest,
   type RemoteControlHostIdentity,
@@ -12,6 +14,8 @@ import * as Layer from "effect/Layer";
 import * as Clock from "effect/Clock";
 import * as NodeOS from "node:os";
 
+import { createLocalMcpManagement } from "./LocalMcpManagement.ts";
+import { discoverNativeLocalMcpServers } from "./LocalMcpNativeDiscovery.ts";
 import { LocalMcpManager } from "./LocalMcpManager.ts";
 import { createLocalMcpRequestHandler } from "./LocalMcpRequestHandler.ts";
 import { RemoteControlStore } from "./RemoteControlStore.ts";
@@ -42,6 +46,7 @@ export function createRemoteControlRequestRouter(options: {
   readonly now: () => number;
   readonly handlers?: Readonly<Record<string, RequestHandler>>;
   readonly capacity?: number;
+  readonly mcp?: ReturnType<typeof createLocalMcpManagement>;
 }) {
   const requests = new Map<
     string,
@@ -79,6 +84,13 @@ export function createRemoteControlRequestRouter(options: {
     notify(state);
   };
   return {
+    listAddProposals: () => options.mcp?.listAddProposals() ?? [],
+    resolveAddProposal: async (decision: LocalMcpAddDecision) => {
+      if (!options.mcp) throw new Error("MCP management is unavailable");
+      await options.mcp.resolveAddProposal(decision);
+    },
+    onAddProposalsChanged: (listener: (proposals: readonly LocalMcpAddProposal[]) => void) =>
+      options.mcp?.onAddProposalsChanged(listener) ?? (() => {}),
     start(input: RemoteControlStart, owner: RequestOwner) {
       const requestId = input.request.requestId;
       if (requests.has(requestId)) throw new Error("Duplicate remote control request");
@@ -223,17 +235,25 @@ export const layer = Layer.effect(
       };
     });
     const runIdentity = yield* Effect.context<never>();
+    const enabledEnvironmentIds = async () =>
+      (await Effect.runPromiseWith(runIdentity)(settings.get)).remoteControl.enabledEnvironmentIds;
+    const mcp = createLocalMcpManagement({
+      manager,
+      enabledEnvironmentIds,
+      discover: () => discoverNativeLocalMcpServers(manager.views().map((view) => view.config)),
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => mcp.dispose()));
     const router = createRemoteControlRequestRouter({
+      mcp,
       identity: () => Effect.runPromiseWith(runIdentity)(getHostIdentity),
       now: () => clock.currentTimeMillisUnsafe(),
       handlers: {
         ...exec.handlers,
+        ...mcp.handlers,
         [DESKTOP_MCP_CALL_KIND]: createLocalMcpRequestHandler({
           manager,
           store,
-          enabledEnvironmentIds: async () =>
-            (await Effect.runPromiseWith(runIdentity)(settings.get)).remoteControl
-              .enabledEnvironmentIds,
+          enabledEnvironmentIds,
         }),
       },
     });

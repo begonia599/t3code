@@ -163,3 +163,7 @@ export const LOCAL_MCP_PROBE_CHANNEL = "desktop:local-mcp-probe";
 export const LOCAL_MCP_CHANGED_CHANNEL = "desktop:local-mcp-changed";
 export const REMOTE_CONTROL_CAPABILITIES_CHANGED_CHANNEL =
   "desktop:remote-control-capabilities-changed";
+
+export const LOCAL_MCP_LIST_ADD_PROPOSALS_CHANNEL = "desktop:local-mcp-list-add-proposals";
+export const LOCAL_MCP_RESOLVE_ADD_PROPOSAL_CHANNEL = "desktop:local-mcp-resolve-add-proposal";
+export const LOCAL_MCP_ADD_PROPOSALS_CHANGED_CHANNEL = "desktop:local-mcp-add-proposals-changed";

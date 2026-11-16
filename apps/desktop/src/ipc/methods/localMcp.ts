@@ -1,6 +1,8 @@
 // @effect-diagnostics globalDate:off -- Native discovery stamps the local scan time.
 // @effect-diagnostics nodeBuiltinImport:off -- Read-only local app configuration discovery.
 import {
+  LocalMcpAddProposal,
+  LocalMcpAddDecision,
   LocalMcpDiscoveryResult,
   LocalMcpServerConfig,
   LocalMcpServerView,
@@ -8,14 +10,10 @@ import {
   LocalMcpServerIdInput,
   LocalMcpSetEnabledInput,
 } from "@t3tools/contracts";
-import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
-import {
-  discoverLocalMcpServers,
-  MAX_MCP_DISCOVERY_FILE_BYTES,
-} from "../../remoteControl/LocalMcpDiscovery.ts";
+import { discoverNativeLocalMcpServers } from "../../remoteControl/LocalMcpNativeDiscovery.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { RemoteControlRequestRouter } from "../../remoteControl/RemoteControlRequestRouter.ts";
 import { LocalMcpManager } from "../../remoteControl/LocalMcpManager.ts";
 import { WinExecService } from "../../remoteControl/WinExecService.ts";
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
@@ -92,32 +90,7 @@ export const discover = makeIpcMethod({
   handler: Effect.fn(function* () {
     const manager = yield* LocalMcpManager;
     return yield* nativeCall(() =>
-      discoverLocalMcpServers(
-        {
-          home: NodeOS.homedir(),
-          ...(process.env.APPDATA === undefined ? {} : { appData: process.env.APPDATA }),
-          env: process.env,
-          now: () => new Date(),
-          readFile: async (file) => {
-            try {
-              if ((await NodeFSP.stat(file)).size > MAX_MCP_DISCOVERY_FILE_BYTES) {
-                throw new Error("MCP config exceeds 8 MB");
-              }
-              return await NodeFSP.readFile(file, "utf8");
-            } catch (cause) {
-              if (
-                typeof cause === "object" &&
-                cause !== null &&
-                "code" in cause &&
-                cause.code === "ENOENT"
-              )
-                return undefined;
-              throw cause;
-            }
-          },
-        },
-        manager.views().map((view) => view.config),
-      ),
+      discoverNativeLocalMcpServers(manager.views().map((view) => view.config)),
     );
   }),
 });
@@ -151,6 +124,41 @@ export const installEventForwarding = Effect.fn(function* () {
     Effect.promise(async () => {
       disposed = true;
       unsubscribe();
+      await delivery;
+    }),
+  );
+});
+
+export const listAddProposals = makeIpcMethod({
+  channel: Channels.LOCAL_MCP_LIST_ADD_PROPOSALS_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Array(LocalMcpAddProposal),
+  handler: Effect.fn(function* () {
+    return (yield* RemoteControlRequestRouter).router.listAddProposals();
+  }),
+});
+export const resolveAddProposal = makeIpcMethod({
+  channel: Channels.LOCAL_MCP_RESOLVE_ADD_PROPOSAL_CHANNEL,
+  payload: LocalMcpAddDecision,
+  result: Schema.Void,
+  handler: Effect.fn(function* (decision) {
+    const { router } = yield* RemoteControlRequestRouter;
+    yield* nativeCall(() => router.resolveAddProposal(decision));
+  }),
+});
+export const installProposalEventForwarding = Effect.fn(function* () {
+  const { router } = yield* RemoteControlRequestRouter;
+  const windows = yield* ElectronWindow;
+  const run = Effect.runPromiseWith(yield* Effect.context<never>());
+  let delivery = Promise.resolve();
+  const off = router.onAddProposalsChanged((proposals) => {
+    delivery = delivery
+      .then(() => run(windows.sendAll(Channels.LOCAL_MCP_ADD_PROPOSALS_CHANGED_CHANNEL, proposals)))
+      .catch((cause) => run(Effect.logWarning("MCP proposal IPC forwarding failed", cause)));
+  });
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(async () => {
+      off();
       await delivery;
     }),
   );

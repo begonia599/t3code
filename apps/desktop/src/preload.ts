@@ -286,6 +286,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     },
   },
   localMcp: {
+    listAddProposals: () => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_LIST_ADD_PROPOSALS_CHANNEL),
+    resolveAddProposal: (decision) =>
+      ipcRenderer.invoke(IpcChannels.LOCAL_MCP_RESOLVE_ADD_PROPOSAL_CHANNEL, decision),
+    onAddProposalsChanged: (listener) => {
+      const handler = (
+        _event: unknown,
+        proposals: readonly import("@t3tools/contracts").LocalMcpAddProposal[],
+      ) => listener(proposals);
+      ipcRenderer.on(IpcChannels.LOCAL_MCP_ADD_PROPOSALS_CHANGED_CHANNEL, handler);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.LOCAL_MCP_ADD_PROPOSALS_CHANGED_CHANNEL, handler);
+    },
     discover: () => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_DISCOVER_CHANNEL),
     list: () => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_LIST_CHANNEL),
     upsert: (config) => ipcRenderer.invoke(IpcChannels.LOCAL_MCP_UPSERT_CHANNEL, config),

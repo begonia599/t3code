@@ -1148,4 +1148,14 @@ export const zhCN: Readonly<Record<string, string>> = {
   "config not recognized": "配置无法识别",
   "From {apps}": "来自 {apps}",
   "project {name}": "项目 {name}",
+  "Add an MCP server to this computer?": "要在这台电脑上添加 MCP 服务器吗？",
+  "An agent on {server} wants to use {name}, which is already set up in {apps}.":
+    "{server} 上的智能体想用「{name}」，它已经在 {apps} 里配好了。",
+  "An agent on {server} suggests adding {name} to this computer.":
+    "{server} 上的智能体建议在这台电脑上添加「{name}」。",
+  "(values stay on this computer)": "（值只保存在这台电脑上，不会发给智能体）",
+  "This command runs on this computer every time the server starts. Add it only if you trust it.":
+    "以后每次启动这个服务器，都会在这台电脑上运行上面这条命令。确认可信再添加。",
+  "Once added, agents can use its tools. You can turn it off or remove it anytime in Settings → MCP servers on this PC.":
+    "添加后智能体就能用它的工具，随时可以在「设置 → 本机 MCP 服务器」里关掉或移除。",
 };

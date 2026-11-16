@@ -74,6 +74,7 @@ jobs:
           apps/server/src/persistence/Migrations/055_SubscriptionEstimation.test.ts
           apps/server/src/persistence/Migrations/056_DesktopChannelAudit.test.ts
           packages/contracts/src/desktopExec.test.ts
+          packages/contracts/src/desktopMcp.test.ts
           apps/desktop/src/updates/DesktopUpdates.test.ts
           apps/desktop/src/remoteControl
           apps/desktop/src/sync

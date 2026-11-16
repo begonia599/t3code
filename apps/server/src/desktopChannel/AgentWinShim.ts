@@ -6,6 +6,7 @@ import {
   DESKTOP_EXEC_DEFAULT_TIMEOUT_MS,
   DESKTOP_EXEC_LOG_RETAINED,
   winExitCodeForError,
+  WIN_EXIT_REJECTED,
   WIN_EXIT_TIMEOUT,
   WIN_EXIT_CANCELLED,
   WIN_EXIT_STATE_UNKNOWN,
@@ -25,7 +26,10 @@ export const launcherConstants = {
   errorCodes: Object.fromEntries(
     [...DesktopExecErrorCode.literals, ...WinGatewayErrorCode.literals].map((code) => [
       code,
-      winExitCodeForError(code),
+      // Disabled remote control is a host policy rejection in the win CLI.
+      code === "HOST_DISABLED" || code === "REMOTE_DISABLED"
+        ? WIN_EXIT_REJECTED
+        : winExitCodeForError(code),
     ]),
   ),
   resultCodes: {

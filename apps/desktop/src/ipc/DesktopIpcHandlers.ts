@@ -85,6 +85,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(LocalMcpIpc.restart);
   yield* ipc.handle(LocalMcpIpc.probe);
   yield* ipc.handle(LocalMcpIpc.discover);
+  yield* ipc.handle(LocalMcpIpc.listAddProposals);
+  yield* ipc.handle(LocalMcpIpc.resolveAddProposal);
+  yield* LocalMcpIpc.installProposalEventForwarding();
   yield* LocalMcpIpc.installEventForwarding();
   yield* ipc.handle(LinkedProjectsIpc.pickFolder);
   yield* ipc.handle(LinkedProjectsIpc.register);

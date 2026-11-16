@@ -3,6 +3,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { DesktopChannelHosts } from "./components/remoteControl/DesktopChannelHosts";
 import { RemoteControlGrantDialogHost } from "./components/remoteControl/GrantDialog";
+import { LocalMcpProposalDialogHost } from "./components/remoteControl/LocalMcpProposalDialog";
 import { PreviewAutomationHosts } from "./components/preview/PreviewAutomationHosts";
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
@@ -20,6 +21,7 @@ export function AppRoot({ router }: { readonly router: AppRouter }) {
       <PreviewAutomationHosts />
       <DesktopChannelHosts />
       <RemoteControlGrantDialogHost />
+      <LocalMcpProposalDialogHost />
       <ElectronBrowserHost />
       <QuitHoldOverlay />
     </AppAtomRegistryProvider>

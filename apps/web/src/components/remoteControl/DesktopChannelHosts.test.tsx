@@ -110,6 +110,9 @@ it("hosts every enabled environment and forwards live capabilities through the e
     onPendingGrantRequestsChanged: () => () => {},
   };
   const localMcp: LocalMcpBridge = {
+    listAddProposals: async () => [],
+    resolveAddProposal: async () => {},
+    onAddProposalsChanged: () => () => {},
     list: async () => [],
     upsert: async () => [],
     remove: async () => [],

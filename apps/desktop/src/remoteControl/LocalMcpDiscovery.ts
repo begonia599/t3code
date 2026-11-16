@@ -41,7 +41,7 @@ const sorted = (value: Readonly<Record<string, string>>, lower = false) =>
     .sort(([a, av], [b, bv]) => compare(a, b) || compare(av, bv));
 
 /** Compare the Windows transports themselves, independently of their source names. */
-function transportKey(transport: LocalMcpTransport): string {
+export function transportKey(transport: LocalMcpTransport): string {
   let normalized: unknown;
   if (transport.type === "http") {
     const url = new URL(transport.url);
@@ -74,7 +74,7 @@ function transportKey(transport: LocalMcpTransport): string {
     .slice(0, 16);
 }
 
-function serverId(name: string): string {
+export function serverId(name: string): string {
   let id = name
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, "-")
