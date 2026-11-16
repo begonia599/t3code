@@ -48,14 +48,17 @@ const toolInstructions = (availability: boolean | T3CodeToolAvailability): strin
   return [
     tools.browser ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "",
     tools.device ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS : "",
-    tools.win
-      ? tools.windowsProject
-        ? buildWindowsProjectInstructions(tools.windowsProject)
-        : WIN_AGENT_INSTRUCTIONS
-      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
+};
+
+const windowsInstructions = (availability: boolean | T3CodeToolAvailability): string => {
+  const tools = normalizeAvailability(availability);
+  if (!tools.win) return "";
+  return tools.windowsProject
+    ? buildWindowsProjectInstructions(tools.windowsProject)
+    : WIN_AGENT_INSTRUCTIONS;
 };
 
 const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
@@ -233,6 +236,7 @@ export function buildCodexAdditionalContext(
   toolsAvailable: boolean | T3CodeToolAvailability = true,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
+  const windows = windowsInstructions(toolsAvailable);
   // Separate keys keep each value under Codex's per-entry token cap.
   return {
     t3_code_runtime: {
@@ -240,5 +244,6 @@ export function buildCodexAdditionalContext(
       value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
     ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
+    ...(windows ? { t3_code_windows: { kind: "application", value: windows } } : {}),
   };
 }

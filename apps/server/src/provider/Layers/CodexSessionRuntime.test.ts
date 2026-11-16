@@ -630,14 +630,21 @@ describe("buildCodexAdditionalContext", () => {
   });
 
   it("keeps every entry under Codex's 1,000 token cap per entry", () => {
-    const context = buildCodexAdditionalContext(runtime, {
-      browser: true,
-      device: true,
-      win: true,
-    });
-    for (const entry of Object.values(context)) {
-      // Codex estimates 4 bytes per token and truncates the middle of longer values.
-      NodeAssert.ok(Buffer.byteLength(entry.value) < 4_000);
+    for (const windowsProject of [
+      undefined,
+      { hostName: "Work PC", winPath: "C:\\Demo", serverPath: "/server/Demo" },
+    ]) {
+      const context = buildCodexAdditionalContext(runtime, {
+        browser: true,
+        device: true,
+        win: true,
+        ...(windowsProject ? { windowsProject } : {}),
+      });
+      NodeAssert.ok(context.t3_code_windows);
+      for (const entry of Object.values(context)) {
+        // Codex estimates 4 bytes per token and truncates the middle of longer values.
+        NodeAssert.ok(Buffer.byteLength(entry.value) < 4_000);
+      }
     }
   });
 });
@@ -1128,7 +1135,7 @@ describe("win tool instructions on turn/start", () => {
               ),
             });
             NodeAssert.equal(
-              params.additionalContext?.t3_code_tools?.value.includes(WIN_AGENT_INSTRUCTIONS) ??
+              params.additionalContext?.t3_code_windows?.value.includes(WIN_AGENT_INSTRUCTIONS) ??
                 false,
               capabilities?.has("win") ?? false,
             );
@@ -1149,6 +1156,7 @@ describe("win tool instructions on turn/start", () => {
         browserToolsAvailable: configuredMcpToolAvailability(undefined, new Set(["win"])),
       });
       NodeAssert.equal(params.additionalContext?.t3_code_tools, undefined);
+      NodeAssert.equal(params.additionalContext?.t3_code_windows, undefined);
     }),
   );
 });
@@ -1167,7 +1175,7 @@ for (const win of [false, true]) {
           windowsProject: { hostName: "Work PC", winPath: "C:\\Demo", serverPath: "/server/Demo" },
         },
       });
-      const text = params.additionalContext?.t3_code_tools?.value ?? "";
+      const text = params.additionalContext?.t3_code_windows?.value ?? "";
       NodeAssert.equal(text.includes("This is a Windows project."), win);
       NodeAssert.ok(!text.includes("Use it only when the task needs Windows"));
       if (win) {

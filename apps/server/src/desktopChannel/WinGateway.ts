@@ -391,7 +391,7 @@ const make = Effect.gen(function* () {
       return yield* invokeMcp(DESKTOP_MCP_LIST_KIND, {}, 30_000, host, invocation).pipe(
         Effect.flatMap(decodeMcpListResult),
         Effect.mapError((error) =>
-          error instanceof WinGatewayError
+          Schema.is(WinGatewayError)(error)
             ? error
             : new WinGatewayError({
                 code: "INTERNAL",
@@ -412,7 +412,7 @@ const make = Effect.gen(function* () {
       ).pipe(
         Effect.flatMap(decodeMcpAddResult),
         Effect.mapError((error) =>
-          error instanceof WinGatewayError
+          Schema.is(WinGatewayError)(error)
             ? error
             : new WinGatewayError({ code: "INTERNAL", message: "Invalid desktop MCP add result." }),
         ),

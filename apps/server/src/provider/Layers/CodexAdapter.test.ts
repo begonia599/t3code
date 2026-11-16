@@ -3353,11 +3353,11 @@ for (const linked of [false, true]) {
               },
             });
             NodeAssert.equal(
-              params.additionalContext?.t3_code_tools?.value.includes(WIN_AGENT_INSTRUCTIONS) ??
+              params.additionalContext?.t3_code_windows?.value.includes(WIN_AGENT_INSTRUCTIONS) ??
                 false,
               enabled && !linked,
             );
-            const text = params.additionalContext?.t3_code_tools?.value ?? "";
+            const text = params.additionalContext?.t3_code_windows?.value ?? "";
             NodeAssert.equal(text.includes("This is a Windows project."), enabled && linked);
             if (enabled && linked) {
               NodeAssert.ok(text.includes("Work PC"));
