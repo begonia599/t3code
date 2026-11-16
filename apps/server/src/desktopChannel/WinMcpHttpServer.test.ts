@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off preferSchemaOverJson:off - drives the real MCP HTTP route with raw requests to check protocol status codes and SSE bodies.
 import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
