@@ -68,6 +68,7 @@ const decodeMcpAddInput = Schema.decodeUnknownEffect(DesktopMcpAddInput, {
   onExcessProperty: "error",
 });
 const decodeLogEntries = Schema.decodeUnknownEffect(Schema.Array(DesktopExecLogEntry));
+const isWinGatewayError = Schema.is(WinGatewayError);
 const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 const execEnabled = (host: DesktopChannelHost) =>
   host.capabilities.enabled && host.capabilities.exec !== undefined;
@@ -391,7 +392,7 @@ const make = Effect.gen(function* () {
       return yield* invokeMcp(DESKTOP_MCP_LIST_KIND, {}, 30_000, host, invocation).pipe(
         Effect.flatMap(decodeMcpListResult),
         Effect.mapError((error) =>
-          Schema.is(WinGatewayError)(error)
+          isWinGatewayError(error)
             ? error
             : new WinGatewayError({
                 code: "INTERNAL",
@@ -412,7 +413,7 @@ const make = Effect.gen(function* () {
       ).pipe(
         Effect.flatMap(decodeMcpAddResult),
         Effect.mapError((error) =>
-          Schema.is(WinGatewayError)(error)
+          isWinGatewayError(error)
             ? error
             : new WinGatewayError({ code: "INTERNAL", message: "Invalid desktop MCP add result." }),
         ),
