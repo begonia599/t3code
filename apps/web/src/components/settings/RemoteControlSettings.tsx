@@ -68,6 +68,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { LocalMcpSettings, localMcpAvailable } from "./LocalMcpSettings";
 import { WindowsFoldersSettings, windowsFoldersAvailable } from "./WindowsFoldersSettings";
 
 const LIST_ROW_CLASS = "flex items-center gap-3 border-t border-border/50 py-2.5";
@@ -338,6 +339,7 @@ function ThisComputerFolders() {
       {windowsFoldersAvailable() ? (
         <WindowsFoldersSettings hostId={config.value?.hostId ?? null} />
       ) : null}
+      {localMcpAvailable() ? <LocalMcpSettings /> : null}
       <FoldedSettingsSection id={advanced.id} title={t(advanced.title)} summary={summary}>
         <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
           {t(

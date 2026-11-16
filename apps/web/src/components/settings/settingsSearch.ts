@@ -648,6 +648,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "local-mcp",
+    title: "MCP servers on this PC",
+    to: "/settings/integrations",
+    searchTerms: [
+      "local mcp server unity blender tools windows this pc stdio http command add paste config",
+    ],
+    desktopOnly: true,
+  },
+  {
     id: "remote-control-advanced",
     title: "Manual folder access",
     to: "/settings/integrations",

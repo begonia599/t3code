@@ -1,0 +1,345 @@
+/**
+ * Pure helpers for the "MCP servers on this PC" settings: turning a form or a
+ * pasted `mcpServers` JSON snippet into a `LocalMcpServerConfig`, and back.
+ *
+ * @module localMcp.logic
+ */
+import type {
+  LocalMcpServerConfig,
+  LocalMcpServerStatus,
+  LocalMcpServerView,
+} from "@t3tools/contracts";
+
+const ID_PATTERN = /^[a-z][a-z0-9_-]{0,23}$/;
+const MAX_ID_LENGTH = 24;
+
+export type LocalMcpKind = "stdio" | "http";
+
+/** Editable form state. Multi-value fields are kept as text, one entry per line. */
+export interface LocalMcpDraft {
+  readonly id: string;
+  /** False while the id still follows the name automatically. */
+  readonly idEdited: boolean;
+  readonly name: string;
+  readonly kind: LocalMcpKind;
+  readonly command: string;
+  readonly args: string;
+  readonly cwd: string;
+  readonly env: string;
+  readonly url: string;
+  readonly headers: string;
+  readonly enabled: boolean;
+}
+
+export type LocalMcpDraftField = "id" | "name" | "command" | "env" | "url" | "headers";
+/** `message` is English source text for `t()`; `{line}` in it is replaced with `line`. */
+export interface LocalMcpFieldError {
+  readonly message: string;
+  readonly line?: number;
+}
+export type LocalMcpDraftErrors = Partial<Record<LocalMcpDraftField, LocalMcpFieldError>>;
+
+export function emptyLocalMcpDraft(): LocalMcpDraft {
+  return {
+    id: "",
+    idEdited: false,
+    name: "",
+    kind: "stdio",
+    command: "",
+    args: "",
+    cwd: "",
+    env: "",
+    url: "",
+    headers: "",
+    enabled: true,
+  };
+}
+
+/** `Unity MCP` → `unity-mcp`; always a valid id or "" for names with no usable characters. */
+export function slugifyLocalMcpId(name: string): string {
+  let slug = name
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (slug === "") return "";
+  if (!/^[a-z]/.test(slug)) slug = `mcp-${slug}`;
+  return slug.slice(0, MAX_ID_LENGTH).replace(/-+$/, "");
+}
+
+/** Appends `-2`, `-3`, … until the id is free. */
+export function uniqueLocalMcpId(base: string, taken: ReadonlySet<string>): string {
+  const root = base === "" ? "mcp" : base;
+  if (!taken.has(root)) return root;
+  for (let n = 2; ; n += 1) {
+    const suffix = `-${n}`;
+    const candidate = `${root.slice(0, MAX_ID_LENGTH - suffix.length).replace(/-+$/, "")}${suffix}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+export function withDraftName(draft: LocalMcpDraft, name: string): LocalMcpDraft {
+  return draft.idEdited ? { ...draft, name } : { ...draft, name, id: slugifyLocalMcpId(name) };
+}
+
+export function draftFromConfig(config: LocalMcpServerConfig): LocalMcpDraft {
+  const transport = config.transport;
+  return {
+    ...emptyLocalMcpDraft(),
+    id: config.id,
+    idEdited: true,
+    name: config.name,
+    enabled: config.enabled,
+    ...(transport.type === "stdio"
+      ? {
+          kind: "stdio" as const,
+          command: transport.command,
+          args: transport.args.join("\n"),
+          cwd: transport.cwd ?? "",
+          env: formatPairs(transport.env, "="),
+        }
+      : {
+          kind: "http" as const,
+          url: transport.url,
+          headers: formatPairs(transport.headers, ": "),
+        }),
+  };
+}
+
+function formatPairs(record: Readonly<Record<string, string>>, separator: string): string {
+  return Object.entries(record)
+    .map(([key, value]) => `${key}${separator}${value}`)
+    .join("\n");
+}
+
+/** One argument per line; blank lines dropped; surrounding whitespace kept inside the line. */
+export function parseArgsText(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+}
+
+type PairsResult =
+  | { readonly ok: true; readonly value: Record<string, string> }
+  | { readonly ok: false; readonly line: number };
+
+/** `KEY=VALUE` (env) or `Name: value` (headers) per line. Reports the first bad line, 1-based. */
+export function parsePairsText(text: string, separator: "=" | ":"): PairsResult {
+  const value: Record<string, string> = {};
+  const lines = text.split(/\r?\n/);
+  for (const [index, raw] of lines.entries()) {
+    const line = raw.trim();
+    if (line === "") continue;
+    const at = line.indexOf(separator);
+    const key = at > 0 ? line.slice(0, at).trim() : "";
+    if (key === "" || /\s/.test(key)) return { ok: false, line: index + 1 };
+    value[key] = line.slice(at + 1).trim();
+  }
+  return { ok: true, value };
+}
+
+function isHttpUrl(text: string): boolean {
+  try {
+    const url = new URL(text);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates a draft. `takenIds` are ids of other servers (exclude the one being
+ * edited). Error strings are English source text for `t()`.
+ */
+export function draftToConfig(
+  draft: LocalMcpDraft,
+  takenIds: ReadonlySet<string>,
+):
+  | { readonly ok: true; readonly config: LocalMcpServerConfig }
+  | { readonly ok: false; readonly errors: LocalMcpDraftErrors } {
+  const errors: { -readonly [K in LocalMcpDraftField]?: LocalMcpFieldError } = {};
+  const fail = (field: LocalMcpDraftField, message: string, line?: number) => {
+    errors[field] = line === undefined ? { message } : { message, line };
+  };
+  const name = draft.name.trim();
+  const id = draft.id.trim();
+  if (name === "") fail("name", "Enter a name.");
+  if (id === "") fail("id", "Enter a tool prefix.");
+  else if (!ID_PATTERN.test(id) || id.includes("__"))
+    fail("id", "Use 1–24 lowercase letters, digits, - or _, starting with a letter.");
+  else if (takenIds.has(id)) fail("id", "Another MCP server already uses this prefix.");
+
+  let transport: LocalMcpServerConfig["transport"] | null = null;
+  if (draft.kind === "stdio") {
+    const command = draft.command.trim();
+    const env = parsePairsText(draft.env, "=");
+    if (command === "") fail("command", "Enter the command that starts the server.");
+    if (!env.ok) fail("env", "Line {line}: use NAME=value.", env.line);
+    if (command !== "" && env.ok) {
+      const cwd = draft.cwd.trim();
+      transport = {
+        type: "stdio",
+        command,
+        args: parseArgsText(draft.args),
+        env: env.value,
+        ...(cwd === "" ? {} : { cwd }),
+      };
+    }
+  } else {
+    const url = draft.url.trim();
+    const headers = parsePairsText(draft.headers, ":");
+    if (!isHttpUrl(url)) fail("url", "Enter an http:// or https:// address.");
+    if (!headers.ok) fail("headers", "Line {line}: use Name: value.", headers.line);
+    if (isHttpUrl(url) && headers.ok) transport = { type: "http", url, headers: headers.value };
+  }
+
+  if (Object.keys(errors).length > 0 || transport === null) return { ok: false, errors };
+  return { ok: true, config: { id, name, enabled: draft.enabled, transport } };
+}
+
+type PasteResult =
+  | { readonly ok: true; readonly drafts: readonly LocalMcpDraft[] }
+  | { readonly ok: false; readonly error: string };
+
+function parseJsonLoosely(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Docs often show JSONC: strip line comments outside strings and trailing commas.
+    const stripped = text
+      .replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*/g, (_, str: string | undefined) => str ?? "")
+      .replace(/,\s*([}\]])/g, "$1");
+    try {
+      return JSON.parse(stripped);
+    } catch {
+      // A bare `"name": { ... }` entry copied out of a larger file.
+      return JSON.parse(`{${stripped.trim().replace(/,$/, "")}}`);
+    }
+  }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const looksLikeServer = (value: unknown): value is Record<string, unknown> =>
+  isRecord(value) && (typeof value.command === "string" || typeof value.url === "string");
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, entry]) =>
+      typeof entry === "string" || typeof entry === "number" ? [[key, String(entry)]] : [],
+    ),
+  );
+}
+
+function draftFromPasted(name: string, server: Record<string, unknown>): LocalMcpDraft | string {
+  const base = withDraftName(emptyLocalMcpDraft(), name);
+  if (typeof server.command === "string") {
+    const args = Array.isArray(server.args)
+      ? server.args.filter((arg): arg is string => typeof arg === "string")
+      : [];
+    return {
+      ...base,
+      kind: "stdio",
+      command: server.command,
+      args: args.join("\n"),
+      cwd: typeof server.cwd === "string" ? server.cwd : "",
+      env: formatPairs(stringRecord(server.env), "="),
+    };
+  }
+  const type = typeof server.type === "string" ? server.type.toLowerCase() : "http";
+  if (type === "sse") {
+    return "This server uses the older SSE transport. Use its streamable HTTP address instead.";
+  }
+  return {
+    ...base,
+    kind: "http",
+    url: String(server.url),
+    headers: formatPairs(stringRecord(server.headers), ": "),
+  };
+}
+
+/**
+ * Accepts the snippets MCP READMEs show: `{"mcpServers": {...}}`, VS Code's
+ * `{"servers": {...}}`, a bare `{name: server}` map, or one server object.
+ */
+export function parsePastedLocalMcpConfig(text: string): PasteResult {
+  let parsed: unknown;
+  try {
+    parsed = parseJsonLoosely(text.trim());
+  } catch {
+    return { ok: false, error: "This isn't valid JSON." };
+  }
+  if (!isRecord(parsed)) return { ok: false, error: "This isn't an MCP server config." };
+  const container = isRecord(parsed.mcpServers)
+    ? parsed.mcpServers
+    : isRecord(parsed.servers)
+      ? parsed.servers
+      : looksLikeServer(parsed)
+        ? { [typeof parsed.name === "string" ? parsed.name : "MCP server"]: parsed }
+        : parsed;
+  const drafts: LocalMcpDraft[] = [];
+  let lastError: string | null = null;
+  for (const [name, server] of Object.entries(container)) {
+    if (!looksLikeServer(server)) continue;
+    const draft = draftFromPasted(name, server);
+    if (typeof draft === "string") lastError = draft;
+    else drafts.push(draft);
+  }
+  if (drafts.length === 0) {
+    return { ok: false, error: lastError ?? "No MCP server with a command or url was found." };
+  }
+  return { ok: true, drafts };
+}
+
+/** Short, single-line description of how the server is started. */
+export function describeLocalMcpTransport(config: LocalMcpServerConfig): string {
+  const transport = config.transport;
+  if (transport.type === "http") return transport.url;
+  const quote = (part: string) => (/\s/.test(part) ? `"${part}"` : part);
+  return [transport.command, ...transport.args].map(quote).join(" ");
+}
+
+export interface LocalMcpStatusPresentation {
+  readonly label: string;
+  readonly dotClassName: string;
+  readonly pulse: boolean;
+  readonly tone: "success" | "info" | "error" | "muted";
+}
+
+export function localMcpStatusPresentation(
+  status: LocalMcpServerStatus,
+  enabled: boolean,
+): LocalMcpStatusPresentation {
+  if (!enabled) {
+    return {
+      label: "Turned off",
+      dotClassName: "bg-muted-foreground/30",
+      pulse: false,
+      tone: "muted",
+    };
+  }
+  switch (status) {
+    case "running":
+      return { label: "Ready", dotClassName: "bg-success", pulse: false, tone: "success" };
+    case "starting":
+      return { label: "Starting…", dotClassName: "bg-info", pulse: true, tone: "info" };
+    case "failed":
+      return { label: "Not running", dotClassName: "bg-destructive", pulse: false, tone: "error" };
+    case "stopped":
+      return {
+        label: "Stopped",
+        dotClassName: "bg-muted-foreground/45",
+        pulse: false,
+        tone: "muted",
+      };
+  }
+}
+
+/** Tool count label source text, e.g. "12 tools". */
+export function toolCountText(view: LocalMcpServerView): { text: string; count: number } {
+  const count = view.tools.length;
+  return { text: count === 1 ? "1 tool" : "{count} tools", count };
+}
