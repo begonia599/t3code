@@ -406,19 +406,76 @@ describe("WinGateway over real DesktopChannelBroker", () => {
     ]);
     expect((await f.audit())[0]!.finished_at).toBeTruthy();
   });
-  it.each(["GRANT_DENIED", "CWD_NOT_ALLOWED", "SPAWN_NOT_FOUND"])(
-    "passes desktop error %s through and audits it",
-    async (code) => {
+  it.each([undefined, "", "audit-label"])(
+    "keeps invocation audit identity with a custom provider instance and label %j",
+    async (label) => {
       const f = await fixture();
       const h = await f.startHost();
-      const res = await f.request("exec", { body: { exec } });
-      const text = res.text();
-      const req = await h.next();
-      await h.error(req.requestId, code);
-      expect(lines(await text)[1]).toEqual({ type: "error", code, message: "host error" });
-      expect(await f.audit()).toMatchObject([{ outcome: "error", error_code: code }]);
+      const invocation = {
+        scope: {
+          ...scope,
+          threadId: ThreadId.make("audit-thread"),
+          providerInstanceId: ProviderInstanceId.make("custom-claude-instance"),
+        },
+        ...(label === undefined ? {} : { label }),
+      };
+      const response = f.runtime.runPromise(
+        Effect.scoped(Stream.runCollect(f.gateway.exec({ exec }, invocation))),
+      );
+      const request = await h.next();
+      expect(request).toMatchObject({
+        context: {
+          threadId: invocation.scope.threadId,
+          provider: invocation.scope.providerInstanceId,
+          ...(label === undefined ? {} : { label }),
+        },
+      });
+      await h.respond(request.requestId, result);
+      await response;
+      expect(await f.audit()).toMatchObject([
+        {
+          thread_id: invocation.scope.threadId,
+          provider: invocation.scope.providerInstanceId,
+          label: label ?? null,
+        },
+      ]);
     },
   );
+  it("audits capability revocation during execution as unknown", async () => {
+    const f = await fixture();
+    const h = await f.startHost();
+    const response = await f.request("exec", { body: { exec } });
+    const text = response.text();
+    await h.next();
+    await f.runtime.runPromise(
+      f.broker.updateCapabilities({ ...h.identity, capabilities: { enabled: false } }),
+    );
+    expect(lines(await text)[1]).toMatchObject({ type: "error", code: "HOST_DISCONNECTED" });
+    expect(await f.audit()).toMatchObject([
+      { outcome: "unknown", error_code: "HOST_DISCONNECTED" },
+    ]);
+  });
+  it.each([
+    "GRANT_DENIED",
+    "CWD_NOT_ALLOWED",
+    "SPAWN_NOT_FOUND",
+    "CLEANUP_FAILED",
+    "HOST_DISABLED",
+  ])("passes desktop error %s through and audits it", async (code) => {
+    const f = await fixture();
+    const h = await f.startHost();
+    const res = await f.request("exec", { body: { exec } });
+    const text = res.text();
+    const req = await h.next();
+    await h.error(req.requestId, code);
+    expect(lines(await text)[1]).toEqual({ type: "error", code, message: "host error" });
+    expect(await f.audit()).toMatchObject([
+      {
+        outcome: code === "CLEANUP_FAILED" ? "unknown" : "error",
+        error_code: code,
+      },
+    ]);
+  });
   it.each([false, true])(
     "reports HOST_DISCONNECTED when a host disconnects/reconnects (%s)",
     async (replace) => {
@@ -431,7 +488,7 @@ describe("WinGateway over real DesktopChannelBroker", () => {
       else await h.stop();
       expect(lines(await text)[1]).toMatchObject({ type: "error", code: "HOST_DISCONNECTED" });
       expect(await f.audit()).toMatchObject([
-        { outcome: "error", error_code: "HOST_DISCONNECTED" },
+        { outcome: "unknown", error_code: replace ? "HOST_REPLACED" : "HOST_DISCONNECTED" },
       ]);
     },
   );
@@ -548,6 +605,32 @@ describe("WinGateway over real DesktopChannelBroker", () => {
     expect(await (await f.request(`log?host=${secondHostId}`)).json()).toEqual({
       source: "server",
       entries: [],
+    });
+  });
+  it("returns unknown and MCP tool errors unchanged from the offline server audit", async () => {
+    const f = await fixture();
+    await f.runtime.runPromise(f.sql`INSERT INTO desktop_channel_audit
+      (request_id,host_id,host_name,server_cwd,started_at,mode,summary,outcome,error_code)
+      VALUES ('unknown',${hostId},'PC','/project','2026-01-01','mcp','unity__inspect','unknown','SERVER_RESTARTED'),
+        ('tool-error',${hostId},'PC','/project','2026-01-02','mcp','unity__inspect','exited','MCP_TOOL_ERROR')`);
+    expect(await (await f.request("log")).json()).toMatchObject({
+      source: "server",
+      entries: [
+        {
+          requestId: "tool-error",
+          mode: "mcp",
+          outcome: "exited",
+          errorCode: "MCP_TOOL_ERROR",
+          exitCode: null,
+        },
+        {
+          requestId: "unknown",
+          mode: "mcp",
+          outcome: "unknown",
+          errorCode: "SERVER_RESTARTED",
+          durationMs: null,
+        },
+      ],
     });
   });
   it("does not interrupt execution when audit writes fail", async () => {

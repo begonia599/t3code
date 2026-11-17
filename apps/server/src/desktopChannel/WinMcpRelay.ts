@@ -1,6 +1,9 @@
 import * as NodeCrypto from "node:crypto";
 import {
   DESKTOP_MCP_CALL_KIND,
+  DESKTOP_AUDIT_MCP_TOOL_ERROR,
+  isDesktopExecOutcomeUnknown,
+  type DesktopExecLogEntry,
   DESKTOP_MCP_CALL_TIMEOUT_MS,
   DESKTOP_MCP_MAX_CONCURRENT_CALLS,
   DesktopMcpProgress,
@@ -17,6 +20,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -26,6 +30,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as DesktopChannelBroker from "./DesktopChannelBroker.ts";
+import * as DesktopChannelAudit from "./DesktopChannelAudit.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as DesktopLinkService from "../desktopLink/DesktopLinkService.ts";
 import { resolveWindowsContext, windowsHostCandidates } from "./windowsHostContext.ts";
@@ -142,6 +147,7 @@ export class WinMcpRelay extends Context.Service<
 
 const make = Effect.gen(function* () {
   const broker = yield* DesktopChannelBroker.DesktopChannelBroker;
+  const audit = yield* DesktopChannelAudit.DesktopChannelAudit;
   const services = yield* Effect.context<
     ProjectionSnapshotQuery | DesktopLinkService.DesktopLinkService
   >();
@@ -226,53 +232,114 @@ const make = Effect.gen(function* () {
         limit = Semaphore.makeUnsafe(DESKTOP_MCP_MAX_CONCURRENT_CALLS);
         limits.set(hostId, limit);
       }
-      return yield* limit
-        .withPermits(1)(
-          Effect.scoped(
-            Effect.gen(function* () {
-              const handle = yield* broker.invoke({
-                hostId,
-                kind: DESKTOP_MCP_CALL_KIND,
-                input: { ...target, ...(args === undefined ? {} : { arguments: args }) },
-                timeoutMs: DESKTOP_MCP_CALL_TIMEOUT_MS + 2_000,
-                context: session.context,
-              });
-              const events = yield* Stream.runForEach(handle.events, (batch) =>
-                Effect.gen(function* () {
-                  if (!progress) return;
-                  for (const event of batch.events) {
-                    if (event.kind !== "progress") continue;
-                    const decoded = decodeProgress(event.data);
-                    if (decoded._tag === "Some")
-                      yield* Effect.tryPromise(() => progress(decoded.value)).pipe(Effect.ignore);
-                  }
+      // Allocate before the host queue so cancellation while queued is audited too.
+      const requestId = NodeCrypto.randomUUID();
+      const started = yield* Clock.currentTimeMillis;
+      let outcome: DesktopExecLogEntry["outcome"] = "cancelled";
+      let errorCode: string | null = "CANCELLED";
+      const failed = (code: string) => {
+        errorCode = code;
+        outcome =
+          code === "CANCELLED"
+            ? "cancelled"
+            : isDesktopExecOutcomeUnknown(code)
+              ? "unknown"
+              : code === "TIMEOUT"
+                ? "timedOut"
+                : "error";
+      };
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          yield* audit.begin({
+            requestId,
+            hostId,
+            hostName: session.hostName ?? hostId,
+            serverCwd: session.context.workspaceRoot ?? "",
+            threadId: session.context.threadId ?? null,
+            provider: session.context.provider ?? null,
+            label: session.context.label ?? null,
+            mode: "mcp",
+            summary: `${target.serverId}__${target.toolName}`,
+            winCwd: null,
+          });
+          return yield* restore(
+            limit!
+              .withPermits(1)(
+                Effect.scoped(
+                  Effect.gen(function* () {
+                    const handle = yield* broker.invoke({
+                      hostId,
+                      kind: DESKTOP_MCP_CALL_KIND,
+                      input: { ...target, ...(args === undefined ? {} : { arguments: args }) },
+                      timeoutMs: DESKTOP_MCP_CALL_TIMEOUT_MS + 2_000,
+                      context: session.context,
+                    });
+                    const events = yield* Stream.runForEach(handle.events, (batch) =>
+                      Effect.gen(function* () {
+                        if (!progress) return;
+                        for (const event of batch.events) {
+                          if (event.kind !== "progress") continue;
+                          const decoded = decodeProgress(event.data);
+                          if (decoded._tag === "Some")
+                            yield* Effect.tryPromise(() => progress(decoded.value)).pipe(
+                              Effect.ignore,
+                            );
+                        }
+                      }),
+                    ).pipe(Effect.forkScoped);
+                    const result = yield* handle.result;
+                    yield* Fiber.join(events);
+                    // Validate without stripping extensions or recording tool arguments/results.
+                    if (!CallToolResultSchema.safeParse(result).success) {
+                      failed("MCP_PROTOCOL_ERROR");
+                      return failure(
+                        "MCP_PROTOCOL_ERROR",
+                        session.hostName ?? hostId,
+                        "Invalid CallToolResult",
+                      );
+                    }
+                    const toolResult = result as CallToolResult;
+                    outcome = "exited";
+                    errorCode = toolResult.isError === true ? DESKTOP_AUDIT_MCP_TOOL_ERROR : null;
+                    return toolResult;
+                  }),
+                ),
+              )
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.sync(() => {
+                    const code = error.remoteCode ?? error.code;
+                    failed(code);
+                    return failure(code, session.hostName ?? hostId, error.message);
+                  }),
+                ),
+                Effect.timeoutOrElse({
+                  duration: DESKTOP_MCP_CALL_TIMEOUT_MS + 2_000,
+                  orElse: () =>
+                    Effect.sync(() => {
+                      failed("TIMEOUT");
+                      return failure("TIMEOUT", session.hostName ?? hostId);
+                    }),
                 }),
-              ).pipe(Effect.forkScoped);
-              const result = yield* handle.result;
-              yield* Fiber.join(events);
-              // Preserve extension fields on content blocks as well as top-level result metadata.
-              return CallToolResultSchema.safeParse(result).success
-                ? (result as CallToolResult)
-                : failure(
-                    "MCP_PROTOCOL_ERROR",
-                    session.hostName ?? hostId,
-                    "Invalid CallToolResult",
-                  );
-            }),
-          ),
-        )
-        .pipe(
-          Effect.catch((error) =>
-            Effect.succeed(
-              failure(error.remoteCode ?? error.code, session.hostName ?? hostId, error.message),
+              ),
+          ).pipe(
+            Effect.ensuring(
+              Effect.gen(function* () {
+                const finished = yield* Clock.currentTimeMillis;
+                yield* audit.finish({
+                  requestId,
+                  outcome,
+                  errorCode,
+                  exitCode: null,
+                  winCwd: null,
+                  durationMs: Math.max(0, finished - started),
+                });
+              }),
             ),
-          ),
-          Effect.timeoutOrElse({
-            duration: DESKTOP_MCP_CALL_TIMEOUT_MS + 2_000,
-            orElse: () => Effect.succeed(failure("TIMEOUT", session.hostName ?? hostId)),
-          }),
-        );
+          );
+        }),
+      );
     });
   return WinMcpRelay.of({ open, list, call, changes: Stream.fromPubSub(changes) });
 });
-export const layer = Layer.effect(WinMcpRelay, make);
+export const layer = Layer.effect(WinMcpRelay, make).pipe(Layer.provide(DesktopChannelAudit.layer));

@@ -1,5 +1,11 @@
 // @effect-diagnostics globalDate:off -- Audit timestamps are recorded at the native Promise request boundary.
-import { DesktopMcpCallInput, type DesktopExecLogEntry } from "@t3tools/contracts";
+import {
+  DesktopMcpCallInput,
+  DESKTOP_AUDIT_MCP_TOOL_ERROR,
+  DESKTOP_EXEC_SUMMARY_MAX_CHARS,
+  isDesktopExecOutcomeUnknown,
+  type DesktopExecLogEntry,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { LocalMcpError, type LocalMcpManager } from "./LocalMcpManager.ts";
 import type { RequestHandler } from "./RemoteControlRequestRouter.ts";
@@ -36,7 +42,10 @@ export function createLocalMcpRequestHandler(options: {
       } catch (cause) {
         throw new LocalMcpError("BAD_REQUEST", `Invalid MCP call: ${String(cause)}`);
       }
-      entry = { ...entry, summary: `${input.serverId}__${input.toolName}` };
+      entry = {
+        ...entry,
+        summary: `${input.serverId}__${input.toolName}`.slice(0, DESKTOP_EXEC_SUMMARY_MAX_CHARS),
+      };
       if (!(await options.enabledEnvironmentIds()).includes(environmentId))
         throw new LocalMcpError(
           "REMOTE_DISABLED",
@@ -49,26 +58,44 @@ export function createLocalMcpRequestHandler(options: {
         signal,
         (progress) => emit({ kind: "progress", data: JSON.stringify(progress) }),
       );
-      entry = { ...entry, outcome: "exited" };
+      entry = {
+        ...entry,
+        outcome: "exited",
+        errorCode: result.isError === true ? DESKTOP_AUDIT_MCP_TOOL_ERROR : null,
+      };
       return result;
     } catch (cause) {
-      const code = signal.aborted
-        ? "CANCELLED"
-        : cause instanceof LocalMcpError
+      const code =
+        cause instanceof LocalMcpError && isDesktopExecOutcomeUnknown(cause.code)
           ? cause.code
-          : "MCP_PROTOCOL_ERROR";
+          : signal.aborted
+            ? "CANCELLED"
+            : cause instanceof LocalMcpError
+              ? cause.code
+              : "MCP_PROTOCOL_ERROR";
       entry = {
         ...entry,
         errorCode: code,
-        outcome: code === "CANCELLED" ? "cancelled" : code === "TIMEOUT" ? "timedOut" : "error",
+        outcome:
+          code === "CANCELLED"
+            ? "cancelled"
+            : isDesktopExecOutcomeUnknown(code)
+              ? "unknown"
+              : code === "TIMEOUT"
+                ? "timedOut"
+                : "error",
       };
       throw new LocalMcpError(code, cause instanceof Error ? cause.message : String(cause));
     } finally {
-      await options.store.appendAudit({
-        ...entry,
-        finishedAt: new Date().toISOString(),
-        durationMs: Date.now() - started,
-      });
+      try {
+        await options.store.appendAudit({
+          ...entry,
+          finishedAt: new Date().toISOString(),
+          durationMs: Date.now() - started,
+        });
+      } catch (cause) {
+        console.warn("Local MCP audit write failed", cause);
+      }
     }
   };
 }

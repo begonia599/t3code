@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import {
   DesktopExecInput,
+  DesktopExecLogEntry,
+  isDesktopExecOutcomeUnknown,
   DesktopExecProgress,
   DesktopExecResult,
   WinGatewayExecRequest,
@@ -24,6 +26,7 @@ const decodeResult = Schema.decodeUnknownSync(DesktopExecResult);
 const decodeLine = Schema.decodeUnknownSync(WinGatewayExecLine);
 const decodeStatus = Schema.decodeUnknownSync(WinGatewayStatusResponse);
 const decodeLog = Schema.decodeUnknownSync(WinGatewayLogResponse);
+const decodeLogEntry = Schema.decodeUnknownSync(DesktopExecLogEntry);
 const decodeSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeOverrides = Schema.decodeUnknownSync(ProjectSettingsOverrides);
 const input = {
@@ -92,7 +95,7 @@ describe("desktop exec contracts", () => {
         "HOST_BUSY",
         "REMOTE_DISABLED",
       ],
-      122: ["HOST_DISCONNECTED", "CLEANUP_FAILED"],
+      122: ["HOST_DISCONNECTED", "HOST_REPLACED", "CLEANUP_FAILED", "SERVER_RESTARTED"],
       124: ["TIMEOUT"],
       125: ["BAD_REQUEST"],
       126: ["GRANT_DENIED", "GRANT_TIMEOUT"],
@@ -137,4 +140,31 @@ it("older desktop context schemas ignore added trusted project fields", () => {
   };
   expect(decodeOldContext(input)).toEqual({ threadId: "t", provider: "codex" });
   expect(decodeDesktopContext(input)).toEqual(input);
+});
+
+it("decodes unknown audit outcomes and identifies uncertain execution errors", () => {
+  const entry = {
+    requestId: "r",
+    startedAt: "now",
+    finishedAt: "later",
+    threadId: null,
+    provider: null,
+    label: null,
+    mode: "mcp",
+    summary: "server__tool",
+    winCwd: null,
+    outcome: "unknown",
+    exitCode: null,
+    errorCode: "SERVER_RESTARTED",
+    durationMs: null,
+  };
+  expect(decodeLogEntry(entry)).toEqual(entry);
+  expect(decodeLog({ source: "server", entries: [entry] }).entries).toEqual([entry]);
+  for (const code of ["HOST_DISCONNECTED", "HOST_REPLACED", "CLEANUP_FAILED", "SERVER_RESTARTED"]) {
+    expect(isDesktopExecOutcomeUnknown(code)).toBe(true);
+    expect(winExitCodeForError(code)).toBe(122);
+  }
+  for (const code of ["INTERNAL", "HOST_OFFLINE", "HOST_DISABLED", "CANCELLED", "MCP_TOOL_ERROR"]) {
+    expect(isDesktopExecOutcomeUnknown(code)).toBe(false);
+  }
 });

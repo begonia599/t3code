@@ -36,11 +36,13 @@ import { useThreadShell } from "~/state/entities";
 import {
   bridgeErrorMessage,
   describeExecOutcome,
+  describeExecReason,
   formatAuditTime,
   formatDuration,
   isPosixAbsolutePath,
   isWindowsAbsolutePath,
   providerLabel,
+  splitMcpSummary,
 } from "../remoteControl/remoteControl.logic";
 import {
   REMOTE_CONTROL_AUDIT_LIMIT,
@@ -731,7 +733,7 @@ function RecentActivityRow() {
     <SettingsRow
       {...searchableSetting("remote-control-activity")}
       description={t(
-        "The last {count} commands agents ran or tried to run here, including denied ones.",
+        "The last {count} commands and tool calls agents ran or tried to run here, including denied ones.",
       ).replace("{count}", String(REMOTE_CONTROL_AUDIT_LIMIT))}
       status={
         audit.error ? <span className="text-destructive-foreground">{audit.error}</span> : null
@@ -762,8 +764,10 @@ function RecentActivityRow() {
 function ActivityRow({ entry, now }: { entry: DesktopExecLogEntry; now: Date }) {
   const t = useT();
   const outcome = describeExecOutcome(entry);
+  const reason = describeExecReason(entry);
+  const mcpTool = entry.mode === "mcp" ? splitMcpSummary(entry.summary) : null;
   const meta = [
-    entry.outcome === "error" ? entry.errorCode : null,
+    reason === null ? null : reason.translate ? t(reason.text) : reason.text,
     entry.winCwd,
     providerLabel(entry.provider),
     entry.label,
@@ -772,7 +776,16 @@ function ActivityRow({ entry, now }: { entry: DesktopExecLogEntry; now: Date }) 
   return (
     <div className="flex items-start gap-3 border-t border-border/50 py-2.5">
       <div className="w-20 shrink-0 pt-0.5">
-        <Badge variant={outcome.tone}>
+        <Badge
+          variant={outcome.tone}
+          title={
+            entry.outcome === "unknown"
+              ? t(
+                  "It may or may not have finished. Check on this computer before running it again.",
+                )
+              : undefined
+          }
+        >
           {t(outcome.label).replace("{code}", outcome.code ?? "")}
         </Badge>
       </div>
@@ -781,7 +794,14 @@ function ActivityRow({ entry, now }: { entry: DesktopExecLogEntry; now: Date }) 
           {entry.mode === "powershell" ? (
             <span className="text-muted-foreground">ps&gt; </span>
           ) : null}
-          {entry.summary}
+          {mcpTool === null ? (
+            entry.summary
+          ) : (
+            <>
+              <span className="text-muted-foreground">{mcpTool.server} › </span>
+              {mcpTool.tool}
+            </>
+          )}
         </p>
         <p className="text-xs break-all text-muted-foreground">{meta.join(" · ")}</p>
       </div>

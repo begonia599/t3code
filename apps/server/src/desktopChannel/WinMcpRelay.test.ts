@@ -6,6 +6,7 @@ import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Broker from "./DesktopChannelBroker.ts";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Deferred from "effect/Deferred";
 import * as TestClock from "effect/testing/TestClock";
 import * as Relay from "./WinMcpRelay.ts";
@@ -230,10 +231,15 @@ it.effect("queues the ninth call and bounds the queue by cancellation and deadli
         calls.push(yield* relay.call(session, "unity__inspect", {}).pipe(Effect.forkScoped));
         requests.push(yield* h.next);
       }
-      const ninth = yield* relay.call(session, "unity__inspect", {}).pipe(Effect.forkScoped);
+      const queuedSession = yield* relay.open(scope, "queued-cancel");
+      const ninth = yield* relay.call(queuedSession, "unity__inspect", {}).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
       expect(yield* h.queued).toBe(0);
       yield* Fiber.interrupt(ninth);
+      const sql = yield* SqlClient.SqlClient;
+      expect(
+        yield* sql`SELECT outcome, error_code FROM desktop_channel_audit WHERE label='queued-cancel'`,
+      ).toEqual([{ outcome: "cancelled", error_code: "CANCELLED" }]);
       yield* h.respond(requests[0]!.requestId, toolResult);
       yield* Fiber.join(calls[0]!);
       expect(yield* h.queued).toBe(0);
@@ -291,6 +297,138 @@ it.effect("publishes broker connection/update/disconnection and retains last cap
       expect(yield* broker.getLastCapabilities(host.hostId)).toEqual(capabilities);
       expect(yield* broker.listHosts()).toHaveLength(0);
       expect(yield* broker.listKnownHosts()).toEqual([{ ...host, capabilities }]);
+    }),
+  ).pipe(Effect.provide(testLayer())),
+);
+
+it.effect.each([
+  "success",
+  "tool-error",
+  "cancelled",
+  "disconnect",
+  "replaced",
+  "disabled",
+  "protocol",
+  "error",
+  "timeout",
+  "remote-timeout",
+] as const)("audits MCP %s once without arguments or results", (mode) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const h = yield* startHost();
+      const relay = yield* Relay.WinMcpRelay;
+      const sql = yield* SqlClient.SqlClient;
+      const session = yield* relay.open(scope, "audit-label");
+      const call = yield* relay
+        .call(session, "unity__inspect", { secret: "not-recorded" })
+        .pipe(Effect.forkScoped);
+      const request = yield* h.next;
+      expect(yield* sql`SELECT * FROM desktop_channel_audit`).toMatchObject([
+        {
+          host_id: host.hostId,
+          host_name: host.hostName,
+          server_cwd: "/project",
+          thread_id: scope.threadId,
+          provider: scope.providerInstanceId,
+          label: "audit-label",
+          summary: "unity__inspect",
+          mode: "mcp",
+          outcome: "running",
+          win_cwd: null,
+          exit_code: null,
+        },
+      ]);
+      if (mode === "cancelled") yield* Fiber.interrupt(call);
+      else {
+        if (mode === "disconnect") yield* h.stop;
+        else if (mode === "replaced") yield* startHost();
+        else if (mode === "disabled") yield* h.update({ ...host.capabilities, enabled: false });
+        else if (mode === "error") yield* h.error(request.requestId, "MCP_SERVER_DISABLED");
+        else if (mode === "timeout") yield* TestClock.adjust(122000);
+        else if (mode === "remote-timeout") yield* h.error(request.requestId, "TIMEOUT");
+        else
+          yield* h.respond(
+            request.requestId,
+            mode === "protocol"
+              ? { content: "invalid" }
+              : {
+                  content: [{ type: "text", text: "not-recorded" }],
+                  isError: mode === "tool-error",
+                },
+          );
+        yield* Fiber.join(call);
+      }
+      const rows = yield* sql`SELECT * FROM desktop_channel_audit`;
+      expect(rows).toHaveLength(1);
+      const expected = {
+        success: ["exited", null],
+        "tool-error": ["exited", "MCP_TOOL_ERROR"],
+        cancelled: ["cancelled", "CANCELLED"],
+        disconnect: ["unknown", "HOST_DISCONNECTED"],
+        replaced: ["unknown", "HOST_REPLACED"],
+        disabled: ["unknown", "HOST_DISCONNECTED"],
+        protocol: ["error", "MCP_PROTOCOL_ERROR"],
+        error: ["error", "MCP_SERVER_DISABLED"],
+        timeout: ["timedOut", "TIMEOUT"],
+        "remote-timeout": ["timedOut", "TIMEOUT"],
+      }[mode];
+      expect(rows).toMatchObject([
+        {
+          outcome: expected[0],
+          error_code: expected[1],
+          finished_at: expect.any(String),
+          duration_ms: expect.any(Number),
+          exit_code: null,
+          win_cwd: null,
+        },
+      ]);
+      expect(JSON.stringify(rows)).not.toContain("not-recorded");
+    }),
+  ).pipe(Effect.provide(testLayer())),
+);
+
+it.effect("audits without a project using an empty server cwd and known session context", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const h = yield* startHost();
+      const relay = yield* Relay.WinMcpRelay;
+      const sql = yield* SqlClient.SqlClient;
+      const call = yield* relay
+        .call(yield* relay.open(scope), "unity__inspect", {})
+        .pipe(Effect.forkScoped);
+      const request = yield* h.next;
+      yield* h.respond(request.requestId, { content: [] });
+      yield* Fiber.join(call);
+      expect(
+        yield* sql`SELECT server_cwd, thread_id, provider, label FROM desktop_channel_audit`,
+      ).toEqual([
+        {
+          server_cwd: "",
+          thread_id: scope.threadId,
+          provider: scope.providerInstanceId,
+          label: null,
+        },
+      ]);
+    }),
+  ).pipe(Effect.provide(testLayer(false, false))),
+);
+
+it.effect("audits a host disabled before dispatch as a policy error", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const h = yield* startHost();
+      const relay = yield* Relay.WinMcpRelay;
+      const sql = yield* SqlClient.SqlClient;
+      const session = yield* relay.open(scope);
+      yield* h.update({ ...host.capabilities, enabled: false });
+      expect(yield* relay.call(session, "unity__inspect", {})).toMatchObject({
+        isError: true,
+        content: [{ text: expect.stringContaining("[HOST_DISABLED]") }],
+      });
+      expect(yield* h.queued).toBe(0);
+      expect(yield* sql`SELECT outcome, error_code FROM desktop_channel_audit`).toEqual([
+        { outcome: "error", error_code: "HOST_DISABLED" },
+      ]);
     }),
   ).pipe(Effect.provide(testLayer())),
 );

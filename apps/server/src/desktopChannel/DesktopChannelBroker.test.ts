@@ -601,7 +601,9 @@ for (const capabilities of [
           yield* broker.updateCapabilities({ ...host, capabilities });
           for (const handle of [exec, mcp]) {
             expect(yield* handle.result.pipe(failure)).toMatchObject({
-              code: "HOST_DISABLED",
+              code: "HOST_DISCONNECTED",
+              message:
+                "Desktop channel was turned off on this host while the request was running; the remote request state is unknown.",
               requestId: handle.requestId,
             });
             expect(yield* Queue.take(host.inbox)).toEqual({

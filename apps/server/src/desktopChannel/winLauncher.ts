@@ -239,10 +239,24 @@ export async function runWinLauncher(io: WinLauncherRuntime): Promise<number> {
         if (body.hostStatusError) await io.stdout(`Status: ${body.hostStatusError}\n`);
       } else {
         await io.stdout(`Execution log (${body.source})\n`);
-        for (const e of body.entries)
-          await io.stdout(
-            `${e.startedAt} ${e.requestId} ${e.outcome}${e.exitCode === null ? "" : ` (${e.exitCode})`} ${e.summary}\n`,
-          );
+        const unknownReasons: Record<string, string> = {
+          HOST_DISCONNECTED: "connection lost",
+          HOST_REPLACED: "connection replaced",
+          HOST_DISABLED: "host disabled",
+          CLEANUP_FAILED: "process cleanup failed",
+          SERVER_RESTARTED: "server restarted",
+        };
+        for (const e of body.entries) {
+          const status =
+            e.outcome === "unknown"
+              ? `unknown (${unknownReasons[e.errorCode] ?? "execution state unknown"})`
+              : e.mode === "mcp" && e.outcome === "exited"
+                ? e.errorCode === "MCP_TOOL_ERROR"
+                  ? "tool error"
+                  : "ok"
+                : `${e.outcome}${e.exitCode === null ? "" : ` (${e.exitCode})`}`;
+          await io.stdout(`${e.startedAt} ${e.requestId} ${status} ${e.summary}\n`);
+        }
       }
       return 0;
     }

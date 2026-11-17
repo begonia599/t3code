@@ -63,6 +63,12 @@ export function describeExecOutcome(entry: DesktopExecLogEntry): {
     case "running":
       return { label: "Running", tone: "info", code: null };
     case "exited":
+      if (entry.mode === "mcp") {
+        // A tool call has no exit code; it either returned normally or reported an error.
+        return entry.errorCode === "MCP_TOOL_ERROR"
+          ? { label: "Tool error", tone: "warning", code: null }
+          : { label: "Done", tone: "success", code: null };
+      }
       return entry.exitCode === 0
         ? { label: "Exit 0", tone: "success", code: null }
         : { label: "Exit {code}", tone: "warning", code: String(entry.exitCode ?? "?") };
@@ -70,9 +76,49 @@ export function describeExecOutcome(entry: DesktopExecLogEntry): {
       return { label: "Timed out", tone: "warning", code: null };
     case "cancelled":
       return { label: "Cancelled", tone: "warning", code: null };
+    case "unknown":
+      return { label: "Unknown", tone: "warning", code: null };
     case "error":
       return { label: "Error", tone: "error", code: null };
   }
+}
+
+/** Why a request's result is unknown, as English source strings. */
+const UNKNOWN_RESULT_REASONS: Readonly<Record<string, string>> = {
+  HOST_DISCONNECTED: "Connection dropped mid-run",
+  HOST_REPLACED: "Connection dropped mid-run",
+  CLEANUP_FAILED: "Process didn't shut down cleanly",
+  SERVER_RESTARTED: "Server restarted mid-run",
+};
+
+/**
+ * The short reason shown next to an entry, or null when the outcome badge says it all.
+ * `translate` is false for raw error codes, which stay as-is.
+ */
+export function describeExecReason(
+  entry: DesktopExecLogEntry,
+): { readonly text: string; readonly translate: boolean } | null {
+  if (entry.outcome === "unknown") {
+    const reason = entry.errorCode === null ? undefined : UNKNOWN_RESULT_REASONS[entry.errorCode];
+    return reason === undefined
+      ? entry.errorCode === null
+        ? null
+        : { text: entry.errorCode, translate: false }
+      : { text: reason, translate: true };
+  }
+  if (entry.outcome === "error" && entry.errorCode !== null) {
+    return { text: entry.errorCode, translate: false };
+  }
+  return null;
+}
+
+/** `<serverId>__<toolName>` → its two halves; null when the summary isn't in that shape. */
+export function splitMcpSummary(
+  summary: string,
+): { readonly server: string; readonly tool: string } | null {
+  const separator = summary.indexOf("__");
+  if (separator <= 0 || separator + 2 >= summary.length) return null;
+  return { server: summary.slice(0, separator), tool: summary.slice(separator + 2) };
 }
 
 export function formatAuditTime(iso: string, now: Date): string {

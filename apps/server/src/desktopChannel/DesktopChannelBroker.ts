@@ -323,8 +323,8 @@ const make = Effect.gen(function* () {
             entry,
             Effect.fail(
               error(
-                "HOST_DISABLED",
-                "Desktop channel is disabled on this host; the remote request state is unknown.",
+                "HOST_DISCONNECTED",
+                "Desktop channel was turned off on this host while the request was running; the remote request state is unknown.",
                 input.hostId,
                 entry.requestId,
               ),

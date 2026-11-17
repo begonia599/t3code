@@ -181,7 +181,7 @@ it("preserves handler error messages", async () => {
   });
 });
 
-it("dispatches mcp.call with progress and audits tool errors as successful results without authorization", async () => {
+it("dispatches mcp.call with progress and audits tool errors as completed results without authorization", async () => {
   const { createLocalMcpRequestHandler } = await import("./LocalMcpRequestHandler.ts");
   const audit = vi.fn(async () => {});
   const call = vi.fn<LocalMcpManager["Service"]["call"]>(
@@ -230,7 +230,7 @@ it("dispatches mcp.call with progress and audits tool errors as successful resul
       winCwd: null,
       exitCode: null,
       outcome: "exited",
-      errorCode: null,
+      errorCode: "MCP_TOOL_ERROR",
     }),
   );
   router.dispose();

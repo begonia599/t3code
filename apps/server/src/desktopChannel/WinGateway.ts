@@ -19,6 +19,7 @@ import {
   WIN_GATEWAY_PATH_PREFIX,
   WIN_GATEWAY_LABEL_HEADER,
   normalizeWinLabel,
+  isDesktopExecOutcomeUnknown,
   type WinGatewayExecLine,
   type WinGatewayStatusResponse,
   type WinGatewayLogResponse,
@@ -37,6 +38,7 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import * as DesktopLinkService from "../desktopLink/DesktopLinkService.ts";
 import { resolveWindowsContext, windowsHostCandidates } from "./windowsHostContext.ts";
 import * as DesktopChannelBroker from "./DesktopChannelBroker.ts";
+import * as DesktopChannelAudit from "./DesktopChannelAudit.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 
@@ -71,7 +73,6 @@ const decodeMcpAddInput = Schema.decodeUnknownEffect(DesktopMcpAddInput, {
 });
 const decodeLogEntries = Schema.decodeUnknownEffect(Schema.Array(DesktopExecLogEntry));
 const isWinGatewayError = Schema.is(WinGatewayError);
-const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 const execEnabled = (host: DesktopChannelHost) =>
   host.capabilities.enabled && host.capabilities.exec !== undefined;
 
@@ -106,6 +107,7 @@ export class WinGateway extends Context.Service<
 const make = Effect.gen(function* () {
   const broker = yield* DesktopChannelBroker.DesktopChannelBroker;
   const sql = yield* SqlClient.SqlClient;
+  const audit = yield* DesktopChannelAudit.DesktopChannelAudit;
   const projectServices = yield* Effect.context<
     ProjectionSnapshotQuery | DesktopLinkService.DesktopLinkService
   >();
@@ -122,11 +124,6 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const bestEffort = <A, E>(effect: Effect.Effect<A, E>) =>
-    effect.pipe(
-      Effect.asVoid,
-      Effect.catch((cause) => Effect.logWarning("Win audit write failed", { cause })),
-    );
   const disabled = (hosts: ReadonlyArray<DesktopChannelHost>) =>
     new WinGatewayError({
       code: "HOST_DISABLED",
@@ -191,7 +188,6 @@ const make = Effect.gen(function* () {
             DESKTOP_EXEC_GRANT_WAIT_MS + request.exec.timeoutMs + DESKTOP_EXEC_TIMEOUT_GRACE_MS,
           context,
         });
-        const startedAt = yield* now;
         const input = request.exec;
         const summary = (
           input.mode === "powershell"
@@ -205,13 +201,22 @@ const make = Effect.gen(function* () {
         const finish = Effect.fn("WinGateway.finish")(function* (line: WinGatewayExecLine) {
           if (finished) return;
           finished = true;
-          const finishedAt = yield* now;
           const result = line.type === "result" ? line.result : undefined;
-          yield* bestEffort(sql`UPDATE desktop_channel_audit SET finished_at=${finishedAt},
-        outcome=${result?.outcome ?? (line.type === "error" && line.code === "CANCELLED" ? "cancelled" : "error")},
-        exit_code=${result?.exitCode ?? null}, error_code=${line.type === "error" ? line.code : null},
-        duration_ms=${result?.durationMs ?? null}, win_cwd=${result?.winCwd ?? winCwd}
-        WHERE request_id=${handle.requestId}`);
+          const code = line.type === "error" ? line.code : null;
+          yield* audit.finish({
+            requestId: handle.requestId,
+            outcome:
+              result?.outcome ??
+              (code === "CANCELLED"
+                ? "cancelled"
+                : code && isDesktopExecOutcomeUnknown(code)
+                  ? "unknown"
+                  : "error"),
+            exitCode: result?.exitCode ?? null,
+            errorCode: code,
+            durationMs: result?.durationMs ?? null,
+            winCwd: result?.winCwd ?? winCwd,
+          });
         }, Effect.uninterruptible);
         yield* Effect.addFinalizer(() =>
           handle.cancel.pipe(
@@ -220,11 +225,18 @@ const make = Effect.gen(function* () {
             ),
           ),
         );
-        yield* bestEffort(sql`INSERT INTO desktop_channel_audit
-      (request_id, host_id, host_name, server_cwd, started_at, thread_id, provider, label, mode, summary, win_cwd, outcome)
-      VALUES (${handle.requestId}, ${host.hostId}, ${host.hostName}, ${input.serverCwd}, ${startedAt}, ${invocation.scope.threadId}, ${invocation.scope.providerInstanceId}, ${invocation.label ?? null}, ${input.mode}, ${summary}, ${input.winCwd ?? null}, 'running')`).pipe(
-          Effect.uninterruptible,
-        );
+        yield* audit.begin({
+          requestId: handle.requestId,
+          hostId: host.hostId,
+          hostName: host.hostName,
+          serverCwd: input.serverCwd,
+          threadId: context.threadId ?? null,
+          provider: context.provider ?? null,
+          label: context.label ?? null,
+          mode: input.mode,
+          summary,
+          winCwd: input.winCwd ?? null,
+        });
         const events = handle.events.pipe(
           Stream.flatMap((batch) => Stream.fromIterable(batch.events)),
           Stream.mapEffect(
@@ -252,15 +264,17 @@ const make = Effect.gen(function* () {
           handle.result.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(DesktopExecResult)),
             Effect.map((result): WinGatewayExecLine => ({ type: "result", result })),
-            Effect.catch((error) =>
-              Effect.succeed(
-                errorLine(
-                  "code" in error
-                    ? error
-                    : { code: "INTERNAL", message: "Invalid desktop exec result." },
-                ),
-              ),
-            ),
+            Effect.catch((error) => {
+              const line = errorLine(
+                "code" in error
+                  ? error
+                  : { code: "INTERNAL", message: "Invalid desktop exec result." },
+              );
+              return finish({
+                ...line,
+                code: "code" in error && error.code === "HOST_REPLACED" ? error.code : line.code,
+              }).pipe(Effect.as(line));
+            }),
             Effect.tap(finish),
           ),
         );
@@ -427,7 +441,7 @@ const make = Effect.gen(function* () {
   return WinGateway.of({ exec, status, log, listMcp, addMcp });
 });
 
-export const layer = Layer.effect(WinGateway, make);
+export const layer = Layer.effect(WinGateway, make).pipe(Layer.provide(DesktopChannelAudit.layer));
 
 export const WIN_GATEWAY_HEARTBEAT_INTERVAL_MS = 30_000;
 

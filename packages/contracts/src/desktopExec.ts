@@ -140,7 +140,18 @@ export const DesktopExecLogInput = Schema.Struct({
 });
 export type DesktopExecLogInput = typeof DesktopExecLogInput.Type;
 
-/** One audit record; the desktop JSONL log is authoritative, the server table mirrors it. */
+/** Errors for which execution may or may not have taken place. */
+export const isDesktopExecOutcomeUnknown = (code: string): boolean =>
+  code === "HOST_DISCONNECTED" ||
+  code === "HOST_REPLACED" ||
+  code === "CLEANUP_FAILED" ||
+  code === "SERVER_RESTARTED";
+
+/** Audit-only codes; these do not alter MCP results returned to the model. */
+export const DESKTOP_AUDIT_SERVER_RESTARTED = "SERVER_RESTARTED";
+export const DESKTOP_AUDIT_MCP_TOOL_ERROR = "MCP_TOOL_ERROR";
+
+/** One audit record from the desktop JSONL log or the server's forwarding audit. */
 export const DesktopExecLogEntry = Schema.Struct({
   requestId: TrimmedNonEmptyString,
   authorization: Schema.optional(Schema.Literals(["linked", "prompt-or-session"])),
@@ -154,8 +165,8 @@ export const DesktopExecLogEntry = Schema.Struct({
   /** Command summary, at most DESKTOP_EXEC_SUMMARY_MAX_CHARS. */
   summary: Schema.String,
   winCwd: Schema.NullOr(Schema.String),
-  /** "running" only while in flight (or if the desktop crashed mid-run). */
-  outcome: Schema.Literals(["running", "exited", "timedOut", "cancelled", "error"]),
+  /** "running" while in flight; "unknown" when execution may or may not have taken place. */
+  outcome: Schema.Literals(["running", "exited", "timedOut", "cancelled", "error", "unknown"]),
   exitCode: Schema.NullOr(Schema.Int),
   errorCode: Schema.NullOr(Schema.String),
   durationMs: Schema.NullOr(NonNegativeInt),
@@ -218,6 +229,7 @@ export const WinGatewayErrorCode = Schema.Literals([
   "HOST_DISABLED",
   "HOST_BUSY",
   "HOST_DISCONNECTED",
+  "HOST_REPLACED",
   "TIMEOUT",
   "CANCELLED",
   "INTERNAL",
@@ -294,6 +306,7 @@ export const WIN_EXIT_CANCELLED = 130;
 
 /** Exit code the launcher uses for an "error" line. */
 export const winExitCodeForError = (code: string): number => {
+  if (isDesktopExecOutcomeUnknown(code)) return WIN_EXIT_STATE_UNKNOWN;
   switch (code) {
     case "UNAUTHORIZED":
       return WIN_EXIT_UNAUTHORIZED;
@@ -304,9 +317,6 @@ export const winExitCodeForError = (code: string): number => {
     case "HOST_BUSY":
     case "REMOTE_DISABLED":
       return WIN_EXIT_HOST_UNAVAILABLE;
-    case "HOST_DISCONNECTED":
-    case "CLEANUP_FAILED":
-      return WIN_EXIT_STATE_UNKNOWN;
     case "TIMEOUT":
       return WIN_EXIT_TIMEOUT;
     case "GRANT_DENIED":

@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Broker from "./DesktopChannelBroker.ts";
 import * as Relay from "./WinMcpRelay.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as DesktopLinkService from "../desktopLink/DesktopLinkService.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
@@ -88,11 +89,12 @@ const project = Schema.decodeUnknownSync(OrchestrationProjectShell)({
   createdAt: "now",
   updatedAt: "now",
 });
-export const testLayer = (linked = false) =>
+export const testLayer = (linked = false, projectAvailable = true) =>
   Relay.layer.pipe(
     Layer.provide(
       Layer.mock(ProjectionSnapshotQuery)({
-        getThreadShellById: () => Effect.succeed(Option.some(thread)),
+        getThreadShellById: () =>
+          Effect.succeed(projectAvailable ? Option.some(thread) : Option.none()),
         getProjectShellById: () => Effect.succeed(Option.some(project)),
       }),
     ),
@@ -114,6 +116,7 @@ export const testLayer = (linked = false) =>
       }),
     ),
     Layer.provideMerge(Broker.layer),
+    Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
   );
 export const startHost = Effect.fn(function* (input = host) {

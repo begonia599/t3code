@@ -318,7 +318,9 @@ export async function createRemoteControlStore(options: {
                 .join("\n") + "\n",
             );
         })
-        .catch(() => {});
+        .catch((cause) => {
+          console.warn("Remote control audit write failed", cause);
+        });
       return auditWrites;
     },
     async readAudit({ limit }: { limit: number }) {

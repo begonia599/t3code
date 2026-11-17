@@ -948,14 +948,21 @@ export const zhCN: Readonly<Record<string, string>> = {
   Revoke: "撤销",
   "Couldn't revoke": "无法撤销",
   "Recent activity": "最近记录",
-  "The last {count} commands agents ran or tried to run here, including denied ones.":
-    "智能体最近在这里运行或尝试运行的 {count} 条命令，包括被拒绝的。",
-  "Nothing has run yet.": "还没有运行过命令。",
+  "The last {count} commands and tool calls agents ran or tried to run here, including denied ones.":
+    "智能体最近在这里运行或尝试运行的 {count} 条命令和工具调用，包括被拒绝的。",
+  "Nothing has run yet.": "还没有运行记录。",
   "Exit 0": "退出码 0",
   "Exit {code}": "退出码 {code}",
   "Timed out": "已超时",
   Cancelled: "已取消",
   Error: "出错",
+  "Tool error": "工具报错",
+  Unknown: "结果未知",
+  "It may or may not have finished. Check on this computer before running it again.":
+    "可能已经执行，也可能没有。重新运行前，先在这台电脑上确认一下。",
+  "Connection dropped mid-run": "执行中连接断开",
+  "Process didn't shut down cleanly": "进程没有正常结束",
+  "Server restarted mid-run": "执行中服务器重启",
   "Run a command on this computer?": "要在这台电脑上运行命令吗？",
   "An agent on {server} wants to run a command here.":
     "{server} 上的智能体请求在这台电脑上运行命令。",

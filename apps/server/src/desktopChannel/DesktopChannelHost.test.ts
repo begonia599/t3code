@@ -62,7 +62,7 @@ it.effect("invokes ping through the real broker, WS RPC contracts and desktop ho
         host: {
           ...identity,
           environmentId: EnvironmentId.make("env"),
-          capabilities: { enabled: true },
+          capabilities: { enabled: true, exec: { version: "1", shells: ["pwsh"] } },
         },
         bridge: {
           start: async ({ request }) => {
@@ -95,7 +95,7 @@ it.effect("invokes ping through the real broker, WS RPC contracts and desktop ho
       yield* client[WS_METHODS.desktopChannelConnect]({
         ...identity,
         environmentId: EnvironmentId.make("env"),
-        capabilities: { enabled: true },
+        capabilities: { enabled: true, exec: { version: "1", shells: ["pwsh"] } },
       }).pipe(
         Stream.runForEach((event) =>
           Effect.gen(function* () {

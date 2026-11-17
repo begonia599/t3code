@@ -601,3 +601,42 @@ describe("win launcher", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 });
+
+it("formats unknown and MCP log outcomes and preserves raw JSON", async () => {
+  const entries = [
+    { outcome: "unknown", errorCode: "HOST_DISCONNECTED", mode: "argv", exitCode: null },
+    { outcome: "unknown", errorCode: "SERVER_RESTARTED", mode: "mcp", exitCode: null },
+    { outcome: "unknown", errorCode: "HOST_REPLACED", mode: "mcp", exitCode: null },
+    { outcome: "error", errorCode: "HOST_DISABLED", mode: "argv", exitCode: null },
+    { outcome: "unknown", errorCode: "CLEANUP_FAILED", mode: "argv", exitCode: null },
+    { outcome: "exited", errorCode: null, mode: "mcp", exitCode: null },
+    { outcome: "exited", errorCode: "MCP_TOOL_ERROR", mode: "mcp", exitCode: null },
+  ].map((entry, i) => ({
+    ...entry,
+    startedAt: "now",
+    requestId: `r${i}`,
+    summary: "server__tool",
+  }));
+  const raw = JSON.stringify({ source: "server", entries });
+  const f = fixture(["log"]);
+  f.io.fetch = async () => new Response(raw);
+  expect(await f.run()).toBe(0);
+  expect(f.output.stdout).toBe(
+    "Execution log (server)\n" +
+      [
+        "unknown (connection lost)",
+        "unknown (server restarted)",
+        "unknown (connection replaced)",
+        "error",
+        "unknown (process cleanup failed)",
+        "ok",
+        "tool error",
+      ]
+        .map((status, i) => `now r${i} ${status} server__tool\n`)
+        .join(""),
+  );
+  const json = fixture(["log", "--json"]);
+  json.io.fetch = async () => new Response(raw);
+  expect(await json.run()).toBe(0);
+  expect(json.output.stdout).toBe(`${raw}\n`);
+});

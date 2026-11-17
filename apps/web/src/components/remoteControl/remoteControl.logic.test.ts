@@ -4,12 +4,14 @@ import { assert, describe, it } from "vite-plus/test";
 import {
   bridgeErrorMessage,
   describeExecOutcome,
+  describeExecReason,
   formatCountdown,
   formatDuration,
   isPosixAbsolutePath,
   isWindowsAbsolutePath,
   orderGrantRequests,
   providerLabel,
+  splitMcpSummary,
 } from "./remoteControl.logic";
 
 const entry = (overrides: Partial<DesktopExecLogEntry>): DesktopExecLogEntry => ({
@@ -124,5 +126,59 @@ describe("remote control formatting", () => {
     );
     assert.equal(describeExecOutcome(entry({ outcome: "timedOut" })).label, "Timed out");
     assert.equal(describeExecOutcome(entry({ outcome: "running" })).tone, "info");
+    assert.deepEqual(
+      describeExecOutcome(
+        entry({ outcome: "unknown", exitCode: null, errorCode: "HOST_DISCONNECTED" }),
+      ),
+      { label: "Unknown", tone: "warning", code: null },
+    );
+  });
+
+  it("describes MCP tool calls without exit codes", () => {
+    const mcp = { mode: "mcp" as const, summary: "unity__manage_scene", exitCode: null };
+    assert.deepEqual(describeExecOutcome(entry(mcp)), {
+      label: "Done",
+      tone: "success",
+      code: null,
+    });
+    assert.deepEqual(describeExecOutcome(entry({ ...mcp, errorCode: "MCP_TOOL_ERROR" })), {
+      label: "Tool error",
+      tone: "warning",
+      code: null,
+    });
+    assert.deepEqual(splitMcpSummary("unity__manage_scene"), {
+      server: "unity",
+      tool: "manage_scene",
+    });
+    assert.deepEqual(splitMcpSummary("my_server__get__thing"), {
+      server: "my_server",
+      tool: "get__thing",
+    });
+    assert.isNull(splitMcpSummary("plain"));
+    assert.isNull(splitMcpSummary("__tool"));
+    assert.isNull(splitMcpSummary("server__"));
+  });
+
+  it("explains why a result is unknown and keeps raw error codes", () => {
+    const unknown = (errorCode: string | null) =>
+      describeExecReason(entry({ outcome: "unknown", exitCode: null, errorCode }));
+    assert.deepEqual(unknown("SERVER_RESTARTED"), {
+      text: "Server restarted mid-run",
+      translate: true,
+    });
+    assert.deepEqual(unknown("CLEANUP_FAILED"), {
+      text: "Process didn't shut down cleanly",
+      translate: true,
+    });
+    assert.deepEqual(unknown("SOMETHING_NEW"), { text: "SOMETHING_NEW", translate: false });
+    assert.isNull(unknown(null));
+    assert.deepEqual(
+      describeExecReason(entry({ outcome: "error", exitCode: null, errorCode: "GRANT_DENIED" })),
+      { text: "GRANT_DENIED", translate: false },
+    );
+    assert.isNull(describeExecReason(entry({})));
+    assert.isNull(
+      describeExecReason(entry({ mode: "mcp", exitCode: null, errorCode: "MCP_TOOL_ERROR" })),
+    );
   });
 });
