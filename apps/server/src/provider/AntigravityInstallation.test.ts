@@ -6,6 +6,7 @@ import {
   HostProcessIsExecutable,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
+import * as TestClock from "effect/testing/TestClock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -134,6 +135,8 @@ interface HarnessOptions {
   readonly previous?: boolean;
   readonly fileSystem?: FileSystem.FileSystem;
   readonly validate?: AntigravityInstallationOptions["validate"];
+  readonly availableBytes?: AntigravityInstallationOptions["availableBytes"];
+  readonly canPrune?: boolean;
   readonly useDefaultValidation?: boolean;
 }
 
@@ -173,6 +176,8 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   const installation = yield* makeAntigravityInstallation({
     baseDir,
     releaseAsset: asset,
+    ...(options.availableBytes ? { availableBytes: options.availableBytes } : {}),
+    canPrune: Effect.succeed(options.canPrune ?? true),
     ...(options.useDefaultValidation
       ? {}
       : {
@@ -243,6 +248,136 @@ const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")
 });
 
 it.layer(NodeServices.layer)("Antigravity installation", (it) => {
+  it.effect("automatically switches a stale pin and shares the manual install operation", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const h = yield* makeHarness({
+        previous: true,
+        validate: () =>
+          Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(resume))),
+      });
+      yield* h.installation.checkForUpdate("/custom/agy");
+      expect((yield* h.installation.state).phase).toBe("idle");
+      yield* h.installation.checkForUpdate();
+      yield* Deferred.await(entered);
+      const running = yield* h.installation.state;
+      expect(running.phase).toBe("verifying");
+      yield* h.installation.checkForUpdate();
+      expect((yield* h.installation.start).operationId).toEqual(running.operationId);
+      yield* expectPreviousRelease(h.installation);
+      yield* Deferred.succeed(resume, undefined);
+      expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
+      expect((yield* h.installation.resolve()).version).toBe("fixture-new");
+      yield* h.installation.checkForUpdate();
+      expect((yield* h.installation.state).operationId).toBe(running.operationId);
+      expect(h.requests).toHaveLength(1);
+      const empty = yield* makeHarness();
+      yield* empty.installation.checkForUpdate();
+      expect((yield* empty.installation.state).phase).toBe("idle");
+      expect(empty.requests).toHaveLength(0);
+    }),
+  );
+
+  it.effect.each(["disk", "download"] as const)(
+    "preserves the active version and backs off across restarts after %s failure",
+    (failure) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          previous: true,
+          ...(failure === "disk"
+            ? { availableBytes: () => Effect.succeed(0n) }
+            : { contentLength: 0 }),
+        });
+        yield* h.installation.checkForUpdate();
+        const failed = yield* terminalState(h.installation);
+        expect(failed.phase).toBe("failed");
+        expect(h.requests).toHaveLength(failure === "disk" ? 0 : 1);
+        yield* expectPreviousRelease(h.installation);
+        yield* TestClock.adjust("59 minutes");
+        yield* h.installation.checkForUpdate();
+        expect((yield* h.installation.state).operationId).toBe(failed.operationId);
+        const next = yield* makeHarness({ baseDir: h.baseDir });
+        yield* next.installation.checkForUpdate();
+        expect(next.requests).toHaveLength(0);
+        expect((yield* next.installation.state).phase).toBe("idle");
+        yield* TestClock.adjust("1 minute");
+        yield* next.installation.checkForUpdate();
+        expect((yield* terminalState(next.installation)).phase).toBe("succeeded");
+        expect(next.requests).toHaveLength(1);
+      }),
+  );
+
+  it.effect("honors backoff after a manual update fails and still allows a manual retry", () =>
+    Effect.gen(function* () {
+      let space = 0n;
+      const h = yield* makeHarness({ previous: true, availableBytes: () => Effect.succeed(space) });
+      yield* h.installation.start;
+      const failed = yield* terminalState(h.installation);
+      expect(failed.phase).toBe("failed");
+      space = 2n ** 32n;
+      yield* h.installation.checkForUpdate();
+      expect((yield* h.installation.state).operationId).toBe(failed.operationId);
+      yield* h.installation.start;
+      expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
+      expect(h.requests).toHaveLength(1);
+    }),
+  );
+
+  it.effect(
+    "prunes only unused tracked versions on startup and preserves active and previous",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ previous: true });
+        const installed = releaseAsset();
+        yield* h.installation.checkForUpdate();
+        yield* terminalState(h.installation);
+        yield* Deferred.await(h.stagingReleased);
+        const versions = h.path.join(h.installation.managedDirectory, "versions");
+        const unused = "2".repeat(64);
+        const inUse = "3".repeat(64);
+        const legacy = "4".repeat(64);
+        for (const id of [unused, inUse, legacy, previousReleaseId]) {
+          const asset = {
+            ...installed,
+            sha256: id,
+            version: id === previousReleaseId ? previousVersion : "retired",
+          };
+          yield* writeRelease(h.installation.managedDirectory, asset, false);
+          if (id === legacy) continue;
+          const directory = h.path.join(versions, id);
+          yield* h.fs.writeFileString(
+            h.path.join(directory, ".install-complete.json"),
+            encodeJsonString({
+              releaseId: id,
+              version: asset.version,
+              executable: asset.executable,
+              harness: asset.harness,
+              tracksLeases: true,
+            }),
+          );
+          yield* h.fs.makeDirectory(h.path.join(directory, ".process-leases"));
+        }
+        const leaseScope = yield* Scope.make();
+        yield* h.installation
+          .acquire(h.path.join(versions, inUse, executableName))
+          .pipe(Scope.provide(leaseScope));
+        // Start with a third pin so both active and previous must be protected by the pointer alone.
+        const restart = { baseDir: h.baseDir, asset: { ...installed, sha256: "5".repeat(64) } };
+        yield* makeHarness({ ...restart, canPrune: false });
+        expect(yield* h.fs.exists(h.path.join(versions, unused))).toBe(true);
+        yield* makeHarness(restart);
+        expect((yield* h.fs.readDirectory(versions)).toSorted()).toEqual(
+          [installed.sha256, previousReleaseId, inUse, legacy].toSorted(),
+        );
+        yield* Scope.close(leaseScope, Exit.void);
+        yield* makeHarness(restart);
+        expect((yield* h.fs.readDirectory(versions)).toSorted()).toEqual(
+          [installed.sha256, previousReleaseId, legacy].toSorted(),
+        );
+      }),
+  );
+
   it.effect("reports missing Node before downloading the standalone provider runtime", () =>
     Effect.gen(function* () {
       const { installation, requests, validations } = yield* makeHarness();
@@ -524,7 +659,8 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
             (name) => name.startsWith(".install-"),
           ),
         ).toBe(false);
-        expect(yield* fs.readDirectory(installation.managedDirectory)).toEqual([
+        expect((yield* fs.readDirectory(installation.managedDirectory)).toSorted()).toEqual([
+          ".auto-update-retry.json",
           "active.json",
           "versions",
         ]);

@@ -492,6 +492,16 @@ describe("Antigravity stderr compatibility", () => {
     }),
   );
 
+  it.effect("aborts unattended sessions on a local enterprise browser picker", () =>
+    Effect.gen(function* () {
+      const handle = makeAntigravityStderrHandler({ rejectBrowserLaunches: true });
+      const error = yield* handle(
+        `${ANTIGRAVITY_AUTH_BROWSER_MARKER}"http://127.0.0.1:43123/"\n`,
+      ).pipe(Effect.flip);
+      expect(isAntigravitySignInRequiredError(error)).toBe(true);
+    }),
+  );
+
   it.effect("preserves failures from the sign-in flow owner", () =>
     Effect.gen(function* () {
       const failure = new AcpErrors.AcpTransportError({

@@ -48,6 +48,7 @@ import {
 } from "../acp/AntigravitySessionFiles.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityAdapter } from "../Layers/AntigravityAdapter.ts";
+import { readAntigravityQuota, type AntigravityQuota } from "../Layers/antigravityUsageLimits.ts";
 import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -90,6 +91,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const serverConfig = yield* ServerConfig;
       const installation = yield* AntigravityInstallation;
+      const serverSettings = yield* ServerSettingsService;
       const loggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const settings = { ...config, enabled } satisfies AntigravitySettings;
@@ -165,6 +167,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
             detail: authConfigIssue,
           });
         }
+        const onSetupMeta = provider.makeTierObserver();
         const executable = yield* installation
           .acquire(settings.binaryPath, processEnvironment)
           .pipe(
@@ -228,6 +231,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         const runtime = yield* makeAntigravityAcpRuntime({
           ...input,
           authMethod: auth.authMethod,
+          onSetupMeta,
           childProcessSpawner: spawner,
           spawn: buildAntigravityAcpSpawnInput({
             installation: executable,
@@ -281,9 +285,11 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         );
         const runtime = yield* makeRuntime({
           cwd,
-          clientInfo: { name: "t3-code-provider-setup", version: "0.0.0" },
+          clientInfo: { name: "t3-code", version: "0.0.0" },
           mcpServers: [],
-          ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
+          ...(input.onAuthorizationUrl
+            ? { onAuthorizationUrl: input.onAuthorizationUrl }
+            : { rejectBrowserLaunches: true }),
         });
         return {
           ...runtime,
@@ -320,7 +326,10 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
 
       const authFlow: AntigravityAuth = yield* makeAntigravityAuth({
         instanceId,
-        makeRuntime: makeDisposableRuntime,
+        makeRuntime: (input) =>
+          (input.onAuthorizationUrl ? provider.onSignInStarted : Effect.void).pipe(
+            Effect.andThen(makeDisposableRuntime(input)),
+          ),
         onAuthenticated: publishCatalog,
         onSignedOut: Effect.suspend(() => provider.onSignedOut),
         usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
@@ -336,6 +345,13 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       // is read from it. Sessions and manual refreshes still spawn.
       const probe = Effect.gen(function* () {
         yield* modelManifest.refreshInBackground;
+        if (!settings.binaryPath.trim()) {
+          const checkUpdates = yield* serverSettings.getSettings.pipe(
+            Effect.map((current) => current.enableProviderUpdateChecks),
+            Effect.orElseSucceed(() => false),
+          );
+          if (checkUpdates) yield* installation.checkForUpdate(settings.binaryPath);
+        }
         if (authConfigIssue !== null) {
           return yield* new ProviderSetupError({
             instanceId,
@@ -372,9 +388,53 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         };
       });
 
+      // Include preflight and prompt in the auth controller's process lifetime so
+      // sign-out or account replacement stops the probe before changing accounts.
+      const withDisposableProcess = <A, E>(task: Effect.Effect<A, E, Scope.Scope>) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const processScope = yield* Effect.scope;
+            return yield* authFlow.withProcess(Scope.close(processScope, Exit.void), task);
+          }),
+        );
+      const startDisposableSession = Effect.gen(function* () {
+        const runtime = yield* makeDisposableRuntime({});
+        const started = yield* runtime.start();
+        return { runtime, started };
+      });
+      const probeQuota: Effect.Effect<AntigravityQuota> = withDisposableProcess(
+        Effect.gen(function* () {
+          if (antigravityAuthUsesBrowser(auth.authMethod)) {
+            const filename =
+              auth.authMethod === "oauth-business" ? "acp_business_token.json" : "acp_token.json";
+            // Check presence only. If a cached token is rejected, the transport
+            // suppresses the browser and aborts on the first native sign-in URL.
+            if (
+              !(yield* fileSystem.exists(path.join(profileDirectory, "antigravity-acp", filename)))
+            ) {
+              yield* provider.onAuthRequired;
+              return { status: "probeFailed" } as const;
+            }
+          }
+          const { runtime, started } = yield* startDisposableSession;
+          if (started.initializeResult.agentInfo?.name !== "antigravity-acp")
+            return { status: "unsupported" } as const;
+          yield* provider.onSessionStarted(started);
+          return yield* readAntigravityQuota(runtime).pipe(
+            Effect.tapError((cause) =>
+              isAntigravitySignInRequiredError(cause) ? provider.onAuthRequired : Effect.void,
+            ),
+          );
+        }),
+      ).pipe(
+        Effect.timeout("90 seconds"),
+        Effect.orElseSucceed(() => ({ status: "probeFailed" }) as const),
+      );
+
       const provider = yield* makeAntigravityProvider(settings, {
         stampIdentity: classifyModels,
         probe,
+        probeQuota,
         auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
         supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -395,6 +455,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const defaultModel = modelManifest.current.pipe(
         Effect.map((manifest) => ModelManifest.manifestDefaultModel(manifest, DRIVER)),
       );
+      const instanceScope = yield* Effect.scope;
       const adapter = yield* makeAntigravityAdapter(settings, {
         instanceId,
         makeRuntime,
@@ -404,6 +465,9 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         onConfigOptionsUpdated: provider.onConfigOptionsUpdated,
         onAvailableCommands: provider.onAvailableCommands,
         onAuthRequired: provider.onAuthRequired,
+        onTurnCompleted: provider
+          .refreshQuota("turn")
+          .pipe(Effect.interruptible, Effect.forkIn(instanceScope), Effect.asVoid),
         ...(loggers.native ? { nativeEventLogger: loggers.native } : {}),
       });
       const textGeneration = yield* makeAntigravityTextGeneration({
@@ -413,27 +477,18 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         makeRuntime: (cwd) =>
           makeRuntime({
             cwd,
-            clientInfo: { name: "t3-code-text", version: "0.0.0" },
+            clientInfo: { name: "t3-code", version: "0.0.0" },
             mcpServers: [],
           }),
       });
 
       const refreshModels = Effect.fn("AntigravityDriver.refreshModels")(
-        function* () {
-          const processScope = yield* Scope.make();
-          yield* Effect.addFinalizer((exit) => Scope.close(processScope, exit));
-          yield* authFlow
-            .withProcess(
-              Scope.close(processScope, Exit.void),
-              Effect.gen(function* () {
-                const runtime = yield* makeDisposableRuntime({});
-                const started = yield* runtime.start();
-                yield* publishCatalog(started, runtime);
-              }),
-            )
-            .pipe(Effect.provideService(Scope.Scope, processScope));
-        },
-        Effect.scoped,
+        () =>
+          withDisposableProcess(
+            startDisposableSession.pipe(
+              Effect.flatMap(({ started, runtime }) => publishCatalog(started, runtime)),
+            ),
+          ),
         Effect.timeoutOrElse({
           duration: "90 seconds",
           orElse: () =>
@@ -494,6 +549,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         textGeneration,
         auth: authFlow.controller,
         refreshModels,
+        refreshUsageLimits: provider.refreshQuota("manual"),
       } satisfies ProviderInstance;
     }),
 };

@@ -30,6 +30,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   | "authMethodId"
   | "cancelBehavior"
   | "clientCapabilities"
+  | "normalizeConfigOptions"
   | "onStderr"
   | "resumeMethod"
   | "transformSessionUpdate"
@@ -38,6 +39,8 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   /** Device CLI environment supplied for this provider session. */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  /** Abort unattended setup if agy requests a browser, including a local enterprise license picker. */
+  readonly rejectBrowserLaunches?: boolean;
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   /**
    * Advertise `fs.readTextFile` and `fs.writeTextFile`. The agent then routes
@@ -75,9 +78,11 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       transformStdout: makeAntigravityStdoutTransform(
         input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
       ),
-      onStderr: makeAntigravityStderrHandler(
-        input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
-      ),
+      onStderr: makeAntigravityStderrHandler({
+        ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
+        rejectBrowserLaunches: input.rejectBrowserLaunches === true,
+      }),
+      normalizeConfigOptions: makeAntigravityModelPicker(input.authMethod ?? "oauth-personal"),
       transformSessionUpdate: normalizeAntigravitySessionUpdate,
     }).pipe(
       Layer.provide(
@@ -87,6 +92,66 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   );
   return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
 });
+
+// agy exposes these older OAuth IDs under family/level pairs that their suffixes do not encode.
+const legacyOAuthVariants = new Map([
+  ["gemini-3.5-flash-extra-low", ["gemini-3.5-flash", "low"]],
+  ["gemini-3.5-flash-low", ["gemini-3.5-flash", "medium"]],
+  ["gemini-3-flash-agent", ["gemini-3.5-flash", "high"]],
+  ["gemini-pro-agent", ["gemini-3.1-pro", "high"]],
+]);
+
+/** Keep concrete IDs selectable when agy 1.5 groups them in its config picker.
+ * Session setup supplies the native flat catalog. Later config replies only carry family and level.
+ */
+export function makeAntigravityModelPicker(authMethod: AntigravityAuthMethod) {
+  const variants = new Map<string, Array<{ value: string; name: string; level: string }>>();
+  return (
+    config: readonly EffectAcpSchema.SessionConfigOption[],
+    models?: EffectAcpSchema.SessionModelState | null,
+  ) => {
+    if (models) {
+      variants.clear();
+      const oauth = authMethod === "oauth-personal" || authMethod === "oauth-business";
+      for (const { modelId, name } of models.availableModels) {
+        const legacy = oauth ? legacyOAuthVariants.get(modelId) : undefined;
+        const match = /^(.+)-(minimal|low|medium|high|xhigh|extra_high|max)(?:-effort)?$/.exec(
+          modelId,
+        );
+        const family = legacy?.[0] ?? match?.[1];
+        const level = legacy?.[1] ?? match?.[2];
+        if (!family || !level) continue;
+        const entries = variants.get(family) ?? [];
+        entries.push({ value: modelId, name, level });
+        variants.set(family, entries);
+      }
+      // An offered concrete ID wins any collision with a family, just as it does in agy.
+      for (const { modelId } of models.availableModels) variants.delete(modelId);
+    }
+    const model = config.find((option) => option.id === "model");
+    if (
+      model?.type !== "select" ||
+      !model.options.some((entry) => "value" in entry && variants.has(entry.value))
+    )
+      return config;
+    const thinking = config.find((option) => option.id === "thinking_level");
+    const selected =
+      thinking?.type === "select"
+        ? variants.get(model.currentValue)?.find((v) => v.level === thinking.currentValue)?.value
+        : undefined;
+    return config.map((option) =>
+      option === model
+        ? {
+            ...model,
+            currentValue: models?.currentModelId ?? selected ?? model.currentValue,
+            options: model.options.flatMap((entry) =>
+              "value" in entry ? (variants.get(entry.value) ?? [entry]) : entry.options,
+            ),
+          }
+        : option,
+    );
+  };
+}
 
 export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   switch (runtimeMode) {

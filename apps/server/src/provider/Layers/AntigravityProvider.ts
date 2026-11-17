@@ -8,17 +8,26 @@ import {
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import * as Clock from "effect/Clock";
+import * as Semaphore from "effect/Semaphore";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import type { AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
+import type { AntigravityQuota } from "./antigravityUsageLimits.ts";
+import {
+  makeUsageLimits,
+  makeUnavailableUsageLimits,
+  resolveUsageLimitsAfterProbe,
+} from "../providerUsageLimits.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
@@ -30,6 +39,11 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 
+const hasTier = Schema.is(
+  Schema.Struct({
+    antigravity: Schema.Struct({ tier: Schema.Struct({ name: Schema.String, id: Schema.String }) }),
+  }),
+);
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
 const HEALTH_CHECK_TIMEOUT = "90 seconds";
@@ -122,6 +136,7 @@ interface AntigravityProviderOptions {
     EffectAcpSchema.InitializeResponse,
     EffectAcpErrors.AcpError | ProviderSetupError
   >;
+  readonly probeQuota?: Effect.Effect<AntigravityQuota>;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   /** Auth type and label published once a session authenticates. */
@@ -178,6 +193,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     );
     const initialized =
       Result.isSuccess(result) && Option.isSome(result.success) ? result.success.value : undefined;
+    const installedVersion = initialized?.agentInfo?.version;
+    const legacyAuthLabel =
+      installedVersion === "1.1.1" || installedVersion === "agy_acp_server_1.1.1"
+        ? (options.auth?.label ?? "Google account")
+        : undefined;
     const failure = Result.isFailure(result) ? result.failure : undefined;
     const missingInstallation = failure !== undefined && isMissingInstallation(failure);
     const errorMessage =
@@ -209,11 +229,15 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         draft: {
           ...draft,
           installed: !missingInstallation,
-          version: initialized?.agentInfo?.version || draft.version,
+          version: installedVersion || draft.version,
+          ...(legacyAuthLabel && draft.auth.status !== "unauthenticated"
+            ? { auth: { ...draft.auth, label: legacyAuthLabel } }
+            : {}),
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
           ...(missingInstallation
             ? {
+                usageLimits: undefined,
                 models: [],
                 slashCommands: [],
                 skills: [],
@@ -247,13 +271,74 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     haveSettingsChanged: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
-    enrichSnapshot: ({ publishSnapshot }) =>
-      SubscriptionRef.changes(metadata).pipe(
-        Stream.runForEach((state) =>
-          options.stampIdentity(state.draft).pipe(Effect.flatMap(publishSnapshot)),
-        ),
-      ),
   });
+
+  const quotaLock = yield* Semaphore.make(1);
+  let accountGeneration = 0;
+  let lastProbeAt = Number.NEGATIVE_INFINITY;
+
+  const refreshQuota = Effect.fn("AntigravityProvider.refreshQuota")(
+    function* (trigger: "manual" | "turn") {
+      const probeQuota = options.probeQuota;
+      if (!settings.enabled || !probeQuota) return;
+      const state = yield* SubscriptionRef.get(metadata);
+      if (!state.draft.installed || state.draft.auth.status === "unauthenticated") return;
+      const generation = accountGeneration;
+      const now = yield* Clock.currentTimeMillis;
+      if (now - lastProbeAt < (trigger === "turn" ? 600_000 : 60_000)) return;
+      lastProbeAt = now;
+      const result = yield* probeQuota;
+      const checkedAt = DateTime.formatIso(yield* DateTime.now);
+      const probed =
+        result.status === "probeFailed" || result.status === "unsupported"
+          ? makeUnavailableUsageLimits({ checkedAt, reason: result.status })
+          : makeUsageLimits({ checkedAt, windows: result.status === "ok" ? result.windows : [] });
+      yield* SubscriptionRef.update(metadata, (current) => {
+        if (generation !== accountGeneration || !current.draft.installed) return current;
+        const usageLimits = resolveUsageLimitsAfterProbe({
+          published: current.draft.usageLimits,
+          probed,
+        });
+        return { ...current, draft: { ...current.draft, usageLimits } };
+      });
+    },
+    quotaLock.withPermitsIfAvailable(1),
+    Effect.asVoid,
+  );
+
+  function resetQuotaAccount() {
+    accountGeneration++;
+    lastProbeAt = Number.NEGATIVE_INFINITY;
+  }
+
+  const defaultAuth = {
+    type: options.auth?.type ?? "oauth-personal",
+    label: options.auth?.label ?? "Google account",
+  };
+
+  // Capture the account before acquiring the process. An old session may finish
+  // authenticating after a new sign-in has already reset the snapshot.
+  const makeTierObserver = () => {
+    const generation = accountGeneration;
+    let tierName: string | undefined;
+    return (
+      meta: EffectAcpSchema.AuthenticateResponse["_meta"],
+      stage: "authenticate" | "session",
+    ) => {
+      if (hasTier(meta) && meta.antigravity.tier.name.trim()) tierName = meta.antigravity.tier.name;
+      if (!tierName && stage === "authenticate") return Effect.void;
+      const label = tierName ?? defaultAuth.label;
+      return SubscriptionRef.update(metadata, (state) =>
+        generation !== accountGeneration ||
+        (state.draft.auth.status === "authenticated" && state.draft.auth.label === label)
+          ? state
+          : {
+              ...state,
+              draft: { ...state.draft, auth: { status: "authenticated", ...defaultAuth, label } },
+            },
+      );
+    };
+  };
 
   const onSessionStarted = Effect.fn("AntigravityProvider.onSessionStarted")(function* (
     started: AcpSessionRuntimeStartResult,
@@ -281,8 +366,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           version: started.initializeResult.agentInfo?.version || draft.version,
           auth: {
             status: "authenticated",
-            type: options.auth?.type ?? "oauth-personal",
-            label: options.auth?.label ?? "Google account",
+            ...defaultAuth,
+            label: draft.auth.label ?? defaultAuth.label,
           },
           checkedAt: updatedAt,
           models: buildAntigravityModelsFromSession(started.sessionSetupResult),
@@ -351,25 +436,25 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
 
   const clearAccountMetadata = Effect.fn("AntigravityProvider.clearAccountMetadata")(function* () {
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    yield* SubscriptionRef.update(
-      metadata,
-      (state) =>
-        ({
-          authRevision: state.authRevision + 1,
-          draft: {
-            ...state.draft,
-            auth: { status: "unauthenticated" },
-            status: settings.enabled ? "warning" : "disabled",
-            message: SIGN_IN_MESSAGE,
-            checkedAt: updatedAt,
-            models: [],
-            slashCommands: [],
-            skills: [],
-            workspaceSnapshots: [],
-            supportsTextGeneration: false,
-          },
-        }) satisfies AntigravityProviderState,
-    );
+    yield* SubscriptionRef.update(metadata, (state) => {
+      resetQuotaAccount();
+      return {
+        authRevision: state.authRevision + 1,
+        draft: {
+          ...state.draft,
+          auth: { status: "unauthenticated" },
+          usageLimits: undefined,
+          status: settings.enabled ? "warning" : "disabled",
+          message: SIGN_IN_MESSAGE,
+          checkedAt: updatedAt,
+          models: [],
+          slashCommands: [],
+          skills: [],
+          workspaceSnapshots: [],
+          supportsTextGeneration: false,
+        },
+      } satisfies AntigravityProviderState;
+    });
     discoveredSkills.clear();
   });
 
@@ -404,7 +489,30 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   });
 
   return {
-    snapshot: { ...managed, getSnapshot },
+    snapshot: {
+      ...managed,
+      getSnapshot,
+      refresh: managed.refresh.pipe(Effect.andThen(getSnapshot)),
+      streamChanges: SubscriptionRef.changes(metadata).pipe(
+        Stream.mapEffect((state) => options.stampIdentity(state.draft)),
+      ),
+    },
+    refreshQuota,
+    makeTierObserver,
+    onSignInStarted: SubscriptionRef.update(metadata, (state) => {
+      resetQuotaAccount();
+      return {
+        ...state,
+        draft: {
+          ...state.draft,
+          auth:
+            state.draft.auth.status === "authenticated"
+              ? { status: "authenticated", ...defaultAuth }
+              : { status: "unauthenticated" },
+          usageLimits: undefined,
+        },
+      };
+    }),
     onSessionStarted,
     onConfigOptionsUpdated,
     onAvailableCommands,

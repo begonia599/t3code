@@ -202,7 +202,11 @@ const carrySavedAntigravityAccount = (
   // keep their own status; only a passed health check reads as ready.
   const status =
     nextProvider.installed && nextProvider.status === "warning" ? "ready" : nextProvider.status;
-  return { auth: previousProvider.auth, status };
+  // A legacy agy health check supplies the method label after a downgrade.
+  const auth = nextProvider.auth.label
+    ? { ...previousProvider.auth, label: nextProvider.auth.label }
+    : previousProvider.auth;
+  return { auth, status };
 };
 
 export const mergeProviderSnapshot = (
@@ -285,7 +289,12 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
   instanceId: instance.instanceId,
   driverKind: instance.driverKind,
   getSnapshot: instance.snapshot.getSnapshot,
-  refresh: instance.snapshot.refresh,
+  refresh: instance.refreshUsageLimits
+    ? instance.snapshot.refresh.pipe(
+        Effect.andThen(instance.refreshUsageLimits),
+        Effect.andThen(instance.snapshot.getSnapshot),
+      )
+    : instance.snapshot.refresh,
   streamChanges: instance.snapshot.streamChanges,
 });
 

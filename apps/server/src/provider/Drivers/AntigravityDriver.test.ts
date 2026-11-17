@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderInstanceId,
+  ThreadId,
   type AntigravitySettings,
 } from "@t3tools/contracts";
 import {
@@ -18,6 +19,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -59,7 +61,11 @@ function shellQuote(value: string): string {
 }
 
 const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
-  options: { readonly config?: Partial<AntigravitySettings>; readonly enabled?: boolean } = {},
+  options: {
+    readonly config?: Partial<AntigravitySettings>;
+    readonly enabled?: boolean;
+    readonly quotaAgent?: boolean;
+  } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -70,7 +76,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-driver-" });
   const instanceId = ProviderInstanceId.make(path.basename(root));
   const mockAgentPath = yield* path.fromFileUrl(
-    new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    new URL(
+      options.quotaAgent
+        ? "../testFixtures/antigravityQuotaAgent.mjs"
+        : "../../../scripts/acp-mock-agent.ts",
+      import.meta.url,
+    ),
   );
   const requestLog = path.join(root, "requests.jsonl");
   const directories = yield* resolveAntigravityInstanceDirectories(config.stateDir, instanceId);
@@ -113,7 +124,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
   const signedOut = yield* makeExecutable("runtime signed-out", true);
-  const controls = { selected: first, failResolution: false, beforeAcquire: Effect.void };
+  const controls = {
+    selected: first,
+    failResolution: false,
+    beforeAcquire: Effect.void,
+    updateChecks: 0,
+  };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
   const launches: Array<{
@@ -132,6 +148,10 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const installation = Layer.mock(AntigravityInstallation)({
     managedDirectory: root,
+    checkForUpdate: () =>
+      Effect.sync(() => {
+        controls.updateChecks++;
+      }),
     resolve: () =>
       Effect.gen(function* () {
         if (controls.failResolution) {
@@ -530,6 +550,188 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
       }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "reads quota only from the disposable ACP session and cleans up its files",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* makeHarness({ enabled: true, quotaAgent: true });
+          const root = h.path.join(h.profileDirectory, "antigravity-acp");
+          const conversations = h.path.join(root, "conversations");
+          yield* h.fs.makeDirectory(conversations, { recursive: true });
+          yield* h.fs.writeFileString(h.path.join(root, "acp_token.json"), "");
+          yield* h.fs.writeFileString(h.path.join(conversations, "another.db"), "preserve");
+          yield* h.instance.snapshot.refresh;
+          yield* h.instance.refreshUsageLimits!;
+          expect((yield* h.instance.snapshot.getSnapshot).auth.label).toBe("Google AI Ultra");
+          const requests = yield* h.readRequests;
+          expect(requests.map((r) => r.method)).toEqual([
+            "initialize",
+            "authenticate",
+            "session/new",
+            "session/prompt",
+          ]);
+          expect(requests[1]?.params?.methodId).toBe("oauth-personal");
+          expect(requests[2]?.params?.mcpServers).toEqual([]);
+          expect(requests[3]?.params?.prompt).toEqual([{ type: "text", text: "/usage" }]);
+          expect((yield* h.instance.snapshot.getSnapshot).usageLimits?.windows).toEqual([
+            {
+              id: "gemini-models-weekly-limit-remaining",
+              label: "Gemini · Weekly",
+              kind: "weekly",
+              usedPercent: 2,
+              windowDurationMins: 10080,
+            },
+          ]);
+          expect(yield* h.fs.readDirectory(conversations)).toEqual(["another.db"]);
+          expect(yield* h.fs.readDirectory(h.path.join(root, "brain"))).toEqual([]);
+          yield* h.assertClosed;
+        }),
+      ),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "probes after a thread turn without publishing the probe as thread output",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* makeHarness({ enabled: true, quotaAgent: true });
+          const threadId = ThreadId.make("quota-test");
+          const cwd = yield* h.fs.makeTempDirectoryScoped();
+          const root = h.path.join(h.profileDirectory, "antigravity-acp");
+          yield* h.fs.makeDirectory(root, { recursive: true });
+          yield* h.fs.writeFileString(h.path.join(root, "acp_token.json"), "");
+          const deltas: string[] = [];
+          yield* h.instance.adapter.streamEvents.pipe(
+            Stream.runForEach((event) =>
+              Effect.sync(() => {
+                if (event.type === "content.delta") deltas.push(event.payload.delta);
+              }),
+            ),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          yield* h.instance.adapter.startSession({
+            threadId,
+            cwd,
+            runtimeMode: "approval-required",
+          });
+          expect((yield* h.instance.snapshot.getSnapshot).auth.label).toBe("Google AI Ultra");
+          yield* h.instance.adapter.sendTurn({ threadId, input: "Hello" });
+          yield* h.instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.usageLimits?.windows.length === 1),
+            Stream.runHead,
+          );
+          expect(deltas).toEqual(["Thread reply"]);
+          const prompts = (yield* h.readRequests)
+            .filter((r) => r.method === "session/prompt")
+            .map((r) => r.params);
+          expect(prompts).toHaveLength(2);
+          expect(prompts[1]?.sessionId).not.toBe(prompts[0]?.sessionId);
+          expect(prompts[1]?.prompt).toEqual([{ type: "text", text: "/usage" }]);
+          expect(yield* h.fs.readDirectory(h.path.join(root, "brain"))).toEqual([
+            prompts[0]?.sessionId,
+          ]);
+          yield* h.instance.adapter.stopSession(threadId);
+        }),
+      ),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "publishes the decoded authentication tier during model refresh",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* makeHarness({ enabled: true, quotaAgent: true });
+          yield* h.refresh();
+          expect((yield* h.instance.snapshot.getSnapshot).auth).toEqual({
+            status: "authenticated",
+            type: "oauth-personal",
+            label: "Google AI Ultra",
+          });
+        }),
+      ),
+  );
+
+  it.effect.skipIf(windowsHost)("never prompts a runtime that did not advertise usage", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          enabled: true,
+          config: { authMethod: "gemini-api-key", apiKey: "fixture-key" },
+        });
+        yield* h.instance.snapshot.refresh;
+        yield* h.instance.refreshUsageLimits!;
+        expect((yield* h.readRequests).map((r) => r.method)).toEqual([
+          "initialize",
+          "authenticate",
+          "session/new",
+        ]);
+        expect((yield* h.instance.snapshot.getSnapshot).usageLimits?.unavailable?.reason).toBe(
+          "unsupported",
+        );
+        yield* h.assertClosed;
+      }),
+    ),
+  );
+
+  it.effect(
+    "checks the managed pin on startup and health refresh according to server settings",
+    () =>
+      Effect.gen(function* () {
+        const settings = yield* ServerSettingsService;
+        const h = yield* makeHarness({ enabled: true });
+        yield* h.instance.snapshot.streamChanges.pipe(
+          Stream.filter((s) => s.installed),
+          Stream.runHead,
+        );
+        expect(h.controls.updateChecks).toBe(1);
+        yield* settings.updateSettings({ enableProviderUpdateChecks: false });
+        yield* h.instance.snapshot.refresh;
+        expect(h.controls.updateChecks).toBe(1);
+        yield* settings.updateSettings({ enableProviderUpdateChecks: true });
+        yield* h.instance.snapshot.refresh;
+        expect(h.controls.updateChecks).toBe(2);
+        const custom = yield* makeHarness({ enabled: true, config: { binaryPath: "my-agy" } });
+        yield* custom.instance.snapshot.refresh;
+        expect(custom.controls.updateChecks).toBe(0);
+      }).pipe(Effect.provide(ServerSettingsService.layerTest())),
+  );
+
+  it.effect("bounds a stalled quota launch without turning the health check into a retry", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          enabled: true,
+          config: { authMethod: "gemini-api-key", apiKey: "fixture-key" },
+        });
+        yield* h.instance.snapshot.refresh;
+        const entered = yield* Deferred.make<void>();
+        h.controls.beforeAcquire = Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Effect.never),
+        );
+        const pending = yield* h.instance.refreshUsageLimits!.pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust("90 seconds");
+        yield* Fiber.join(pending);
+        expect((yield* h.instance.snapshot.refresh).usageLimits?.unavailable?.reason).toBe(
+          "probeFailed",
+        );
+        expect(h.acquisitions).toHaveLength(1);
+      }),
+    ),
+  );
+  it.effect("skips OAuth quota probes before login", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ enabled: true });
+        yield* h.instance.snapshot.refresh;
+        yield* h.instance.refreshUsageLimits!;
+        expect(h.launches).toEqual([]);
+        expect((yield* h.instance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");
+      }),
+    ),
   );
 
   it.effect("probes through installation resolution without launching a process", () =>

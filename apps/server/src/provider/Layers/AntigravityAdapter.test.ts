@@ -439,6 +439,36 @@ it.layer(layer)("AntigravityAdapter", (it) => {
     }),
   );
 
+  it.effect(
+    "passes advertised usage and logout commands verbatim and invalidates the signed-out account",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        });
+        yield* h.emitNative({
+          _tag: "AvailableCommandsUpdated",
+          availableCommands: [
+            { name: "usage", description: "Usage" },
+            { name: "logout", description: "Logout" },
+          ],
+          rawPayload: {},
+        });
+        yield* h.drainEvents;
+        for (const input of ["/usage", "/logout"]) {
+          const sending = yield* h.adapter.sendTurn({ threadId, input }).pipe(Effect.forkChild);
+          const prompt = yield* h.nextPrompt;
+          expect(prompt.content).toEqual([{ type: "text", text: input }]);
+          yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+          yield* Fiber.join(sending);
+          expect(h.controls.authInvalidations).toBe(input === "/logout" ? 1 : 0);
+        }
+      }),
+  );
+
   it.effect("keeps thoughts, native command results, and replies on the active turn", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

@@ -92,7 +92,7 @@ describe("usage pricing", () => {
       });
       expect(cacheSavingsUsd(table, antigravityRecord(model))).toBeCloseTo(1.9);
     }
-    expect(antigravityRateModel("claude-sonnet-5-5")).toBeUndefined();
+
     expect(priceUsage(table, antigravityRecord("claude-sonnet-5-5")).costSource).toBe(
       "modelPriced",
     );
@@ -100,6 +100,34 @@ describe("usage pricing", () => {
       costUsd: 0,
       costSource: "unpriced",
     });
+  });
+
+  it("prices the Antigravity Claude variants and leaves ambiguous GPT-OSS rates unpriced", () => {
+    const table = parseRateTable({
+      "claude-sonnet-4-6": rate(3e-6),
+      "claude-opus-4-6": rate(5e-6),
+      "groq/openai/gpt-oss-120b": rate(0.15e-6),
+      "cerebras/gpt-oss-120b": rate(0.35e-6),
+    });
+    for (const model of [
+      "claude-sonnet-4-6",
+      "claude-opus-4-6-thinking",
+      "claude-opus-4-6-thinking-high",
+    ]) {
+      const rateModel = antigravityRateModel(model)!;
+      expect(priceUsage(table, { ...record(model), rateModel })).toEqual(
+        priceUsage(
+          table,
+          record(model.startsWith("claude-opus") ? "claude-opus-4-6" : "claude-sonnet-4-6"),
+        ),
+      );
+    }
+    for (const level of ["low", "medium", "high"]) {
+      const model = `gpt-oss-120b-${level}`;
+      const rateModel = antigravityRateModel(model)!;
+      expect(rateModel).toBe("gpt-oss-120b");
+      expect(priceUsage(table, { ...record(model), rateModel }).costSource).toBe("unpriced");
+    }
   });
 
   it("prices unknown models offline and uses input prices for omitted cache rates", () => {

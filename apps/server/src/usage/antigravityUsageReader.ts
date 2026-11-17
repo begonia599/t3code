@@ -89,6 +89,7 @@ const MODEL_IDS: Record<number, string> = {
   334: "claude-sonnet-4-5",
   340: "claude-haiku-4-5",
   341: "claude-haiku-4-5",
+  342: "gpt-oss-120b-medium",
   1026: "claude-opus-4-6",
   1035: "claude-sonnet-4-6",
   1016: "gemini-3.1-pro",
@@ -106,8 +107,13 @@ const MODEL_IDS: Record<number, string> = {
  * Price them at Google's first-party `gemini/` entry instead.
  */
 export function antigravityRateModel(model: string): string | undefined {
-  if (!model.startsWith("gemini-")) return undefined;
-  return `gemini/${model.replace(/-(?:minimal|low|medium|high|xhigh|max)$/, "")}`;
+  if (model.startsWith("gemini-")) {
+    return `gemini/${model.replace(/-(?:minimal|low|medium|high|xhigh|max)$/, "")}`;
+  }
+  if (model.startsWith("claude-") || model.startsWith("gpt-oss-")) {
+    return model.replace(/(?:-(?:thinking|low|medium|high))+$/, "");
+  }
+  return undefined;
 }
 
 function modelName(name: string, id: number): string {

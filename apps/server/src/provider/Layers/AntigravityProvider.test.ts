@@ -25,6 +25,9 @@ import {
   makeAntigravityProvider,
 } from "./AntigravityProvider.ts";
 
+import { mergeProviderSnapshot } from "./ProviderRegistry.ts";
+import type { AntigravityQuota } from "./antigravityUsageLimits.ts";
+
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const instanceId = ProviderInstanceId.make("antigravity-test");
 const driver = ProviderDriverKind.make("antigravity");
@@ -111,7 +114,11 @@ const testLayer = Layer.merge(
 type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;
 
 const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
-  options: { readonly enabled?: boolean; readonly safe?: boolean } = {},
+  options: {
+    readonly enabled?: boolean;
+    readonly safe?: boolean;
+    readonly probeQuota?: Effect.Effect<AntigravityQuota>;
+  } = {},
 ) {
   const initialProbe = yield* Deferred.make<EffectAcpSchema.InitializeResponse, ProbeError>();
   const probeCalls = yield* Ref.make(0);
@@ -123,6 +130,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
   const provider = yield* makeAntigravityProvider(
     decodeSettings({ enabled: options.enabled ?? true, customModels: ["do-not-seed-me"] }),
     {
+      ...(options.probeQuota ? { probeQuota: options.probeQuota } : {}),
       stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
       probe: Ref.update(probeCalls, (count) => count + 1).pipe(
         Effect.andThen(Ref.get(probe)),
@@ -212,6 +220,120 @@ describe("Antigravity model catalog", () => {
 });
 
 it.layer(testLayer)("Antigravity provider snapshots", (it) => {
+  it.effect("drops a cached tier when the active runtime rolls back to 1.1.1", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.initialize;
+      yield* h.provider.makeTierObserver()(
+        { antigravity: { tier: { id: "g1-ultra-tier", name: "Google AI Ultra" } } },
+        "authenticate",
+      );
+      const signedIn = yield* h.provider.snapshot.getSnapshot;
+      const old = yield* makeHarness();
+      yield* old.initialize;
+      yield* Ref.set(
+        old.probe,
+        Effect.succeed({
+          ...initializeResult,
+          agentInfo: { ...initializeResult.agentInfo, version: "agy_acp_server_1.1.1" },
+        }),
+      );
+      const unchecked = yield* old.provider.snapshot.refresh;
+      expect(mergeProviderSnapshot(signedIn, unchecked).auth).toEqual({
+        status: "authenticated",
+        type: "oauth-personal",
+        label: "Google account",
+      });
+    }),
+  );
+
+  it.effect(
+    "accepts native tier metadata and rejects late metadata from the previous account",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.initialize;
+        const observe = h.provider.makeTierObserver();
+        const meta = {
+          antigravity: {
+            tier: { name: "Google AI Ultra", id: "g1-ultra-tier", upgradeUri: "unused" },
+          },
+        };
+        yield* observe(meta, "authenticate");
+        yield* observe(undefined, "session");
+        yield* h.provider.onSessionStarted(started);
+        expect((yield* h.provider.snapshot.getSnapshot).auth.label).toBe("Google AI Ultra");
+        yield* h.provider.onSignInStarted;
+        yield* observe(meta, "session");
+        expect((yield* h.provider.snapshot.getSnapshot).auth.label).toBe("Google account");
+        const next = h.provider.makeTierObserver();
+        yield* next(undefined, "authenticate");
+        yield* next(meta, "session");
+        expect((yield* h.provider.snapshot.getSnapshot).auth.label).toBe("Google AI Ultra");
+        yield* h.provider.onSignedOut;
+        yield* next(meta, "authenticate");
+        expect((yield* h.provider.snapshot.getSnapshot).auth).toEqual({
+          status: "unauthenticated",
+        });
+        yield* h.provider.makeTierObserver()(undefined, "session");
+        expect((yield* h.provider.snapshot.getSnapshot).auth.label).toBe("Google account");
+      }),
+  );
+
+  it.effect("limits launches per instance and discards results after an account switch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const ok = {
+          status: "ok",
+          windows: [{ id: "one", label: "One", kind: "weekly", usedPercent: 2 }],
+        } as const;
+        let result: AntigravityQuota = ok;
+        let calls = 0;
+        const h = yield* makeHarness({
+          probeQuota: Effect.gen(function* () {
+            calls++;
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(release);
+            return result;
+          }),
+        });
+        yield* h.initialize;
+        yield* h.provider.onSessionStarted(started);
+        const probe = yield* h.provider.refreshQuota("turn").pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        yield* h.provider.refreshQuota("manual");
+        yield* h.provider.onSignInStarted;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(probe);
+        expect(calls).toBe(1);
+        expect((yield* h.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+        yield* h.provider.refreshQuota("turn");
+        yield* TestClock.adjust("59 seconds");
+        yield* h.provider.refreshQuota("manual");
+        expect(calls).toBe(2);
+        yield* TestClock.adjust("1 second");
+        result = { status: "probeFailed" };
+        yield* h.provider.refreshQuota("manual");
+        expect((yield* h.provider.snapshot.getSnapshot).usageLimits?.windows).toEqual(ok.windows);
+        yield* TestClock.adjust("599 seconds");
+        yield* h.provider.refreshQuota("turn");
+        expect(calls).toBe(3);
+        yield* TestClock.adjust("1 second");
+        result = { status: "unsupported" };
+        yield* h.provider.refreshQuota("turn");
+        expect(calls).toBe(4);
+        expect((yield* h.provider.snapshot.getSnapshot).usageLimits?.unavailable?.reason).toBe(
+          "unsupported",
+        );
+        yield* h.provider.onSignedOut;
+        yield* h.provider.refreshQuota("manual");
+        expect(calls).toBe(4);
+        expect((yield* h.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+      }),
+    ),
+  );
   it.effect("does not probe or run helper safety checks while disabled", () =>
     Effect.scoped(
       Effect.gen(function* () {

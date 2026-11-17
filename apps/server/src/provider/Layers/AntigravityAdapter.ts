@@ -48,6 +48,7 @@ import {
 } from "../Errors.ts";
 import {
   ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
+  antigravityAuthUsesBrowser,
   isAntigravitySignInRequiredError,
 } from "../antigravityAuthSupport.ts";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
@@ -140,6 +141,7 @@ export interface AntigravityAdapterOptions {
   readonly onConfigOptionsUpdated?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   ) => Effect.Effect<void>;
+  readonly onTurnCompleted?: Effect.Effect<void>;
   readonly onAuthRequired?: Effect.Effect<void>;
   /** Model the provider default alias selects, when the account offers it. */
   readonly defaultModel?: Effect.Effect<string | undefined>;
@@ -193,6 +195,7 @@ interface SessionContext {
   readonly threadId: ThreadId;
   readonly cwd: string;
   readonly nativeSessionId: string;
+  nativeCommands: ReadonlySet<string>;
   readonly scope: Scope.Closeable;
   readonly runtime: Runtime;
   readonly promptLock: Semaphore.Semaphore;
@@ -563,6 +566,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       case "ModeChanged":
         return;
       case "AvailableCommandsUpdated":
+        context.nativeCommands = new Set(event.availableCommands.map((command) => command.name));
         yield* options.onAvailableCommands?.(event.availableCommands, context.cwd) ?? Effect.void;
         return;
       case "ConfigOptionsUpdated":
@@ -866,6 +870,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 threadId: input.threadId,
                 cwd,
                 nativeSessionId: started.sessionId,
+                nativeCommands: new Set(),
                 scope: sessionScope,
                 runtime,
                 promptLock: yield* Semaphore.make(1),
@@ -989,6 +994,10 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       Effect.provideService(Path.Path, path),
       Effect.mapError((cause) => mapAntigravityError(input.threadId, "session/prompt", cause)),
     );
+    // agy concatenates text blocks before matching these native commands.
+    const text = prompt.length === 1 && prompt[0]?.type === "text" ? prompt[0].text : "";
+    const nativeLogout = text === "/logout" && context.nativeCommands.has("logout");
+    const nativeUsage = /^\/usage(?:\s|$)/i.test(text) && context.nativeCommands.has("usage");
     let intent: TurnIntent | undefined;
     // The caller holds promptLock while it changes or settles the active turn.
     const finishTurn = (turn: TurnIntent, payload: TurnCompletedPayload) =>
@@ -1024,6 +1033,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           turnId: turn.turnId,
           payload,
         });
+        yield* options.onTurnCompleted ?? Effect.void;
       }).pipe(Effect.uninterruptible);
 
     return yield* Effect.gen(function* () {
@@ -1081,13 +1091,16 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           const fiber = yield* context.runtime
             .prompt(
               {
-                prompt: [
-                  ...prompt,
-                  {
-                    type: "text",
-                    text: buildRuntimeInstructions({ harness: "Antigravity", model }),
-                  },
-                ],
+                prompt:
+                  nativeLogout || nativeUsage
+                    ? prompt
+                    : [
+                        ...prompt,
+                        {
+                          type: "text",
+                          text: buildRuntimeInstructions({ harness: "Antigravity", model }),
+                        },
+                      ],
               },
               { dispatched },
             )
@@ -1112,6 +1125,13 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           provider: PROVIDER,
           threadId: input.threadId,
         });
+      }
+      if (
+        nativeLogout &&
+        result.stopReason === "end_turn" &&
+        antigravityAuthUsesBrowser(settings.authMethod)
+      ) {
+        yield* options.onAuthRequired ?? Effect.void;
       }
       const record = context.turns.find((turn) => turn.id === launch.turn.turnId);
       if (record) record.items.push(result);

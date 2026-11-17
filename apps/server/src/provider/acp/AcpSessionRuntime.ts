@@ -105,6 +105,16 @@ export interface AcpSessionRuntimeOptions {
   readonly transformSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
+  /** Observes decoded extension metadata from authentication and session setup. */
+  readonly onSetupMeta?: (
+    meta: EffectAcpSchema.AuthenticateResponse["_meta"],
+    stage: "authenticate" | "session",
+  ) => Effect.Effect<void>;
+  /** Adapts provider-specific model pickers consistently across setup, writes and updates. */
+  readonly normalizeConfigOptions?: (
+    options: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+    models?: EffectAcpSchema.SessionModelState | null,
+  ) => ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   /** Receives bounded stderr chunks. Redact secrets before logging. A failure closes the runtime. */
   readonly onStderr?: (text: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
@@ -533,7 +543,17 @@ export const make = (
         shownToolCallIds,
         assistantSegmentRef,
         assistantItemRuntimeId,
-        params: notification,
+        params:
+          options.normalizeConfigOptions &&
+          notification.update.sessionUpdate === "config_option_update"
+            ? {
+                ...notification,
+                update: {
+                  ...notification.update,
+                  configOptions: options.normalizeConfigOptions(notification.update.configOptions),
+                },
+              }
+            : notification,
       });
 
     yield* acp.handleSessionUpdate((notification) =>
@@ -677,7 +697,8 @@ export const make = (
     const updateConfigOptions = Effect.fn("AcpSessionRuntime.updateConfigOptions")(function* (
       response: EffectAcpSchema.SetSessionConfigOptionResponse,
     ) {
-      const configOptions = sessionConfigOptionsFromSetup(response);
+      const raw = sessionConfigOptionsFromSetup(response);
+      const configOptions = options.normalizeConfigOptions?.(raw) ?? raw;
       yield* Ref.set(configOptionsRef, configOptions);
       yield* Queue.offer(eventQueue, {
         _tag: "ConfigOptionsUpdated",
@@ -747,11 +768,13 @@ export const make = (
         methodId: options.authMethodId,
       } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
+      const authenticated = yield* runLoggedRequest(
         "authenticate",
         authenticatePayload,
         acp.agent.authenticate(authenticatePayload),
       );
+
+      if (options.onSetupMeta) yield* options.onSetupMeta(authenticated._meta, "authenticate");
 
       let sessionId: string;
       let sessionSetupResult:
@@ -881,6 +904,16 @@ export const make = (
         sessionSetupResult = created;
       }
 
+      if (options.onSetupMeta) yield* options.onSetupMeta(sessionSetupResult._meta, "session");
+      if (options.normalizeConfigOptions && sessionSetupResult.configOptions) {
+        sessionSetupResult = {
+          ...sessionSetupResult,
+          configOptions: options.normalizeConfigOptions(
+            sessionSetupResult.configOptions,
+            sessionSetupResult.models,
+          ),
+        };
+      }
       yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
       yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
 

@@ -15,6 +15,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   antigravityPermissionMode,
+  makeAntigravityModelPicker,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
 } from "./AntigravityAcpSupport.ts";
@@ -45,6 +46,33 @@ function makeModelRuntime(
   };
 }
 
+it("keeps concrete 1.5 selections through setup, model changes and native updates", () => {
+  const normalize = makeAntigravityModelPicker("oauth-personal");
+  const availableModels = [
+    { modelId: "gemini-pro-agent", name: "Gemini Pro High" },
+    { modelId: "gemini-3.1-pro-low", name: "Gemini Pro Low" },
+    { modelId: "single", name: "Single" },
+  ];
+  const grouped = {
+    ...modelConfig,
+    currentValue: "gemini-3.1-pro",
+    options: [
+      { value: "gemini-3.1-pro", name: "Gemini Pro" },
+      { value: "single", name: "Single" },
+    ],
+  };
+  const thinking = { ...modelConfig, id: "thinking_level", currentValue: "high" };
+  expect(
+    normalize([grouped, thinking], { availableModels, currentModelId: "gemini-pro-agent" })[0],
+  ).toMatchObject({
+    currentValue: "gemini-pro-agent",
+    options: availableModels.map(({ modelId, name }) => ({ value: modelId, name })),
+  });
+  expect(normalize([grouped, { ...thinking, currentValue: "low" }])[0]?.currentValue).toBe(
+    "gemini-3.1-pro-low",
+  );
+  expect(normalize([{ ...grouped, currentValue: "single" }])[0]?.currentValue).toBe("single");
+});
 describe("applyAntigravityAcpModelSelection", () => {
   it.effect("restores the saved model instead of the cold-resume default", () =>
     Effect.gen(function* () {

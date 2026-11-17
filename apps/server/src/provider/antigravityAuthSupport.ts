@@ -574,6 +574,7 @@ export function makeAntigravityStdoutTransform(
 /** Receives native 1.1.1 sign-in URLs and T3 browser-helper URLs without logging stderr. */
 export function makeAntigravityStderrHandler(
   input: {
+    readonly rejectBrowserLaunches?: boolean;
     readonly onAuthorizationUrl?: (
       authorizationUrl: string,
     ) => Effect.Effect<void, AcpErrors.AcpError>;
@@ -582,6 +583,9 @@ export function makeAntigravityStderrHandler(
   let pending = "";
   const handleLine = (line: string) => {
     const message = line.endsWith("\r") ? line.slice(0, -1) : line;
+    if (input.rejectBrowserLaunches && message.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)) {
+      return Effect.fail(authSupportError(ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE));
+    }
     if (message.length > maxBrowserHelperLineLength) {
       return Effect.void;
     }

@@ -576,6 +576,34 @@ describe("SQLite usage readers", () => {
     );
   });
 
+  it("resolves Antigravity 1.5 model names and usage enum IDs to the same pricing keys", async () => {
+    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "models.db"));
+    const cases = [
+      [1035, "Claude Sonnet 4.6", "claude-sonnet-4-6"],
+      [1026, "Claude Opus 4.6 (Thinking)", "claude-opus-4-6"],
+      [342, "GPT-OSS 120B (Medium)", "gpt-oss-120b"],
+    ] as const;
+    try {
+      db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+      const insert = db.prepare("INSERT INTO gen_metadata VALUES (?, ?)");
+      for (const [idx, [id, name]] of cases.entries()) {
+        for (const byName of [true, false]) {
+          const usage = [...protoNumber(2, 10), ...(byName ? [] : protoNumber(1, id))];
+          const data = [...protoBytes(4, usage), ...(byName ? protoText(19, name) : [])];
+          insert.run(2 * idx + Number(byName), new Uint8Array(protoBytes(1, data)));
+        }
+      }
+    } finally {
+      db.close();
+    }
+    const result = await readAntigravityUsage(dir, 0);
+    assert.deepStrictEqual(result.errors, []);
+    assert.deepStrictEqual(
+      result.files.flatMap((file) => file.records.map((record) => record.rateModel)),
+      cases.flatMap(([, , key]) => [key, key]),
+    );
+  });
+
   it("uses the matching Antigravity generation model for each model-less step", async () => {
     const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "model-switch.db"));
     try {
