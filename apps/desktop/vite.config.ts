@@ -1,4 +1,5 @@
 import "vite-plus/test/config";
+import * as NodeModule from "node:module";
 import { defineConfig } from "vite-plus";
 
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
@@ -14,6 +15,12 @@ const repoEnv = loadRepoEnv();
 const isMainProcessExternal = (id: string) =>
   id === "electron" || id.startsWith("electron/") || isDesktopRuntimeExternalDependency(id);
 const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
+// jsonc-parser's UMD entry hides relative requires (./impl/format, ...) inside a
+// factory; they stay unresolved in the bundle and crash the packaged app at
+// startup. Use the package's ESM build instead, as the server bundle does.
+const jsoncParserEsm = NodeModule.createRequire(
+  new URL("../../packages/shared/package.json", import.meta.url),
+).resolve("jsonc-parser/lib/esm/main.js");
 const publicConfigDefine = {
   __T3CODE_BUILD_DISABLE_AUTO_UPDATE__: JSON.stringify(
     repoEnv.T3CODE_BUILD_DISABLE_AUTO_UPDATE === "1",
@@ -61,6 +68,7 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
+      alias: { "jsonc-parser": jsoncParserEsm },
       outputOptions: { codeSplitting: false },
       entry: ["src/main.ts"],
       clean: true,
