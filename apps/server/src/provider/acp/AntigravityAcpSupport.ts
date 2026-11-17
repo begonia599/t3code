@@ -135,18 +135,33 @@ export function makeAntigravityModelPicker(authMethod: AntigravityAuthMethod) {
     )
       return config;
     const thinking = config.find((option) => option.id === "thinking_level");
+    // The thinking selector describes only the currently selected family.
+    const levels =
+      thinking?.type === "select"
+        ? new Set(
+            thinking.options.flatMap((entry) =>
+              "value" in entry ? [entry.value] : entry.options.map((option) => option.value),
+            ),
+          )
+        : undefined;
+    const currentVariants = variants
+      .get(model.currentValue)
+      ?.filter((variant) => !levels || levels.has(variant.level));
     const selected =
       thinking?.type === "select"
-        ? variants.get(model.currentValue)?.find((v) => v.level === thinking.currentValue)?.value
+        ? currentVariants?.find((v) => v.level === thinking.currentValue)?.value
         : undefined;
     return config.map((option) =>
       option === model
         ? {
             ...model,
             currentValue: models?.currentModelId ?? selected ?? model.currentValue,
-            options: model.options.flatMap((entry) =>
-              "value" in entry ? (variants.get(entry.value) ?? [entry]) : entry.options,
-            ),
+            options: model.options.flatMap((entry) => {
+              if (!("value" in entry)) return entry.options;
+              const available =
+                entry.value === model.currentValue ? currentVariants : variants.get(entry.value);
+              return available ?? [entry];
+            }),
           }
         : option,
     );

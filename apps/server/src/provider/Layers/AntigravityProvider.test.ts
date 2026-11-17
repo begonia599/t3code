@@ -8,10 +8,12 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -220,6 +222,23 @@ describe("Antigravity model catalog", () => {
 });
 
 it.layer(testLayer)("Antigravity provider snapshots", (it) => {
+  it.effect("ends the registry's snapshot subscription when the instance closes", () =>
+    Effect.gen(function* () {
+      const instanceScope = yield* Scope.fork(yield* Effect.scope);
+      const { provider } = yield* makeHarness({ enabled: false }).pipe(
+        Scope.provide(instanceScope),
+      );
+      const subscribed = yield* Deferred.make<void>();
+      const subscription = yield* provider.snapshot.streamChanges.pipe(
+        Stream.runForEach(() => Deferred.succeed(subscribed, undefined)),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(subscribed);
+      yield* Scope.close(instanceScope, Exit.void);
+      yield* Fiber.join(subscription);
+    }),
+  );
+
   it.effect("drops a cached tier when the active runtime rolls back to 1.1.1", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

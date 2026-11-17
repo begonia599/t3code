@@ -31,6 +31,7 @@ import type * as NodeStream from "node:stream";
 import { lock } from "proper-lockfile";
 import * as Yauzl from "yauzl";
 
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { ServerConfig } from "../config.ts";
 import { makeAntigravityAcpRuntime } from "./acp/AntigravityAcpSupport.ts";
@@ -596,8 +597,56 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       ),
     );
 
+  const retryPending = Effect.fn("AntigravityInstallation.retryPending")(function* (
+    releaseId: string,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    if (now < retryAt) return true;
+    const saved = yield* readRecord(retryPath, RetryRecord).pipe(Effect.option);
+    if (Option.isSome(saved) && saved.value.releaseId === releaseId) retryAt = saved.value.retryAt;
+    return now < retryAt;
+  });
+
+  const deferRetry = Effect.fn("AntigravityInstallation.deferRetry")(function* (releaseId: string) {
+    retryAt = (yield* Clock.currentTimeMillis) + RETRY_INTERVAL_MS;
+    yield* writeFileStringAtomically({
+      filePath: retryPath,
+      contents: yield* encodeRetry({ releaseId, retryAt }),
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+  });
+
   const install = Effect.fn("AntigravityInstallation.install")(
     function* (asset: AntigravityReleaseAsset, automatic: boolean) {
+      const report = (phase: ProviderInstallState["phase"], message: string | null) =>
+        SubscriptionRef.update(state, (current) => ({ ...current, phase, message }));
+      yield* fs.makeDirectory(versionsDirectory, { recursive: true });
+      const unlock = yield* acquireMaintenanceLock;
+      const active = (yield* fs.exists(activePath))
+        ? yield* readRecord(activePath, ActiveRelease).pipe(Effect.option)
+        : Option.none();
+      if (
+        automatic &&
+        (Option.isNone(active) ||
+          active.value.releaseId === asset.sha256 ||
+          (yield* retryPending(asset.sha256)))
+      ) {
+        yield* report("idle", null);
+        return;
+      }
+      let activated = false;
+      if (automatic || Option.isSome(active)) {
+        // Extend the deadline on failure while this attempt still owns the lock.
+        yield* Effect.addFinalizer((exit) =>
+          !activated && Exit.isFailure(exit)
+            ? deferRetry(asset.sha256).pipe(Effect.ignore)
+            : Effect.void,
+        );
+      }
+      if (automatic) yield* deferRetry(asset.sha256);
+
       yield* resolveNodeExecutable("Antigravity", environment).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
@@ -606,16 +655,19 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           installationError("verify", nodeRuntimeUnavailableMessage("Antigravity"), cause),
         ),
       );
-      const report = (phase: ProviderInstallState["phase"], message: string | null) =>
-        SubscriptionRef.update(state, (current) => ({ ...current, phase, message }));
-      yield* fs.makeDirectory(versionsDirectory, { recursive: true });
-      const unlock = yield* acquireMaintenanceLock;
-      const active = (yield* fs.exists(activePath))
-        ? yield* readRecord(activePath, ActiveRelease).pipe(Effect.option)
-        : Option.none();
-      if (automatic && (Option.isNone(active) || active.value.releaseId === asset.sha256)) {
-        yield* report("idle", null);
-        return;
+      // mkdtemp appends six characters. A crashed install cannot run its scope finalizer.
+      const entries = yield* Effect.tryPromise(() =>
+        NodeFSP.readdir(versionsDirectory, { withFileTypes: true }),
+      );
+      for (const entry of entries) {
+        if (!entry.isDirectory() || !/^\.install-[A-Za-z0-9]{6}$/u.test(entry.name)) continue;
+        const directory = path.join(versionsDirectory, entry.name);
+        const contents = yield* fs
+          .readDirectory(directory)
+          .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
+        if (contents.every((name) => name === "download.zip" || name === "runtime")) {
+          yield* fs.remove(directory, { recursive: true, force: true });
+        }
       }
       yield* SubscriptionRef.update(state, (current) => ({ ...current, canRemove: true }));
       const destination = path.join(versionsDirectory, asset.sha256);
@@ -639,6 +691,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             { flag: "wx", mode: 0o600 },
           );
           yield* fs.rename(pointerPath, activePath);
+          activated = true;
           retryAt = 0;
           yield* fs.remove(retryPath, { force: true }).pipe(Effect.ignore);
           yield* unlock;
@@ -906,11 +959,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
               return current;
             if (Option.isNone(yield* completedRelease(active.value.releaseId).pipe(Effect.option)))
               return current;
-            const retry = yield* readRecord(retryPath, RetryRecord).pipe(Effect.option);
-            if (Option.isSome(retry) && retry.value.releaseId === releaseAsset.sha256) {
-              retryAt = retry.value.retryAt;
-              if ((yield* Clock.currentTimeMillis) < retryAt) return current;
-            }
+            if (yield* retryPending(releaseAsset.sha256)) return current;
           }
           if (!releaseAsset) {
             return yield* installationError(
@@ -939,12 +988,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
                 if (latest.operationId !== operationId || latest.phase === "succeeded") return;
                 if (automatic || current.installedVersion !== null) {
                   retryAt = (yield* Clock.currentTimeMillis) + RETRY_INTERVAL_MS;
-                  yield* fs
-                    .writeFileString(
-                      retryPath,
-                      yield* encodeRetry({ releaseId: releaseAsset.sha256, retryAt }),
-                    )
-                    .pipe(Effect.ignore);
                   yield* Effect.logWarning(
                     "Antigravity automatic update deferred for one hour",
                     Cause.pretty(exit.cause),

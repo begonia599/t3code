@@ -279,6 +279,92 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     }),
   );
 
+  it.effect.each(["download", "validation"] as const)(
+    "a restart from the middle of %s honors the prewritten deadline and reclaims staging on retry",
+    (phase) =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        const pause = Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(finish)),
+        );
+        const h = yield* makeHarness({
+          previous: true,
+          ...(phase === "download"
+            ? { body: Stream.fromEffect(pause.pipe(Effect.as(completeArchive))) }
+            : { validate: () => pause }),
+        });
+        yield* h.installation.checkForUpdate();
+        yield* Deferred.await(entered);
+
+        // Capture exactly the files a killed worker would leave, before any finalizers run.
+        const baseDir = yield* h.fs.makeTempDirectoryScoped();
+        const copy = h.path.join(
+          baseDir,
+          h.path.relative(h.baseDir, h.installation.managedDirectory),
+        );
+        yield* h.fs.makeDirectory(h.path.dirname(copy), { recursive: true });
+        yield* h.fs.copy(h.installation.managedDirectory, copy);
+        const versions = h.path.join(copy, "versions");
+        const orphan = (yield* h.fs.readDirectory(versions)).find((name) =>
+          name.startsWith(".install-"),
+        );
+        expect(orphan).toBeDefined();
+        const backup = h.path.join(versions, ".install-backup");
+        yield* h.fs.makeDirectory(backup);
+        yield* h.fs.writeFileString(h.path.join(backup, "notes.txt"), "keep");
+        yield* Deferred.succeed(finish, undefined);
+        expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
+
+        yield* TestClock.adjust("59 minutes");
+        const restarted = yield* makeHarness({ baseDir });
+        yield* restarted.installation.checkForUpdate();
+        expect((yield* restarted.installation.state).phase).toBe("idle");
+        expect(restarted.requests).toEqual([]);
+        yield* expectPreviousRelease(restarted.installation);
+        if (phase === "download") {
+          yield* TestClock.adjust("1 minute");
+          yield* restarted.installation.checkForUpdate();
+        } else {
+          yield* restarted.installation.start;
+        }
+        expect((yield* terminalState(restarted.installation)).phase).toBe("succeeded");
+        expect(restarted.requests).toHaveLength(1);
+        expect(yield* h.fs.exists(h.path.join(versions, orphan!))).toBe(false);
+        expect(yield* h.fs.readFileString(h.path.join(backup, "notes.txt"))).toBe("keep");
+        expect(yield* h.fs.exists(h.path.join(copy, ".auto-update-retry.json"))).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "keeps the old release without downloading if the retry record cannot be committed",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const h = yield* makeHarness({
+          previous: true,
+          fileSystem: FileSystem.FileSystem.of({
+            ...fs,
+            rename: (source, target) =>
+              target.endsWith(".auto-update-retry.json")
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "rename",
+                      pathOrDescriptor: target,
+                    }),
+                  )
+                : fs.rename(source, target),
+          }),
+        });
+        yield* h.installation.checkForUpdate();
+        expect((yield* terminalState(h.installation)).phase).toBe("failed");
+        expect(h.requests).toEqual([]);
+        yield* expectPreviousRelease(h.installation);
+      }),
+  );
+
   it.effect.each(["disk", "download"] as const)(
     "preserves the active version and backs off across restarts after %s failure",
     (failure) =>
@@ -642,7 +728,9 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
               ? fs.sink(target, options).pipe(Sink.mapInputEffect(() => Effect.fail(noSpace)))
               : fs.sink(target, options),
           writeFileString: (target, content, options) =>
-            stage === "active pointer" && target.endsWith("contents.tmp")
+            stage === "active pointer" &&
+            target.includes("active.json.") &&
+            target.endsWith("contents.tmp")
               ? Effect.fail(noSpace)
               : fs.writeFileString(target, content, options),
         });
@@ -1024,6 +1112,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           fileSystem: FileSystem.FileSystem.of({
             ...fs,
             rename: (source, target) => {
+              if (target.endsWith(".auto-update-retry.json")) return fs.rename(source, target);
               renameTargets.push(target);
               return denyPointerRename
                 ? Effect.fail(

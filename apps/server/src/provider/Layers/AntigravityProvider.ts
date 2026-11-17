@@ -11,6 +11,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Clock from "effect/Clock";
 import * as Semaphore from "effect/Semaphore";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -176,6 +177,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     draft: initialDraft,
     authRevision: 0,
   });
+  const closed = yield* Deferred.make<void>();
+  yield* Effect.addFinalizer(() => Deferred.succeed(closed, undefined).pipe(Effect.asVoid));
   // Skills the driver discovered on disk per workspace. Session callbacks
   // rewrite the workspace entry with native commands and must keep these, or
   // the registry drops the suggestions and never re-reads the workspace.
@@ -495,6 +498,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       refresh: managed.refresh.pipe(Effect.andThen(getSnapshot)),
       streamChanges: SubscriptionRef.changes(metadata).pipe(
         Stream.mapEffect((state) => options.stampIdentity(state.draft)),
+        Stream.interruptWhen(Deferred.await(closed)),
       ),
     },
     refreshQuota,

@@ -61,7 +61,15 @@ it("keeps concrete 1.5 selections through setup, model changes and native update
       { value: "single", name: "Single" },
     ],
   };
-  const thinking = { ...modelConfig, id: "thinking_level", currentValue: "high" };
+  const thinking = {
+    ...modelConfig,
+    id: "thinking_level",
+    currentValue: "high",
+    options: [
+      { value: "high", name: "High" },
+      { value: "low", name: "Low" },
+    ],
+  };
   expect(
     normalize([grouped, thinking], { availableModels, currentModelId: "gemini-pro-agent" })[0],
   ).toMatchObject({
@@ -73,6 +81,40 @@ it("keeps concrete 1.5 selections through setup, model changes and native update
   );
   expect(normalize([{ ...grouped, currentValue: "single" }])[0]?.currentValue).toBe("single");
 });
+
+it("removes withdrawn thinking levels only from the selected family and restores newly offered levels", () => {
+  const normalize = makeAntigravityModelPicker("oauth-personal");
+  const levels = ["low", "medium", "high"].map((value) => ({ value, name: value }));
+  const model = {
+    ...modelConfig,
+    currentValue: "family-a",
+    options: ["family-a", "family-b"].map((value) => ({ value, name: value })),
+  };
+  const availableModels = model.options.flatMap(({ value }) =>
+    levels.map((level) => ({ modelId: value + "-" + level.value, name: value + " " + level.name })),
+  );
+  const thinking = { ...modelConfig, id: "thinking_level", currentValue: "high", options: levels };
+  normalize([model, thinking], { availableModels, currentModelId: "family-a-high" });
+  const reduced = normalize([
+    model,
+    {
+      ...thinking,
+      currentValue: "medium",
+      options: [{ group: "levels", name: "Levels", options: levels.slice(0, 2) }],
+    },
+  ]);
+  expect(reduced[0]).toMatchObject({
+    currentValue: "family-a-medium",
+    options: availableModels
+      .filter((m) => m.modelId !== "family-a-high")
+      .map((m) => ({ value: m.modelId })),
+  });
+  expect(normalize([model, thinking])[0]).toMatchObject({
+    currentValue: "family-a-high",
+    options: availableModels.map((m) => ({ value: m.modelId })),
+  });
+});
+
 describe("applyAntigravityAcpModelSelection", () => {
   it.effect("restores the saved model instead of the cold-resume default", () =>
     Effect.gen(function* () {
