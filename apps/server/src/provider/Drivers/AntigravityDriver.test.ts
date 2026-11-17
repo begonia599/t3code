@@ -344,7 +344,9 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
           h.second.harnessPath,
         ]);
         for (const launch of nativeLaunches) {
-          expect(launch.args).toEqual(hostPlatform === "linux" ? ["--uid="] : []);
+          expect(launch.args).toEqual(
+            hostPlatform === "linux" ? ["--uid=", "--enforce_kernel_ipv6_support=false"] : [],
+          );
           expect(launch.profileDirectory).toBe(h.profileDirectory);
           expect(launch.forceFileStorage).toBe("1");
           expect(launch.extendEnv).toBe(false);

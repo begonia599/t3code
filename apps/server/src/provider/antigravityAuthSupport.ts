@@ -431,6 +431,13 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 });
 
 /** Applies the same subscription-only launch settings to every ACP process. */
+/**
+ * The Linux runtime aborts at startup when the host has no IPv6 loopback
+ * (::1), for example inside a network namespace with IPv6 disabled. The flag
+ * turns that startup check off; the pinned release accepts it.
+ */
+const LINUX_RUNTIME_ARGS = ["--uid=", "--enforce_kernel_ipv6_support=false"] as const;
+
 export function buildAntigravityAcpSpawnInput(input: {
   readonly installation: {
     readonly executablePath: string;
@@ -445,7 +452,7 @@ export function buildAntigravityAcpSpawnInput(input: {
 }): AcpSpawnInput {
   return {
     command: input.installation.executablePath,
-    args: input.profile.platform === "linux" ? ["--uid="] : [],
+    args: input.profile.platform === "linux" ? [...LINUX_RUNTIME_ARGS] : [],
     cwd: input.cwd,
     env: {
       ...antigravityEnvironment(

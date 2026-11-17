@@ -96,7 +96,7 @@ describe("Antigravity process environment", () => {
     expect(baseEnv).toEqual(original);
     expect(spawn).toEqual({
       command: "/release/acp",
-      args: ["--uid="],
+      args: ["--uid=", "--enforce_kernel_ipv6_support=false"],
       cwd: "/project",
       extendEnv: false,
       env: {
@@ -245,7 +245,9 @@ describe("Antigravity process environment", () => {
         cwd: "/project",
         baseEnv: {},
       });
-      expect(spawn.args).toEqual(platform === "linux" ? ["--uid="] : []);
+      expect(spawn.args).toEqual(
+        platform === "linux" ? ["--uid=", "--enforce_kernel_ipv6_support=false"] : [],
+      );
     }
   });
 
