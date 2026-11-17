@@ -2,11 +2,16 @@ import type {
   LocalMcpDiscoveredServer,
   LocalMcpDiscoveryResult,
   LocalMcpServerConfig,
+  LocalMcpServerView,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  configuredDuplicateNote,
   describeLocalMcpTransport,
+  discoveredDuplicateNote,
+  discoveredStartsEnabled,
+  duplicateNoteText,
   formatCommandLine,
   discoverySourceApps,
   draftFromConfig,
@@ -339,5 +344,98 @@ describe("local MCP discovery presentation", () => {
     );
     expect(displayMcpAddress("http://127.0.0.1:8080/")).toBe("http://127.0.0.1:8080");
     expect(displayMcpAddress("not a url")).toBe("not a url");
+  });
+});
+
+describe("same service reachable two ways", () => {
+  const unity = { key: "product:mcp-for-unity", label: "Unity" };
+  const http = discovered("h1", "unityMCP", { group: unity, preferred: true });
+  const stdio = discovered("s1", "unityMCP-stdio", { group: unity, preferred: false });
+  const view = (
+    id: string,
+    name: string,
+    enabled: boolean,
+    extra: Partial<LocalMcpServerView> = {},
+  ): LocalMcpServerView => ({
+    config: {
+      id,
+      name,
+      enabled,
+      transport: { type: "http", url: "http://127.0.0.1:8080/mcp", headers: {} },
+    },
+    status: enabled ? "running" : "stopped",
+    tools: [],
+    ...extra,
+  });
+
+  it("turns on only the preferred one when adding several", () => {
+    expect(discoveredStartsEnabled(http, true)).toBe(true);
+    expect(discoveredStartsEnabled(stdio, true)).toBe(false);
+    // Picking one by hand is a choice: it starts on.
+    expect(discoveredStartsEnabled(stdio, false)).toBe(true);
+    expect(discoveredStartsEnabled(discovered("x", "blender"), true)).toBe(true);
+  });
+
+  it("adds a second way to an enabled service switched off, even alone", () => {
+    const covered = discovered("s2", "unityMCP", {
+      group: unity,
+      preferred: false,
+      duplicateOf: "unity",
+    });
+    expect(discoveredStartsEnabled(covered, false)).toBe(false);
+    expect(discoveredStartsEnabled(covered, true)).toBe(false);
+    expect(
+      discoveredDuplicateNote(covered, [covered], [view("unity", "Unity (HTTP)", true)]),
+    ).toEqual({
+      kind: "alreadyOn",
+      name: "Unity (HTTP)",
+    });
+  });
+
+  it("points a non-preferred candidate at its preferred sibling", () => {
+    expect(discoveredDuplicateNote(stdio, [http, stdio], [])).toEqual({
+      kind: "sibling",
+      name: "unityMCP",
+    });
+    expect(discoveredDuplicateNote(http, [http, stdio], [])).toBeNull();
+    // Same name on both: point at the id, which the row shows next to the name.
+    const twin = discovered("s3", "unityMCP", { group: unity, preferred: false });
+    expect(discoveredDuplicateNote(twin, [http, twin], [])).toEqual({
+      kind: "sibling",
+      name: "unitymcp",
+    });
+    // Sibling already added in this session: nothing to point at until the rescan.
+    expect(discoveredDuplicateNote(stdio, [stdio], [])).toBeNull();
+  });
+
+  it("lists second ways to an enabled service last", () => {
+    const covered = discovered("s2", "unityMCP", { duplicateOf: "unity" });
+    const result: LocalMcpDiscoveryResult = {
+      servers: [covered, discovered("c3", "blender")],
+      skipped: [],
+      scannedAt: "2026-11-17T00:00:00.000Z",
+    };
+    expect(pendingDiscoveredServers(result, new Set()).map((server) => server.key)).toEqual([
+      "c3",
+      "s2",
+    ]);
+  });
+
+  it("tells configured duplicates apart by whether they are on", () => {
+    const servers = [
+      view("unity", "unity", true, { group: unity }),
+      view("unity-3", "unityMCP", true, { group: unity, duplicateOf: "unity" }),
+      view("unity-4", "unityMCP old", false, { group: unity, duplicateOf: "unity" }),
+    ];
+    expect(configuredDuplicateNote(servers[0]!, servers)).toBeNull();
+    const both = configuredDuplicateNote(servers[1]!, servers)!;
+    expect(both).toEqual({ kind: "bothOn", name: "unity" });
+    expect(configuredDuplicateNote(servers[2]!, servers)).toEqual({
+      kind: "standby",
+      name: "unity",
+    });
+    expect(duplicateNoteText({ kind: "standby", name: "unity" }).match(/\{name\}/g)).toHaveLength(
+      2,
+    );
   });
 });

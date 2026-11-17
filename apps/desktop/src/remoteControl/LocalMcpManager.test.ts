@@ -130,6 +130,105 @@ async function closeHttp(http: NodeHttp.Server) {
   await new Promise<void>((resolve) => http.close(() => resolve()));
 }
 
+it("retains initialize identity on failures, restart failures and disable without publishing it in capabilities", async () => {
+  const { manager, dispose } = await setupHttp();
+  try {
+    await manager.upsert({
+      id: "unity-stdio",
+      name: "unityMCP",
+      enabled: false,
+      transport: { type: "stdio", command: "mcp-for-unity", args: [], env: {} },
+    });
+    const successful = manager.views()[0]!;
+    expect(successful).toMatchObject({ serverName: "fixture", serverVersion: "1" });
+    expect(manager.views()[1]).toMatchObject({
+      group: { key: "product:mcp-for-unity", label: "Unity" },
+      duplicateOf: "unity",
+    });
+    expect(manager.capabilities().servers[0]).toEqual({
+      id: "unity",
+      name: "Unity",
+      status: "running",
+      tools: successful.tools,
+    });
+    const fetch = vi.mocked(globalThis.fetch);
+    fetch.mockRejectedValue(new TypeError("fetch failed"));
+    const failed = waitFor(manager, (view) => view.status === "failed");
+    await expect(manager.call("unity", "echo", {}, signal())).rejects.toMatchObject({
+      code: "MCP_SERVER_UNAVAILABLE",
+    });
+    await failed;
+    expect(manager.views()[0]).toMatchObject({
+      serverName: "fixture",
+      serverVersion: "1",
+      toolsUpdatedAt: successful.toolsUpdatedAt,
+    });
+    expect(manager.views()[1]?.duplicateOf).toBe("unity");
+    const restarting = waitFor(manager, (view) => view.status === "starting");
+    await manager.restart("unity");
+    await restarting;
+    await waitFor(manager, (view) => view.status === "failed");
+    const disabled = await manager.setEnabled("unity", false);
+    expect(disabled[0]).toMatchObject({
+      serverName: "fixture",
+      serverVersion: "1",
+      toolsUpdatedAt: successful.toolsUpdatedAt,
+    });
+  } finally {
+    await dispose();
+  }
+});
+
+it("records a new initialize identity even when the subsequent tools listing fails", async () => {
+  const { manager, dispose } = await setupHttp();
+  const info = vi.spyOn(Client.prototype, "getServerVersion").mockReturnValue({
+    name: "mcp-for-unity-server",
+    version: "3.4.11",
+  });
+  const list = vi
+    .spyOn(Client.prototype, "listTools")
+    .mockRejectedValue(new Error("invalid tools response"));
+  try {
+    const started = waitFor(manager, (view) => view.status === "starting");
+    await manager.restart("unity");
+    await started;
+    await waitFor(manager, (view) => view.status === "failed");
+    expect(manager.views()[0]).toMatchObject({
+      serverName: "mcp-for-unity-server",
+      serverVersion: "3.4.11",
+    });
+  } finally {
+    await dispose();
+    info.mockRestore();
+    list.mockRestore();
+  }
+});
+
+it("publishes configured groups with config order preserved when a disabled member is restarted", async () => {
+  const manager = createLocalMcpManager({ save: async () => {} });
+  const makeConfig = (id: string): LocalMcpServerConfig => ({
+    ...config,
+    id,
+    enabled: false,
+    transport: { type: "stdio", command: "mcp-for-unity", args: [], env: {} },
+  });
+  try {
+    await manager.initialize([makeConfig("first"), makeConfig("second")]);
+    const snapshots: Array<readonly LocalMcpServerView[]> = [];
+    const off = manager.onChanged((views) => snapshots.push(views));
+    await manager.restart("first");
+    off();
+    expect(manager.views().map((view) => view.config.id)).toEqual(["first", "second"]);
+    expect(snapshots[0]?.map((view) => view.group)).toEqual([
+      { key: "product:mcp-for-unity", label: "Unity" },
+      { key: "product:mcp-for-unity", label: "Unity" },
+    ]);
+    expect(manager.views().every((view) => view.duplicateOf === undefined)).toBe(true);
+  } finally {
+    await manager.dispose();
+  }
+});
+
 it.each([undefined, DESKTOP_MCP_MAX_RESULT_BYTES, DESKTOP_MCP_MAX_RESULT_BYTES + 1])(
   "checks HTTP Content-Length %s before reading the response body",
   async (length) => {

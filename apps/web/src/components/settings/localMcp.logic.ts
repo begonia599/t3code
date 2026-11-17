@@ -474,12 +474,17 @@ export function pathBaseName(path: string): string {
   );
 }
 
-/** Discovered servers that aren't added yet, minus ones added during this session. */
+/**
+ * Discovered servers that aren't added yet, minus ones added during this session.
+ * Second ways to reach a service that is already on go last.
+ */
 export function pendingDiscoveredServers(
   result: LocalMcpDiscoveryResult,
   addedKeys: ReadonlySet<string>,
 ): LocalMcpDiscoveredServer[] {
-  return result.servers.filter((server) => !server.addedAs && !addedKeys.has(server.key));
+  return result.servers
+    .filter((server) => !server.addedAs && !addedKeys.has(server.key))
+    .toSorted((a, b) => Number(a.duplicateOf !== undefined) - Number(b.duplicateOf !== undefined));
 }
 
 export interface LocalMcpSkippedNote {
@@ -521,5 +526,78 @@ export function skippedReasonText(reason: LocalMcpDiscoverySkipReason): string {
       return "turned off there";
     case "invalid":
       return "config not recognized";
+  }
+}
+
+/**
+ * Whether adding a discovered server should switch it on. Off when the same service is
+ * already on here; when adding several at once, only the preferred way to reach it is on.
+ */
+export function discoveredStartsEnabled(
+  candidate: LocalMcpDiscoveredServer,
+  batch: boolean,
+): boolean {
+  if (candidate.duplicateOf !== undefined) return false;
+  return !batch || candidate.preferred !== false;
+}
+
+export type LocalMcpDuplicateNote =
+  /** A discovered server whose service is already on here; it gets added switched off. */
+  | { readonly kind: "alreadyOn"; readonly name: string }
+  /** A discovered server with a preferred sibling in the same list; "Add all" skips turning it on. */
+  | { readonly kind: "sibling"; readonly name: string }
+  /** A configured server that duplicates another one that is on; both are on. */
+  | { readonly kind: "bothOn"; readonly name: string }
+  /** A configured, switched-off alternative to the one in use. */
+  | { readonly kind: "standby"; readonly name: string };
+
+/** How to refer to another server: its name, or its id when it shares this one's name. */
+const referTo = (other: { readonly id: string; readonly name: string }, selfName: string) =>
+  other.name === selfName ? other.id : other.name;
+
+const configuredRef = (servers: readonly LocalMcpServerView[], id: string, selfName: string) => {
+  const config = servers.find((view) => view.config.id === id)?.config;
+  return config ? referTo(config, selfName) : id;
+};
+
+export function discoveredDuplicateNote(
+  candidate: LocalMcpDiscoveredServer,
+  pending: readonly LocalMcpDiscoveredServer[],
+  servers: readonly LocalMcpServerView[],
+): LocalMcpDuplicateNote | null {
+  if (candidate.duplicateOf !== undefined) {
+    return {
+      kind: "alreadyOn",
+      name: configuredRef(servers, candidate.duplicateOf, candidate.config.name),
+    };
+  }
+  if (!candidate.group || candidate.preferred !== false) return null;
+  const preferred = pending.find(
+    (other) => other !== candidate && other.group?.key === candidate.group?.key && other.preferred,
+  );
+  return preferred
+    ? { kind: "sibling", name: referTo(preferred.config, candidate.config.name) }
+    : null;
+}
+
+export function configuredDuplicateNote(
+  view: LocalMcpServerView,
+  servers: readonly LocalMcpServerView[],
+): LocalMcpDuplicateNote | null {
+  if (view.duplicateOf === undefined) return null;
+  const name = configuredRef(servers, view.duplicateOf, view.config.name);
+  return view.config.enabled ? { kind: "bothOn", name } : { kind: "standby", name };
+}
+
+export function duplicateNoteText(note: LocalMcpDuplicateNote): string {
+  switch (note.kind) {
+    case "alreadyOn":
+      return "Same service as {name}, which is already on. Adds switched off.";
+    case "sibling":
+      return "Same service as {name}. Add all turns on only {name}.";
+    case "bothOn":
+      return "Same service as {name}, which is also on, so its tools show up twice.";
+    case "standby":
+      return "Same service as {name}. Switch to this one if {name} stops working.";
   }
 }

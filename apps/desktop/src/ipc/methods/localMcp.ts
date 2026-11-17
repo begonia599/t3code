@@ -89,9 +89,7 @@ export const discover = makeIpcMethod({
   result: LocalMcpDiscoveryResult,
   handler: Effect.fn(function* () {
     const manager = yield* LocalMcpManager;
-    return yield* nativeCall(() =>
-      discoverNativeLocalMcpServers(manager.views().map((view) => view.config)),
-    );
+    return yield* nativeCall(() => discoverNativeLocalMcpServers(manager.views()));
   }),
 });
 

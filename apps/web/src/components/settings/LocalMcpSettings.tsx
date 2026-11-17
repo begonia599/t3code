@@ -21,6 +21,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ClipboardPasteIcon,
+  CopyIcon,
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -51,11 +52,15 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   DISCOVERY_APPS,
+  configuredDuplicateNote,
   describeLocalMcpTransport,
+  discoveredDuplicateNote,
+  discoveredStartsEnabled,
   discoveryAppLabel,
   discoverySourceApps,
   draftFromConfig,
   draftToConfig,
+  duplicateNoteText,
   emptyLocalMcpDraft,
   localMcpErrorExplanation,
   localMcpStatusPresentation,
@@ -69,6 +74,7 @@ import {
   withDraftName,
   type LocalMcpDraft,
   type LocalMcpDraftErrors,
+  type LocalMcpDuplicateNote,
 } from "./localMcp.logic";
 import { SettingsSection } from "./settingsLayout";
 
@@ -174,6 +180,7 @@ export function LocalMcpSettings() {
       : [];
 
   const addDiscovered = async (candidates: readonly LocalMcpDiscoveredServer[]) => {
+    const batch = candidates.length > 1;
     setAdding(new Set(candidates.map((candidate) => candidate.key)));
     // Ids were made unique at scan time; re-check so an add never replaces a newer server.
     const taken = new Set(ids);
@@ -181,7 +188,8 @@ export function LocalMcpSettings() {
       for (const candidate of candidates) {
         const id = uniqueLocalMcpId(candidate.config.id, taken);
         taken.add(id);
-        replace(await bridge.upsert({ ...candidate.config, id }));
+        const enabled = discoveredStartsEnabled(candidate, batch);
+        replace(await bridge.upsert({ ...candidate.config, id, enabled }));
         setAddedKeys((current) => new Set(current).add(candidate.key));
       }
     } catch (cause) {
@@ -248,6 +256,7 @@ export function LocalMcpSettings() {
                 <LocalMcpRow
                   key={view.config.id}
                   bridge={bridge}
+                  duplicate={configuredDuplicateNote(view, servers ?? [])}
                   view={view}
                   editDisabled={editing !== null}
                   onEdit={() => setEditing({ kind: "edit", id: view.config.id })}
@@ -273,6 +282,7 @@ export function LocalMcpSettings() {
             state={discovery.state}
             scanning={discovery.scanning}
             pending={pending}
+            servers={servers ?? []}
             adding={adding}
             onScan={() => void discovery.scan()}
             onAdd={(candidates) => void addDiscovered(candidates)}
@@ -288,6 +298,7 @@ function DiscoveredServers({
   state,
   scanning,
   pending,
+  servers,
   adding,
   onScan,
   onAdd,
@@ -295,6 +306,7 @@ function DiscoveredServers({
   state: Exclude<DiscoveryState, { kind: "unsupported" }>;
   scanning: boolean;
   pending: readonly LocalMcpDiscoveredServer[];
+  servers: readonly LocalMcpServerView[];
   adding: ReadonlySet<string>;
   onScan: () => void;
   onAdd: (candidates: readonly LocalMcpDiscoveredServer[]) => void;
@@ -361,6 +373,7 @@ function DiscoveredServers({
               <DiscoveredRow
                 key={candidate.key}
                 candidate={candidate}
+                duplicate={discoveredDuplicateNote(candidate, pending, servers)}
                 adding={adding.has(candidate.key)}
                 disabled={busy}
                 onAdd={() => onAdd([candidate])}
@@ -410,11 +423,13 @@ function DiscoveredServers({
 
 function DiscoveredRow({
   candidate,
+  duplicate,
   adding,
   disabled,
   onAdd,
 }: {
   candidate: LocalMcpDiscoveredServer;
+  duplicate: LocalMcpDuplicateNote | null;
   adding: boolean;
   disabled: boolean;
   onAdd: () => void;
@@ -465,6 +480,11 @@ function DiscoveredRow({
             <span className="font-mono text-2xs">{describeLocalMcpTransport(config)}</span>
           </span>
         </p>
+        {duplicate ? (
+          <p className="text-xs text-muted-foreground">
+            {t(duplicateNoteText(duplicate)).replaceAll("{name}", duplicate.name)}
+          </p>
+        ) : null}
       </div>
       <Button size="xs" variant="outline" className="shrink-0" disabled={disabled} onClick={onAdd}>
         {adding ? <Spinner className="size-3.5" /> : <PlusIcon className="size-3.5" />}
@@ -533,12 +553,15 @@ function LocalMcpFailure({
 
 function LocalMcpRow({
   bridge,
+  duplicate,
   view,
   editDisabled,
   onEdit,
   onReplace,
 }: {
   bridge: LocalMcpBridge;
+  /** Another configured server reaches the same service. */
+  duplicate: LocalMcpDuplicateNote | null;
   view: LocalMcpServerView;
   editDisabled: boolean;
   onEdit: () => void;
@@ -685,6 +708,36 @@ function LocalMcpRow({
             retrying
           />
         </div>
+      ) : null}
+
+      {duplicate ? (
+        <p
+          className={cn(
+            "ms-5 mt-1 flex flex-wrap items-center gap-x-1.5 text-xs leading-relaxed",
+            duplicate.kind === "bothOn" ? "text-warning-foreground" : "text-muted-foreground",
+          )}
+        >
+          {duplicate.kind === "bothOn" ? (
+            <CopyIcon aria-hidden className="size-3.5 shrink-0" />
+          ) : null}
+          <span className="min-w-0">
+            {t(duplicateNoteText(duplicate)).replaceAll("{name}", duplicate.name)}
+          </span>
+          {duplicate.kind === "bothOn" ? (
+            <button
+              type="button"
+              className="rounded-sm font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-1 focus-visible:outline-ring disabled:opacity-50"
+              disabled={busy}
+              onClick={() =>
+                void run("Couldn't change the MCP server", () =>
+                  bridge.setEnabled(config.id, false),
+                )
+              }
+            >
+              {t("Turn this off")}
+            </button>
+          ) : null}
+        </p>
       ) : null}
 
       {toolsOpen && config.enabled ? (

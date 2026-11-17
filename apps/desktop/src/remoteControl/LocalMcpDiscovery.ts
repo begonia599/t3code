@@ -12,6 +12,9 @@ import {
   type LocalMcpTransport,
 } from "@t3tools/contracts";
 import { parseNativeConfig } from "@t3tools/shared/nativeConfig";
+import { groupLocalMcpDiscovery, serverId, type LocalMcpGroupExisting } from "./localMcpGroups.ts";
+
+export { serverId } from "./localMcpGroups.ts";
 
 export const MAX_MCP_DISCOVERY_FILE_BYTES = 8 * 1024 * 1024;
 export interface LocalMcpDiscoveryContext {
@@ -74,21 +77,10 @@ export function transportKey(transport: LocalMcpTransport): string {
     .slice(0, 16);
 }
 
-export function serverId(name: string): string {
-  let id = name
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, "-")
-    .replace(/__+/g, "_");
-  id = id.replace(/^mcp[-_]/, "") || id;
-  id = id.replace(/(?:[-_]?mcp)$/, "") || id;
-  if (!/^[a-z]/.test(id)) id = `m-${id}`;
-  return id.slice(0, 24);
-}
-
 /** Read other apps' configs only; candidates and credentials never enter the remote catalog. */
 export async function discoverLocalMcpServers(
   context: LocalMcpDiscoveryContext,
-  existing: readonly LocalMcpServerConfig[],
+  existing: readonly LocalMcpGroupExisting[],
 ): Promise<LocalMcpDiscoveryResult> {
   const skipped: Array<LocalMcpDiscoveryResult["skipped"][number]> = [];
   const candidates = new Map<
@@ -262,7 +254,7 @@ export async function discoverLocalMcpServers(
     }
   }
   const existingKeys = new Map<string, string>();
-  for (const config of existing) {
+  for (const { config } of existing) {
     try {
       const key = transportKey(config.transport);
       if (!existingKeys.has(key)) existingKeys.set(key, config.id);
@@ -270,7 +262,7 @@ export async function discoverLocalMcpServers(
       /* A stale existing URL must not prevent discovery. */
     }
   }
-  const used = new Set(existing.map((config) => config.id));
+  const used = new Set(existing.map(({ config }) => config.id));
   const servers: LocalMcpDiscoveredServer[] = [];
   for (const [key, candidate] of candidates) {
     candidate.sources.sort(
@@ -312,5 +304,9 @@ export async function discoverLocalMcpServers(
       compare(a.config.name, b.config.name) ||
       compare(a.key, b.key),
   );
-  return { servers, skipped, scannedAt: context.now().toISOString() };
+  return {
+    servers: groupLocalMcpDiscovery(servers, existing),
+    skipped,
+    scannedAt: context.now().toISOString(),
+  };
 }

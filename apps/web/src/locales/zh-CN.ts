@@ -1141,6 +1141,15 @@ export const zhCN: Readonly<Record<string, string>> = {
   Details: "详情",
   "Couldn't add the MCP server": "无法添加 MCP 服务器",
   "Already set up in other apps": "其他软件里已配好的",
+  "Same service as {name}, which is already on. Adds switched off.":
+    "和已开启的 {name} 是同一个服务，添加后先保持关闭。",
+  "Same service as {name}. Add all turns on only {name}.":
+    "和 {name} 是同一个服务，全部添加时只开启 {name}。",
+  "Same service as {name}, which is also on, so its tools show up twice.":
+    "和 {name} 是同一个服务，两个都开着，工具会重复出现。",
+  "Same service as {name}. Switch to this one if {name} stops working.":
+    "和 {name} 是同一个服务，{name} 用不了时可以换成这个。",
+  "Turn this off": "关掉这个",
   "Add all": "全部添加",
   "Scan again": "重新扫描",
   "Looking for MCP servers set up in other apps…": "正在查找其他软件里配好的 MCP 服务器…",

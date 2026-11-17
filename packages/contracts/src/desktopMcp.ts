@@ -95,6 +95,15 @@ export const LocalMcpErrorKind = Schema.Literals([
 ]);
 export type LocalMcpErrorKind = typeof LocalMcpErrorKind.Type;
 
+/** Alternative ways to connect to what appears to be the same local service. */
+export const LocalMcpServiceGroup = Schema.Struct({
+  /** Shared by members within one result. */
+  key: TrimmedNonEmptyString,
+  /** Human-readable service name, e.g. Unity. */
+  label: TrimmedNonEmptyString,
+});
+export type LocalMcpServiceGroup = typeof LocalMcpServiceGroup.Type;
+
 /** Config + live state, for the settings UI. */
 export const LocalMcpServerView = Schema.Struct({
   config: LocalMcpServerConfig,
@@ -106,6 +115,12 @@ export const LocalMcpServerView = Schema.Struct({
   tools: Schema.Array(LocalMcpTool),
   /** ISO time of the last successful tools/list. */
   toolsUpdatedAt: Schema.optional(Schema.String),
+  /** Last initialize identity; retained across disconnects and failures. */
+  serverName: Schema.optional(Schema.String),
+  serverVersion: Schema.optional(Schema.String),
+  group: Schema.optional(LocalMcpServiceGroup),
+  /** Enabled primary member's id; omitted for the primary or a fully disabled group. */
+  duplicateOf: Schema.optional(LocalMcpServerId),
 });
 export type LocalMcpServerView = typeof LocalMcpServerView.Type;
 
@@ -160,6 +175,11 @@ export const LocalMcpDiscoveredServer = Schema.Struct({
   sources: Schema.Array(LocalMcpDiscoverySource),
   /** Id of the existing local config with the same transport, if already added. */
   addedAs: Schema.optional(LocalMcpServerId),
+  group: Schema.optional(LocalMcpServiceGroup),
+  /** Only with group: bulk-add preference; one unadded candidate is true unless a configured member is enabled. */
+  preferred: Schema.optional(Schema.Boolean),
+  /** Enabled configured primary member's id, if any. */
+  duplicateOf: Schema.optional(LocalMcpServerId),
 });
 export type LocalMcpDiscoveredServer = typeof LocalMcpDiscoveredServer.Type;
 

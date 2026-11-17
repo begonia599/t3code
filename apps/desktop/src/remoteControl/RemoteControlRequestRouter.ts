@@ -247,7 +247,7 @@ export const layer = Layer.effect(
     const mcp = createLocalMcpManagement({
       manager,
       enabledEnvironmentIds,
-      discover: () => discoverNativeLocalMcpServers(manager.views().map((view) => view.config)),
+      discover: () => discoverNativeLocalMcpServers(manager.views()),
     });
     yield* Effect.addFinalizer(() => Effect.sync(() => mcp.dispose()));
     const router = createRemoteControlRequestRouter({

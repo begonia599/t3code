@@ -2,10 +2,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Native read-only configuration discovery.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
-import type { LocalMcpServerConfig } from "@t3tools/contracts";
+import type { LocalMcpGroupExisting } from "./localMcpGroups.ts";
 import { discoverLocalMcpServers, MAX_MCP_DISCOVERY_FILE_BYTES } from "./LocalMcpDiscovery.ts";
 
-export const discoverNativeLocalMcpServers = (existing: readonly LocalMcpServerConfig[]) =>
+export const discoverNativeLocalMcpServers = (existing: readonly LocalMcpGroupExisting[]) =>
   discoverLocalMcpServers(
     {
       home: NodeOS.homedir(),

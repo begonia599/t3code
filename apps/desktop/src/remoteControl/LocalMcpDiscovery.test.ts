@@ -31,6 +31,57 @@ const context = (
 const json = (mcpServers: unknown) => JSON.stringify({ mcpServers });
 
 describe("local MCP discovery", () => {
+  it("groups the Windows Unity fixture and recognizes an enabled renamed HTTP config", async () => {
+    const ctx = context({
+      [paths.claude]: JSON.stringify({
+        mcpServers: { unityMCP: { url } },
+        projects: { "C:\\Unity": { mcpServers: { UnityMCP: { url } } } },
+      }),
+      [paths.codex]: `[mcp_servers.unityMCP]\nurl = "${url}"`,
+      [paths.cursor]: json({ unityMCP: { url } }),
+      [paths.vscode]: JSON.stringify({ servers: { unityMCP: { url } } }),
+      [paths.windsurf]: json({ unityMCP: { url } }),
+      [paths.desktop]: json({
+        unityMCP: {
+          command: "C:\\Users\\34866\\.cherrystudio\\bin\\uvx.exe",
+          args: ["--from", "mcpforunityserver==10.0.0", "mcp-for-unity", "--transport", "stdio"],
+        },
+      }),
+    });
+    const result = await discoverLocalMcpServers(ctx, []);
+    expect(result.servers).toHaveLength(2);
+    expect(result.servers.map((server) => server.group)).toEqual([
+      { key: "product:mcp-for-unity", label: "Unity" },
+      { key: "product:mcp-for-unity", label: "Unity" },
+    ]);
+    expect(
+      result.servers
+        .filter((server) => server.preferred)
+        .map((server) => server.config.transport.type),
+    ).toEqual(["http"]);
+    const configured = {
+      config: decodeConfig({
+        id: "unity",
+        name: "unity",
+        enabled: true,
+        transport: { type: "http", url, headers: {} },
+      }),
+      serverName: "mcp-for-unity-server",
+      serverVersion: "3.4.11",
+      status: "failed" as const,
+      tools: [],
+      toolsUpdatedAt: now.toISOString(),
+    };
+    const again = await discoverLocalMcpServers(ctx, [configured]);
+    expect(again.servers.find((server) => server.config.transport.type === "http")?.addedAs).toBe(
+      "unity",
+    );
+    expect(again.servers.map((server) => [server.preferred, server.duplicateOf])).toEqual([
+      [false, "unity"],
+      [false, "unity"],
+    ]);
+    expect(await discoverLocalMcpServers(ctx, [configured])).toEqual(again);
+  });
   it("merges the five real HTTP shapes, keeps every source, and imports Claude Desktop stdio", async () => {
     const unity = { url, type: "http" };
     const stdio = {
@@ -79,7 +130,7 @@ describe("local MCP discovery", () => {
       enabled: false,
       transport: { type: "http", url: "http://LOCALHOST:8080/mcp/", headers: {} },
     };
-    const again = await discoverLocalMcpServers(ctx, [existing]);
+    const again = await discoverLocalMcpServers(ctx, [{ config: existing }]);
     expect(again.servers.at(-1)).toMatchObject({ key: http.key, addedAs: existing.id });
     expect(again.servers[0]?.addedAs).toBeUndefined();
   });
@@ -248,10 +299,12 @@ describe("local MCP discovery", () => {
       }),
       [
         {
-          id: "unity",
-          name: "existing",
-          enabled: true,
-          transport: { type: "stdio", command: "unrelated", args: [], env: {} },
+          config: {
+            id: "unity",
+            name: "existing",
+            enabled: true,
+            transport: { type: "stdio", command: "unrelated", args: [], env: {} },
+          },
         },
       ],
     );

@@ -31,6 +31,7 @@ import * as NodeOS from "node:os";
 import * as NodeUtil from "node:util";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
+import { groupLocalMcpViews } from "./localMcpGroups.ts";
 import { classifyLocalMcpError } from "./localMcpErrors.ts";
 import { createLatestMcpProgress } from "./LatestMcpProgress.ts";
 import { DesktopAppSettings } from "../settings/DesktopAppSettings.ts";
@@ -190,6 +191,8 @@ type Entry = {
   errorKind?: LocalMcpServerView["errorKind"];
   fail?: (cause: unknown) => Promise<void>;
   toolsUpdatedAt?: string;
+  serverName?: string;
+  serverVersion?: string;
   session?: Session;
   lifetime: AbortController;
   timer?: ReturnType<typeof setTimeout>;
@@ -217,14 +220,18 @@ export function createLocalMcpManager(options: {
   const queue: Array<{ wake: () => void }> = [];
   let mutations = Promise.resolve();
   const views = (): readonly LocalMcpServerView[] =>
-    [...entries.values()].map((entry) => ({
-      config: entry.config,
-      status: entry.status,
-      tools: entry.tools,
-      ...(entry.error === undefined ? {} : { error: entry.error }),
-      ...(entry.errorKind === undefined ? {} : { errorKind: entry.errorKind }),
-      ...(entry.toolsUpdatedAt === undefined ? {} : { toolsUpdatedAt: entry.toolsUpdatedAt }),
-    }));
+    groupLocalMcpViews(
+      [...entries.values()].map((entry) => ({
+        config: entry.config,
+        status: entry.status,
+        tools: entry.tools,
+        ...(entry.error === undefined ? {} : { error: entry.error }),
+        ...(entry.errorKind === undefined ? {} : { errorKind: entry.errorKind }),
+        ...(entry.toolsUpdatedAt === undefined ? {} : { toolsUpdatedAt: entry.toolsUpdatedAt }),
+        ...(entry.serverName === undefined ? {} : { serverName: entry.serverName }),
+        ...(entry.serverVersion === undefined ? {} : { serverVersion: entry.serverVersion }),
+      })),
+    );
   const publish = () => {
     const snapshot = views();
     for (const listener of listeners) listener(snapshot);
@@ -303,6 +310,12 @@ export function createLocalMcpManager(options: {
       );
       try {
         await abortable(session.connect(startup.signal), startup.signal);
+        if (!current(entry, session)) return;
+        const info = session.client.getServerVersion();
+        if (info) {
+          entry.serverName = info.name;
+          entry.serverVersion = info.version;
+        }
         const tools = await abortable(listTools(session.client, startup.signal), startup.signal);
         if (!current(entry, session)) return;
         entry.tools = tools;
@@ -332,6 +345,8 @@ export function createLocalMcpManager(options: {
           status: "stopped",
           tools: entry.tools,
           ...(entry.toolsUpdatedAt ? { toolsUpdatedAt: entry.toolsUpdatedAt } : {}),
+          ...(entry.serverName === undefined ? {} : { serverName: entry.serverName }),
+          ...(entry.serverVersion === undefined ? {} : { serverVersion: entry.serverVersion }),
           lifetime: new AbortController(),
           attempts: 0,
         });
@@ -346,6 +361,9 @@ export function createLocalMcpManager(options: {
           attempts: 0,
         });
     }
+    const ordered = configs.map((config) => entries.get(config.id)!);
+    entries.clear();
+    for (const entry of ordered) entries.set(entry.config.id, entry);
     publish();
     for (const entry of entries.values()) {
       if (entry.config.enabled && entry.status === "stopped") track(start(entry));
