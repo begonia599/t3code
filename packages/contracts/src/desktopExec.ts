@@ -87,6 +87,7 @@ export type DesktopExecProgress = typeof DesktopExecProgress.Type;
 /**
  * DesktopChannelResponse.result for kind "exec". Timeout and cancellation after spawn are
  * results (not errors) so partial output and the audit record stay consistent.
+ * A cleanup deadline failure is a CLEANUP_FAILED error because process state is unknown.
  */
 export const DesktopExecResult = Schema.Struct({
   outcome: Schema.Literals(["exited", "timedOut", "cancelled"]),
@@ -121,6 +122,8 @@ export const DesktopExecErrorCode = Schema.Literals([
   "SYNC_FAILED",
   /** Program not found (ENOENT). */
   "SPAWN_NOT_FOUND",
+  /** Cleanup deadline expired; the process state is unknown. */
+  "CLEANUP_FAILED",
   /** Other spawn failure. */
   "SPAWN_FAILED",
   /** Input failed schema validation. */
@@ -302,6 +305,7 @@ export const winExitCodeForError = (code: string): number => {
     case "REMOTE_DISABLED":
       return WIN_EXIT_HOST_UNAVAILABLE;
     case "HOST_DISCONNECTED":
+    case "CLEANUP_FAILED":
       return WIN_EXIT_STATE_UNKNOWN;
     case "TIMEOUT":
       return WIN_EXIT_TIMEOUT;

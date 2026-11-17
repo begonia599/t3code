@@ -265,6 +265,10 @@ export async function runWinLauncher(io: WinLauncherRuntime): Promise<number> {
           `${event.code}: ${event.message}`,
           io.constants.errorCodes[event.code] ?? 123,
         );
+        if (event.code === "CLEANUP_FAILED")
+          await io.stderr(
+            "[win] Process cleanup failed; check running processes on the Windows host before retrying.\n",
+          );
         if (event.code === "CWD_NOT_MAPPED" || event.code === "CWD_NOT_ALLOWED") {
           try {
             const statusUrl = new URL(`${io.env.T3_WIN_ENDPOINT!.replace(/\/$/, "")}/status`);

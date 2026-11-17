@@ -6,6 +6,8 @@ import * as Ref from "effect/Ref";
 
 import type * as Electron from "electron";
 
+import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
+import * as Channels from "../ipc/channels.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -54,13 +56,36 @@ function makeElectronAppLayer(
   } satisfies ElectronApp.ElectronApp["Service"]);
 }
 
+const powerListeners = new Map<string, () => void>();
+const electronPowerMonitorLayer = Layer.succeed(ElectronPowerMonitor.ElectronPowerMonitor, {
+  isOnBatteryPower: Effect.succeed(false),
+  getSystemIdleTime: Effect.succeed(0),
+  getSystemIdleState: () => Effect.succeed("active"),
+  getCurrentThermalState: Effect.succeed("nominal"),
+  onSimpleEvent: (name, listener) =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        powerListeners.set(name, listener);
+      }),
+      () =>
+        Effect.sync(() => {
+          powerListeners.delete(name);
+        }),
+    ).pipe(Effect.asVoid),
+  onThermalStateChange: () => Effect.void,
+  onSpeedLimitChange: () => Effect.void,
+});
+
 const electronThemeLayer = Layer.succeed(ElectronTheme.ElectronTheme, {
   shouldUseDarkColors: Effect.succeed(false),
   setSource: () => Effect.void,
   onUpdated: () => Effect.void,
 });
 
-function makeElectronWindowLayer(destroyAll: Effect.Effect<void> = Effect.void) {
+function makeElectronWindowLayer(
+  destroyAll: Effect.Effect<void> = Effect.void,
+  sendAll: ElectronWindow.ElectronWindow["Service"]["sendAll"] = () => Effect.void,
+) {
   return Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Effect.die("unexpected window creation"),
     main: Effect.die("unexpected main window read"),
@@ -70,7 +95,7 @@ function makeElectronWindowLayer(destroyAll: Effect.Effect<void> = Effect.void) 
     clearMain: () => Effect.void,
     prepareReveal: () => Effect.succeed(false),
     reveal: () => Effect.void,
-    sendAll: () => Effect.void,
+    sendAll,
     destroyAll,
     syncAllAppearance: () => Effect.void,
   });
@@ -105,6 +130,7 @@ describe("DesktopLifecycle", () => {
     it.effect(`lets the updater's quit event proceed on ${platform}`, () => {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
       let windowsDestroyed = false;
+      const wakeups: string[] = [];
       const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
         platform,
         isDevelopment: false,
@@ -113,11 +139,16 @@ describe("DesktopLifecycle", () => {
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(makeElectronAppLayer(appListeners)),
         Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(electronPowerMonitorLayer),
         Layer.provideMerge(
           makeElectronWindowLayer(
             Effect.sync(() => {
               windowsDestroyed = true;
             }),
+            (channel) =>
+              Effect.sync(() => {
+                wakeups.push(channel);
+              }),
           ),
         ),
         Layer.provideMerge(makeDesktopWindowLayer()),
@@ -131,6 +162,14 @@ describe("DesktopLifecycle", () => {
           const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
           yield* lifecycle.register;
 
+          for (const event of ["resume", "unlock-screen"]) {
+            powerListeners.get(event)?.();
+            yield* Effect.yieldNow;
+          }
+          assert.deepEqual(wakeups, [
+            Channels.CONNECTION_WAKEUP_CHANNEL,
+            Channels.CONNECTION_WAKEUP_CHANNEL,
+          ]);
           appListeners.get("before-quit-for-update")?.();
           yield* Effect.yieldNow;
 
@@ -191,6 +230,7 @@ describe("DesktopLifecycle", () => {
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(makeElectronAppLayer(appListeners, quit)),
         Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(electronPowerMonitorLayer),
         Layer.provideMerge(makeElectronWindowLayer(destroyAll)),
         Layer.provideMerge(makeDesktopWindowLayer({ flushMainWindowBounds })),
         Layer.provideMerge(environmentLayer),
@@ -232,6 +272,7 @@ describe("DesktopLifecycle", () => {
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(makeElectronAppLayer(appListeners)),
         Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(electronPowerMonitorLayer),
         Layer.provideMerge(makeElectronWindowLayer()),
         Layer.provideMerge(makeDesktopWindowLayer({ activate })),
         Layer.provideMerge(environmentLayer),

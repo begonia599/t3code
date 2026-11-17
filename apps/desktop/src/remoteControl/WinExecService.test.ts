@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real isolated child processes and files exercise the native execution adapter.
+import * as NodeEvents from "node:events";
+import * as NodeStream from "node:stream";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -26,12 +28,18 @@ const decodeProgress = Schema.decodeSync(Schema.fromJsonString(DesktopExecProgre
 const decodeStatus = Schema.decodeUnknownSync(DesktopStatusResult);
 const decodeLog = Schema.decodeUnknownSync(DesktopExecLogResult);
 
+const spawnOverride = vi.hoisted(() => ({
+  run: undefined as
+    | ((...args: Parameters<typeof NodeChildProcess.spawn>) => NodeChildProcess.ChildProcess)
+    | undefined,
+}));
 const children = vi.hoisted(() => [] as NodeChildProcess.ChildProcess[]);
 vi.mock("node:child_process", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:child_process")>();
   return {
     ...original,
     spawn: (...args: Parameters<typeof original.spawn>) => {
+      if (spawnOverride.run) return spawnOverride.run(...args);
       const child = original.spawn(...args);
       children.push(child);
       return child;
@@ -752,4 +760,133 @@ it("status falls back to the existing grant on unmapped workspaces, and log need
     await service.handlers.log!({ ...ctx, request: { ...ctx.request, input: { limit: 1 } } }),
   ).toEqual({ entries: [] });
   expect(authorize).not.toHaveBeenCalled();
+});
+
+describe("Windows process cleanup", () => {
+  function fixture() {
+    const child = Object.assign(new NodeEvents.EventEmitter(), {
+      pid: 1234,
+      stdout: new NodeStream.PassThrough(),
+      stderr: new NodeStream.PassThrough(),
+      kill: vi.fn(() => true),
+      unref: vi.fn(),
+      exitCode: null,
+      signalCode: null,
+    });
+    const killer = Object.assign(new NodeEvents.EventEmitter(), {
+      kill: vi.fn(() => true),
+      unref: vi.fn(),
+      exitCode: null,
+      signalCode: null,
+    });
+    const spawn = vi.fn(
+      (command: string) =>
+        (command === "taskkill.exe" ? killer : child) as unknown as NodeChildProcess.ChildProcess,
+    );
+    spawnOverride.run = spawn;
+    const controller = new AbortController();
+    const result = runProcess({
+      platform: "win32",
+      executable: "program.exe",
+      args: [],
+      cwd: dir,
+      winCwd: "C:\\work",
+      env: {},
+      timeoutMs: 60_000,
+      signal: controller.signal,
+      emit: async () => {},
+    });
+    child.emit("spawn");
+    return { child, killer, spawn, controller, result };
+  }
+
+  it.each(["nonzero", "error", "hung"])(
+    "falls back to the owned child when taskkill is %s",
+    async (failure) => {
+      vi.useFakeTimers();
+      try {
+        const f = fixture();
+        f.controller.abort();
+        expect(f.spawn).toHaveBeenLastCalledWith(
+          "taskkill.exe",
+          ["/T", "/F", "/PID", "1234"],
+          expect.objectContaining({ windowsHide: true }),
+        );
+        if (failure === "nonzero") f.killer.emit("exit", 1);
+        if (failure === "error") f.killer.emit("error", new Error("taskkill unavailable"));
+        if (failure === "hung") await vi.advanceTimersByTimeAsync(2_000);
+        expect(f.child.kill).toHaveBeenCalledWith("SIGKILL");
+        f.child.emit("close", null);
+        expect(await f.result).toMatchObject({ outcome: "cancelled", exitCode: null });
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        spawnOverride.run = undefined;
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("records and reports cleanup failure even when the execution was cancelled", async () => {
+    vi.useFakeTimers();
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    try {
+      const child = Object.assign(new NodeEvents.EventEmitter(), {
+        pid: 1234,
+        stdout: new NodeStream.PassThrough(),
+        stderr: new NodeStream.PassThrough(),
+        kill: vi.fn(() => true),
+        unref: vi.fn(),
+      });
+      spawnOverride.run = () => {
+        queueMicrotask(() => child.emit("spawn"));
+        return child as unknown as NodeChildProcess.ChildProcess;
+      };
+      const started = deferred<void>();
+      const controller = new AbortController();
+      const pending = execute(
+        "",
+        async (event) => {
+          if (event.kind === "progress" && decodeProgress(event.data).type === "started")
+            started.resolve();
+        },
+        {},
+        controller.signal,
+      );
+      const failure = expect(pending).rejects.toMatchObject({ code: "CLEANUP_FAILED" });
+      await started.promise;
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await failure;
+      expect(await store.readAudit({ limit: 1 })).toMatchObject([
+        { outcome: "error", errorCode: "CLEANUP_FAILED", finishedAt: expect.any(String) },
+      ]);
+    } finally {
+      spawnOverride.run = undefined;
+      kill.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("finishes with unknown process state within ten seconds when close never arrives", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fixture();
+      const failure = expect(f.result).rejects.toMatchObject({
+        code: "CLEANUP_FAILED",
+        message: expect.stringContaining("state is unknown"),
+      });
+      f.controller.abort();
+      f.killer.emit("exit", 1);
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(f.child.unref).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await failure;
+      expect(f.child.unref).toHaveBeenCalledOnce();
+      expect(f.child.stdout.destroyed).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      spawnOverride.run = undefined;
+      vi.useRealTimers();
+    }
+  });
 });

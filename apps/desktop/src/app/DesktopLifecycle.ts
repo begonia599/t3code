@@ -10,6 +10,8 @@ import type * as Electron from "electron";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
+import * as Channels from "../ipc/channels.ts";
+import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -38,10 +40,11 @@ export type DesktopLifecycleRuntimeServices =
 
 type DesktopLifecycleRegistrationServices =
   | DesktopLifecycleRuntimeServices
-  | ElectronWindow.ElectronWindow;
+  | ElectronWindow.ElectronWindow
+  | ElectronPowerMonitor.ElectronPowerMonitor;
 
 /**
- * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow
+ * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow | ElectronPowerMonitor
  */
 export class DesktopLifecycle extends Context.Service<
   DesktopLifecycle,
@@ -196,6 +199,20 @@ export const make = DesktopLifecycle.of({
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const context = yield* Effect.context<DesktopLifecycleRegistrationServices>();
     const runEffect = Effect.runPromiseWith(context);
+    const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
+    for (const event of ["resume", "unlock-screen"] as const) {
+      yield* powerMonitor.onSimpleEvent(event, () => {
+        void runEffect(
+          electronWindow
+            .sendAll(Channels.CONNECTION_WAKEUP_CHANNEL, undefined)
+            .pipe(
+              Effect.catchCause((cause) =>
+                logLifecycleError("failed to publish connection wakeup", { cause }),
+              ),
+            ),
+        );
+      });
+    }
     let quitAllowed = false;
     let updaterQuitAllowed = false;
     yield* electronTheme.onUpdated(() => {

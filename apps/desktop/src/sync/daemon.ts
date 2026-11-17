@@ -80,6 +80,7 @@ export async function startDaemon(
   let stopping = false;
   let attempts = 0;
   let restart: ReturnType<typeof setTimeout> | undefined;
+  let stable: ReturnType<typeof setTimeout> | undefined;
   const delays = options.restartDelays ?? [1000, 2000, 4000];
   let current: ReturnType<typeof launch>;
   function launch() {
@@ -89,23 +90,29 @@ export async function startDaemon(
       stdio: "ignore",
     });
     const ready = new Promise<void>((resolve, reject) => {
-      child.once("spawn", resolve);
+      child.once("spawn", () => {
+        stable = setTimeout(() => {
+          attempts = 0;
+          stable = undefined;
+        }, 60_000);
+        resolve();
+      });
       child.once("error", reject);
     });
     const closed = new Promise<void>((resolve) =>
       child.once("close", () => {
+        if (stable) clearTimeout(stable);
+        stable = undefined;
         resolve();
         if (stopping) return;
-        const delay = delays[attempts++];
-        if (delay === undefined) {
-          options.onUnavailable?.();
-          return;
-        }
+        const delay = delays[attempts];
+        if (delay === undefined) options.onUnavailable?.();
+        else attempts++;
         restart = setTimeout(() => {
           restart = undefined;
           current = launch();
           void current.ready.catch(() => {});
-        }, delay);
+        }, delay ?? 60_000);
       }),
     );
     return { child, ready, closed };
@@ -116,6 +123,7 @@ export async function startDaemon(
     (shutdown ??= (async () => {
       stopping = true;
       if (restart) clearTimeout(restart);
+      if (stable) clearTimeout(stable);
       const owned = current;
       // One shared five-second deadline covers both stop RPC and daemon exit.
       const timer = setTimeout(() => owned.child.kill("SIGKILL"), 5000);

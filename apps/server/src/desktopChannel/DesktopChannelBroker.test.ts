@@ -37,7 +37,7 @@ const makeHost = (overrides: Partial<DesktopChannelHost> = {}): DesktopChannelHo
   platform: "win32",
   appVersion: "1.0.0",
   environmentId: EnvironmentId.make("environment-1"),
-  capabilities: { enabled: true },
+  capabilities: { enabled: true, exec: { version: "1", shells: [] } },
   ...overrides,
 });
 
@@ -106,7 +106,10 @@ it.effect(
           requestId: unique.requestId,
         });
         yield* unique.cancel;
-        yield* broker.updateCapabilities({ ...disabled, capabilities: { enabled: true } });
+        yield* broker.updateCapabilities({
+          ...disabled,
+          capabilities: { enabled: true, exec: { version: "1", shells: [] } },
+        });
         expect(yield* invoke(broker).pipe(failure)).toMatchObject({ code: "HOST_AMBIGUOUS" });
         const explicit = yield* invoke(broker, hostId);
         expect(yield* Queue.take(disabled.inbox)).toMatchObject({ requestId: explicit.requestId });
@@ -559,11 +562,12 @@ it.effect("round trips connect, emit, capabilities and respond through the WS RP
       yield* client[WS_METHODS.desktopChannelUpdateCapabilities]({
         hostId,
         connectionId,
-        capabilities: { enabled: true, future: { version: 2 } },
+        capabilities: { enabled: true, exec: { version: "1", shells: [] }, future: { version: 2 } },
       });
       expect(yield* broker.ping()).toEqual({ pong: "rpc" });
       expect(yield* broker.getLastCapabilities(hostId)).toEqual({
         enabled: true,
+        exec: { version: "1", shells: [] },
         future: { version: 2 },
       });
       expect(
@@ -578,3 +582,44 @@ it.effect("round trips connect, emit, capabilities and respond through the WS RP
     }),
   ),
 );
+
+for (const capabilities of [
+  { enabled: false, exec: { version: "1", shells: [] } },
+  { enabled: true },
+]) {
+  it.effect(
+    `immediately cancels pending requests and rejects new calls after capability revocation (${JSON.stringify(capabilities)})`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const broker = yield* makeBroker;
+          const host = yield* startHost(broker);
+          const exec = yield* broker.invoke({ hostId, kind: "exec", input: {} });
+          const mcp = yield* broker.invoke({ hostId, kind: "mcp.call", input: {} });
+          yield* Queue.take(host.inbox);
+          yield* Queue.take(host.inbox);
+          yield* broker.updateCapabilities({ ...host, capabilities });
+          for (const handle of [exec, mcp]) {
+            expect(yield* handle.result.pipe(failure)).toMatchObject({
+              code: "HOST_DISABLED",
+              requestId: handle.requestId,
+            });
+            expect(yield* Queue.take(host.inbox)).toEqual({
+              type: "cancel",
+              requestId: handle.requestId,
+            });
+            expect(yield* Stream.runCollect(handle.events)).toEqual([]);
+          }
+          expect(yield* invoke(broker, hostId).pipe(failure)).toMatchObject({
+            code: "HOST_DISABLED",
+          });
+          yield* broker.updateCapabilities({
+            ...host,
+            capabilities: { enabled: true, exec: { version: "1", shells: [] } },
+          });
+          const restored = yield* invoke(broker, hostId);
+          yield* restored.cancel;
+        }),
+      ),
+  );
+}

@@ -89,7 +89,7 @@ export async function resolveExecutable(
   throw fail("SPAWN_NOT_FOUND", `Program not found: ${command}`);
 }
 
-/** Wait for close (including both pipes), even after timeout, cancellation, or an emit failure. */
+/** Drain both pipes on exit, with a bounded cleanup deadline after cancellation or failure. */
 export async function runProcess(options: {
   platform: NodeJS.Platform;
   executable: string;
@@ -123,25 +123,75 @@ export async function runProcess(options: {
   let chain = Promise.resolve();
   let closed = false;
   let killing = false;
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  let killerTimer: ReturnType<typeof setTimeout> | undefined;
+  let killer: NodeChildProcess.ChildProcess | undefined;
+  let settled = false;
+  let rejectCleanup!: (cause: Error) => void;
+  const cleanup = new Promise<never>((_resolve, reject) => {
+    rejectCleanup = reject;
+  });
+  // Attach a handler before an abort can reject the deadline promise.
+  void cleanup.catch(() => {});
   const delivery = new AbortController();
   let pendingOutput = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const killTree = () => {
-    if (closed || killing) return;
+    if (settled || killing) return;
     killing = true;
     delivery.abort();
+    cleanupTimer ??= setTimeout(() => {
+      child.stdout.destroy();
+      child.stderr.destroy();
+      child.unref();
+      rejectCleanup(
+        fail(
+          "CLEANUP_FAILED",
+          "Process cleanup did not finish within 10 seconds; the Windows process state is unknown.",
+        ),
+      );
+    }, 10_000);
+    if (closed) return;
+    const fallback = () => {
+      killing = false;
+      if (closed || settled) return;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* The cleanup deadline reports unknown state. */
+      }
+    };
     if (child.pid !== undefined) {
       if (options.platform === "win32") {
-        const killer = killWindowsProcessTree(child.pid);
-        killer.on("error", () => {
-          child.kill("SIGKILL");
-        });
+        try {
+          killer = killWindowsProcessTree(child.pid);
+          let finished = false;
+          const finishKill = (failed: boolean) => {
+            if (finished) return;
+            finished = true;
+            if (killerTimer) clearTimeout(killerTimer);
+            killing = false;
+            if (failed && !closed) fallback();
+          };
+          killer.once("error", () => finishKill(true));
+          killer.once("exit", (code) => finishKill(code !== 0));
+          killerTimer = setTimeout(() => {
+            try {
+              killer?.kill("SIGKILL");
+            } catch {
+              /* Best effort for our taskkill child. */
+            }
+            finishKill(true);
+          }, 2_000);
+        } catch {
+          fallback();
+        }
       } else {
         try {
           process.kill(-child.pid, "SIGKILL");
         } catch (cause) {
           if (!(typeof cause === "object" && cause && "code" in cause && cause.code === "ESRCH"))
-            child.kill("SIGKILL");
+            fallback();
         }
       }
     }
@@ -219,6 +269,7 @@ export async function runProcess(options: {
   child.stderr.on("end", () => enqueue(() => output("stderr", undefined, true)));
   child.on("error", (cause) => {
     error = fail(isMissing(cause) ? "SPAWN_NOT_FOUND" : "SPAWN_FAILED", cause.message);
+    killTree();
   });
   const close = new Promise<number | null>((resolve) =>
     child.once("close", (code) => {
@@ -228,6 +279,7 @@ export async function runProcess(options: {
     }),
   );
   child.once("spawn", () => {
+    if (settled) return;
     timer = setTimeout(() => {
       if (outcome !== "cancelled") outcome = "timedOut";
       killTree();
@@ -236,8 +288,8 @@ export async function runProcess(options: {
     if (options.signal.aborted) abort();
   });
   try {
-    const exitCode = await close;
-    await chain;
+    const exitCode = await Promise.race([close, cleanup]);
+    await Promise.race([chain, cleanup]);
     if (error && !options.signal.aborted) throw error;
     return {
       outcome,
@@ -250,7 +302,18 @@ export async function runProcess(options: {
       decodedAsGbk: decoders.stdout.decodedAsGbk || decoders.stderr.decodedAsGbk,
     };
   } finally {
+    settled = true;
     if (timer) clearTimeout(timer);
+    if (cleanupTimer) clearTimeout(cleanupTimer);
+    if (killerTimer) clearTimeout(killerTimer);
+    if (killer && killer.exitCode === null && killer.signalCode === null) {
+      try {
+        killer.kill("SIGKILL");
+      } catch {
+        /* Best effort for our taskkill child. */
+      }
+      killer.unref();
+    }
     options.signal.removeEventListener("abort", abort);
   }
 }
@@ -439,6 +502,8 @@ export function createWinExecService(options: {
           if (result.outcome !== "exited" || result.exitCode !== 0)
             throw new Error(`mutagen ${result.outcome}, exit code ${result.exitCode}`);
         } catch (cause) {
+          if (cause instanceof Error && "code" in cause && cause.code === "CLEANUP_FAILED")
+            throw cause;
           if (signal.aborted) throw fail("CANCELLED");
           throw fail("SYNC_FAILED", `${String(cause)}${stderr ? `: ${stderr}` : ""}`);
         }
@@ -503,14 +568,16 @@ export function createWinExecService(options: {
         isExecErrorCode(cause.code)
           ? cause.code
           : "INTERNAL";
+      const reportedCode = code === "CLEANUP_FAILED" ? code : signal.aborted ? "CANCELLED" : code;
       entry = {
         ...entry,
-        outcome: signal.aborted ? "cancelled" : "error",
-        errorCode: signal.aborted ? "CANCELLED" : code,
+        outcome:
+          reportedCode === "CLEANUP_FAILED" ? "error" : signal.aborted ? "cancelled" : "error",
+        errorCode: reportedCode,
         durationMs: Date.now() - Date.parse(startedAt),
       };
       throw fail(
-        signal.aborted ? "CANCELLED" : code,
+        reportedCode,
         cause instanceof Error
           ? cause.message
           : typeof cause === "object" &&
@@ -524,9 +591,12 @@ export function createWinExecService(options: {
       if (acquired) release();
       controllers.delete(controller);
       if (tempDir) await NodeFSP.rm(tempDir, { recursive: true, force: true }).catch(() => {});
-      await options.store.appendAudit({ ...entry, finishedAt: new Date().toISOString() });
-      completions.delete(completion);
-      finish();
+      try {
+        await options.store.appendAudit({ ...entry, finishedAt: new Date().toISOString() });
+      } finally {
+        completions.delete(completion);
+        finish();
+      }
     }
   };
   const handlers: Record<string, RequestHandler> = {

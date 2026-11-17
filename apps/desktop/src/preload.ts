@@ -62,6 +62,11 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
   return result as Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>;
 }
 
+// DOM events cross the isolated preload boundary without exposing a new callable API.
+ipcRenderer.on(IpcChannels.CONNECTION_WAKEUP_CHANNEL, () => {
+  window.dispatchEvent(new Event("t3:connection-wakeup"));
+});
+
 contextBridge.exposeInMainWorld("desktopBridge", {
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);

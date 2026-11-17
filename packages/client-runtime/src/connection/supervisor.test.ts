@@ -1,6 +1,8 @@
 import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
+import * as Random from "effect/Random";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -122,6 +124,7 @@ const eventuallyState = Effect.fn("TestConnectionHarness.eventuallyState")(funct
 
 const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?: {
   readonly networkStatus?: NetworkStatus;
+  readonly random?: () => number;
   readonly prepare?: (
     attempt: number,
     target: ConnectionTarget,
@@ -190,6 +193,10 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   });
 
   const dependencies = Layer.mergeAll(
+    Layer.succeed(Random.Random, {
+      nextDoubleUnsafe: options?.random ?? (() => 0.5),
+      nextIntUnsafe: () => 0,
+    }),
     Layer.succeed(Connectivity.Connectivity, connectivity),
     Layer.succeed(
       ConnectionWakeups.ConnectionWakeups,
@@ -382,6 +389,63 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(harness.prepareCount)).toBe(7);
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  for (const random of [0, 0.5, 1]) {
+    it.effect(
+      `jitters retry delays within twenty percent and caps at sixteen seconds (draw ${random})`,
+      () =>
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({
+            prepare: () => Effect.fail(transient()),
+            random: () => random,
+          });
+          const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+            initiallyDesired: true,
+          }).pipe(Effect.provide(harness.dependencies));
+          for (const [index, base] of [3_000, 4_000, 8_000, 16_000, 16_000].entries()) {
+            const state = yield* awaitState(
+              supervisor.state,
+              (state) => state.phase === "backoff" && state.attempt === index + 1,
+            );
+            const delay = state.retryAt! - (yield* Clock.currentTimeMillis);
+            expect(delay).toBe(Math.min(16_000, Math.round(base * (0.8 + random * 0.4))));
+            expect(delay).toBeGreaterThanOrEqual(base * 0.8);
+            expect(delay).toBeLessThanOrEqual(Math.min(base * 1.2, 16_000));
+            yield* TestClock.adjust(delay);
+          }
+        }).pipe(Effect.provide(TestClock.layer())),
+    );
+  }
+
+  it.effect("coalesces resume and unlock probes without interrupting a health check", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const probes = yield* Ref.make(0);
+      const interrupted = yield* Ref.make(false);
+      const harness = yield* makeHarness({
+        probe: () =>
+          Ref.update(probes, (n) => n + 1).pipe(
+            Effect.andThen(Deferred.succeed(started, undefined)),
+            Effect.andThen(Deferred.await(finish)),
+            Effect.onInterrupt(() => Ref.set(interrupted, true)),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-active-probe");
+      yield* Deferred.await(started);
+      yield* harness.wake("application-active-probe");
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(finish, undefined);
+      yield* Effect.yieldNow;
+      expect(yield* Ref.get(probes)).toBe(1);
+      expect(yield* Ref.get(interrupted)).toBe(false);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+    }),
   );
 
   it.effect("keeps the latest failure visible throughout the next connection attempt", () =>

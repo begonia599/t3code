@@ -107,6 +107,9 @@ interface Connection {
   requestSequence: number;
 }
 
+const isAvailable = (capabilities: DesktopChannelCapabilities) =>
+  capabilities.enabled && Boolean(capabilities.exec || capabilities.mcp);
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const options = yield* DesktopChannelBrokerOptions;
@@ -313,6 +316,23 @@ const make = Effect.gen(function* () {
       const connection = currentConnection(input);
       if (!connection) return Effect.fail(stale(input));
       connection.host = { ...connection.host, capabilities: input.capabilities };
+      if (!isAvailable(input.capabilities)) {
+        for (const entry of connection.pending.values()) {
+          finishUnsafe(
+            connection,
+            entry,
+            Effect.fail(
+              error(
+                "HOST_DISABLED",
+                "Desktop channel is disabled on this host; the remote request state is unknown.",
+                input.hostId,
+                entry.requestId,
+              ),
+            ),
+            true,
+          );
+        }
+      }
       capabilities.set(input.hostId, input.capabilities);
       knownHosts.set(input.hostId, connection.host);
       PubSub.publishUnsafe(changes, connection.host);
@@ -331,8 +351,8 @@ const make = Effect.gen(function* () {
     const emitLock = yield* Semaphore.make(1);
     const { connection, entry } = yield* Effect.acquireRelease(
       Effect.suspend(() => {
-        const enabled = [...connections.values()].filter(
-          (value) => value.host.capabilities.enabled,
+        const enabled = [...connections.values()].filter((value) =>
+          isAvailable(value.host.capabilities),
         );
         const connection = input.hostId === undefined ? enabled[0] : connections.get(input.hostId);
         if (input.hostId === undefined && enabled.length > 1)
@@ -341,7 +361,7 @@ const make = Effect.gen(function* () {
           );
         if (!connection)
           return Effect.fail(error("HOST_OFFLINE", "Desktop host is offline.", input.hostId));
-        if (!connection.host.capabilities.enabled)
+        if (!isAvailable(connection.host.capabilities))
           return Effect.fail(
             error(
               "HOST_DISABLED",

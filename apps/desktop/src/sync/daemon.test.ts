@@ -1,9 +1,24 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Isolated native process fixtures exercise lifecycle ownership.
+import * as NodeEvents from "node:events";
+import type * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { afterEach, expect, it } from "vite-plus/test";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { daemonEnvironment, findSyncPaths, startDaemon } from "./daemon.ts";
+const spawnOverride = vi.hoisted(() => ({
+  run: undefined as
+    | ((...args: Parameters<typeof NodeChildProcess.spawn>) => NodeChildProcess.ChildProcess)
+    | undefined,
+}));
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...original,
+    spawn: (...args: Parameters<typeof original.spawn>) =>
+      spawnOverride.run ? spawnOverride.run(...args) : original.spawn(...args),
+  };
+});
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
   for (const stop of cleanup.splice(0).toReversed()) await stop();
@@ -100,4 +115,106 @@ it("force kills and reaps its daemon when stop returns without shutting it down"
   await manager.stop();
   expect(manager.running).toBe(false);
   expect(() => process.kill(pid, 0)).toThrow();
+});
+
+function mockDaemon() {
+  const runs: Array<ReturnType<typeof child>> = [];
+  function child() {
+    const process = Object.assign(new NodeEvents.EventEmitter(), {
+      pid: 1234,
+      exitCode: null as number | null,
+      signalCode: null,
+      kill: vi.fn(() => true),
+    });
+    return process;
+  }
+  spawnOverride.run = (_file, args) => {
+    const process = child();
+    queueMicrotask(() => {
+      process.emit("spawn");
+      if (args?.[1] === "stop") {
+        for (const run of runs)
+          if (run.exitCode === null) {
+            run.exitCode = 0;
+            run.emit("close", 0);
+          }
+        process.exitCode = 0;
+        process.emit("close", 0);
+      }
+    });
+    if (args?.[1] === "run") runs.push(process);
+    return process as unknown as NodeChildProcess.ChildProcess;
+  };
+  const crash = () => {
+    const run = runs.at(-1)!;
+    run.exitCode = 1;
+    run.emit("close", 1);
+  };
+  return { runs, crash };
+}
+
+it("resets the restart budget after sixty seconds of stable running", async () => {
+  const f = await fixture();
+  vi.useFakeTimers();
+  const native = mockDaemon();
+  let manager: Awaited<ReturnType<typeof startDaemon>> | undefined;
+  try {
+    const unavailable = vi.fn();
+    manager = await startDaemon(
+      { executable: "mutagen", shimDirectory: f.bin, dataDirectory: f.directory },
+      { address: "local", token: "test" },
+      { onUnavailable: unavailable },
+    );
+    for (const delay of [1_000, 2_000, 4_000]) {
+      native.crash();
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    expect(native.runs).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(60_000);
+    native.crash();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(native.runs).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(native.runs).toHaveLength(5);
+    expect(unavailable).not.toHaveBeenCalled();
+  } finally {
+    await manager?.stop();
+    expect(vi.getTimerCount()).toBe(0);
+    spawnOverride.run = undefined;
+    vi.useRealTimers();
+  }
+});
+
+it("keeps retrying every sixty seconds after exhausting the fast restart budget", async () => {
+  const f = await fixture();
+  vi.useFakeTimers();
+  const native = mockDaemon();
+  let manager: Awaited<ReturnType<typeof startDaemon>> | undefined;
+  try {
+    const unavailable = vi.fn();
+    manager = await startDaemon(
+      { executable: "mutagen", shimDirectory: f.bin, dataDirectory: f.directory },
+      { address: "local", token: "test" },
+      { onUnavailable: unavailable },
+    );
+    for (const delay of [1_000, 2_000, 4_000]) {
+      native.crash();
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    for (let i = 0; i < 2; i++) {
+      native.crash();
+      expect(manager.running).toBe(false);
+      expect(unavailable).toHaveBeenCalledTimes(i + 1);
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(native.runs).toHaveLength(4 + i);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(native.runs).toHaveLength(5 + i);
+      expect(manager.running).toBe(true);
+    }
+  } finally {
+    await manager?.stop();
+    expect(vi.getTimerCount()).toBe(0);
+    spawnOverride.run = undefined;
+    vi.useRealTimers();
+  }
 });

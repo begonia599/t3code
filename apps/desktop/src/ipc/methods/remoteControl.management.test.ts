@@ -1,6 +1,8 @@
 import { LocalMcpManager, createLocalMcpManager } from "../../remoteControl/LocalMcpManager.ts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Logger from "effect/Logger";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -22,10 +24,14 @@ import * as Channels from "../channels.ts";
 
 vi.mock("electron", () => ({ webContents: { fromId: () => undefined } }));
 
-it.effect(
-  "exposes config, pending approval, grants, capabilities, audit and disconnect through typed IPC",
-  () =>
+it.effect.each(["blocked", "failed"])(
+  "exposes management IPC and completes disconnect while native cleanup is %s",
+  (cleanupBehavior) =>
     Effect.gen(function* () {
+      const logs: unknown[] = [];
+      const logger = Logger.make(({ message }) => {
+        logs.push(message);
+      });
       const fs = yield* FileSystem.FileSystem;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-control-ipc-" });
       const messages: Array<{ channel: string; payload: unknown }> = [];
@@ -179,13 +185,56 @@ it.effect(
       yield* invoke(Methods.setEnvironmentEnabled, { environmentId: "env", enabled: true });
       const blocked = store.authorize(grantInput, new AbortController().signal, async () => {});
       const rejected = expect(blocked).rejects.toMatchObject({ code: "GRANT_DENIED" });
-      yield* invoke(Methods.disconnectAll);
+      let finishCleanup!: () => void;
+      let cleanupStarted = false;
+      const cleanup = new Promise<void>((resolve) => {
+        finishCleanup = resolve;
+      });
+      service.disconnectAll = async () => {
+        expect(
+          messages.some(
+            (m) =>
+              m.channel === Channels.REMOTE_CONTROL_CAPABILITIES_CHANGED_CHANNEL &&
+              JSON.stringify(m.payload) === '{"enabled":false}',
+          ),
+        ).toBe(true);
+        expect(
+          messages.some(
+            (m) =>
+              m.channel === Channels.REMOTE_CONTROL_ENABLED_CHANGED_CHANNEL &&
+              JSON.stringify(m.payload) === "[]",
+          ),
+        ).toBe(true);
+        cleanupStarted = true;
+        if (cleanupBehavior === "failed") throw new Error("native cleanup failed");
+        await cleanup;
+      };
+      yield* invoke(Methods.disconnectAll).pipe(
+        Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+      );
+      // A stuck native cleanup cannot delay durable revocation or the IPC reply.
+      expect((yield* settings.get).remoteControl.enabledEnvironmentIds).toEqual([]);
+      yield* Effect.yieldNow;
+      expect(cleanupStarted).toBe(true);
+      if (cleanupBehavior === "blocked") yield* TestClock.adjust("10 seconds");
+      else yield* Effect.yieldNow;
+      expect(
+        logs.some((message) =>
+          String(message).includes("Remote control disconnect cleanup failed"),
+        ),
+      ).toBe(true);
+      finishCleanup();
       yield* Effect.promise(() => rejected);
       expect(yield* invoke(Methods.getEnabledEnvironmentIds)).toEqual([]);
       expect(yield* invoke(Methods.getPendingGrantRequests)).toEqual([]);
-      expect(messages.at(-1)).toMatchObject({
+      expect(
+        messages.findLast((m) => m.channel === Channels.REMOTE_CONTROL_CONFIG_CHANGED_CHANNEL),
+      ).toMatchObject({
         channel: Channels.REMOTE_CONTROL_CONFIG_CHANGED_CHANNEL,
         payload: { enabledEnvironmentIds: [] },
       });
-    }).pipe(Effect.provide(Layer.mergeAll(layerTest(), NodeServices.layer)), Effect.scoped),
+    }).pipe(
+      Effect.provide(Layer.mergeAll(layerTest(), NodeServices.layer, TestClock.layer())),
+      Effect.scoped,
+    ),
 );

@@ -241,14 +241,26 @@ export const disconnectAll = makeIpcMethod({
     const { router } = yield* RemoteControlRequestRouter;
     const service = yield* WinExecService;
     const ids = (yield* settings.get).remoteControl.enabledEnvironmentIds;
-    (yield* RemoteControlStore).rejectEnvironment();
-    for (const id of ids) router.cancelEnvironment(id);
-    yield* Effect.gen(function* () {
-      for (const id of ids) yield* settings.setEnvironmentEnabled(id, false);
-    }).pipe(Effect.ensuring(Effect.promise(() => service.disconnectAll())));
+    for (const id of ids) yield* settings.setEnvironmentEnabled(id, false);
     const windows = yield* ElectronWindow;
+    yield* windows.sendAll(Channels.REMOTE_CONTROL_CAPABILITIES_CHANGED_CHANNEL, {
+      enabled: false,
+    });
     yield* windows.sendAll(Channels.REMOTE_CONTROL_ENABLED_CHANGED_CHANNEL, []);
     yield* windows.sendAll(Channels.REMOTE_CONTROL_CONFIG_CHANGED_CHANNEL, yield* readConfig);
+    const store = yield* RemoteControlStore;
+    // Revocation is durable and published before cleanup; native cleanup never owns the IPC reply.
+    yield* Effect.gen(function* () {
+      store.rejectEnvironment();
+      for (const id of ids) router.cancelEnvironment(id);
+      yield* nativeCall(() => service.disconnectAll());
+    }).pipe(
+      Effect.timeout("10 seconds"),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Remote control disconnect cleanup failed", cause),
+      ),
+      Effect.forkDetach,
+    );
   }),
 });
 export const methods = [

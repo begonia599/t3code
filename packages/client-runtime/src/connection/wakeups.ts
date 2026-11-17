@@ -1,6 +1,8 @@
 import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
 import * as Layer from "effect/Layer";
-import type * as Stream from "effect/Stream";
+import * as Stream from "effect/Stream";
 
 export type ConnectionWakeup =
   | "application-active"
@@ -27,7 +29,29 @@ export class ConnectionWakeups extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/wakeups/ConnectionWakeups") {}
 
-const make = (service: ConnectionWakeups["Service"]) => ConnectionWakeups.of(service);
+const desktopWakeups = Stream.unwrap(
+  Effect.sync(() => {
+    // React Native also has a window global, but has no DOM event bridge.
+    if (typeof window === "undefined" || typeof window.addEventListener !== "function")
+      return Stream.empty;
+    const target = window;
+    return Stream.callback<ConnectionWakeup>((queue) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          const listener = () => Queue.offerUnsafe(queue, "application-active-probe");
+          target.addEventListener("t3:connection-wakeup", listener);
+          return () => target.removeEventListener("t3:connection-wakeup", listener);
+        }),
+        (unsubscribe) => Effect.sync(unsubscribe),
+      ).pipe(Effect.asVoid),
+    );
+  }),
+);
+
+const make = (service: ConnectionWakeups["Service"]) =>
+  ConnectionWakeups.of({
+    changes: Stream.merge(service.changes, desktopWakeups),
+  });
 
 export const layer = (service: ConnectionWakeups["Service"]) =>
   Layer.succeed(ConnectionWakeups, make(service));

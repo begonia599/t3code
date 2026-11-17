@@ -55,6 +55,24 @@ const fixture = (
 };
 
 describe("win launcher", () => {
+  it("reports cleanup failure as unknown state with actionable Windows guidance", async () => {
+    const f = fixture(
+      ["--", "program"],
+      [
+        accepted,
+        {
+          type: "error",
+          code: "CLEANUP_FAILED",
+          message: "Process cleanup deadline expired; state is unknown.",
+        },
+      ],
+    );
+    expect(await f.run()).toBe(122);
+    expect(f.output.stderr).toContain("CLEANUP_FAILED");
+    expect(f.output.stderr).toContain(
+      "check running processes on the Windows host before retrying",
+    );
+  });
   it("preserves argv, overlays env and sends the server cwd and session headers", async () => {
     const f = fixture([
       "--cwd",
@@ -269,7 +287,12 @@ describe("win launcher", () => {
     async (code, exit) => {
       const f = fixture(undefined, [{ type: "error", code, message: "test" }]);
       expect(await f.run()).toBe(exit);
-      expect(f.output.stderr).toBe(`[win] ${code}: test\n`);
+      expect(f.output.stderr).toBe(
+        `[win] ${code}: test\n` +
+          (code === "CLEANUP_FAILED"
+            ? "[win] Process cleanup failed; check running processes on the Windows host before retrying.\n"
+            : ""),
+      );
     },
   );
   it.each([

@@ -92,7 +92,7 @@ describe("desktop exec contracts", () => {
         "HOST_BUSY",
         "REMOTE_DISABLED",
       ],
-      122: ["HOST_DISCONNECTED"],
+      122: ["HOST_DISCONNECTED", "CLEANUP_FAILED"],
       124: ["TIMEOUT"],
       125: ["BAD_REQUEST"],
       126: ["GRANT_DENIED", "GRANT_TIMEOUT"],
