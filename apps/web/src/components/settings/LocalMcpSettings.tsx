@@ -487,7 +487,7 @@ function LocalMcpFailure({
   kind: LocalMcpErrorKind | undefined;
   detail: string | undefined;
   /** The server's transport, so the explanation can name the address. */
-  transport?: LocalMcpTransport;
+  transport?: LocalMcpTransport | undefined;
   retrying?: boolean;
 }) {
   const t = useT();
