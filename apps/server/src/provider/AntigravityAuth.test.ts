@@ -82,6 +82,8 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
           }),
         );
         return {
+          getEvents: () => Stream.empty,
+          drainEvents: Effect.void,
           initialize: () =>
             Effect.gen(function* () {
               events.push("initialize");

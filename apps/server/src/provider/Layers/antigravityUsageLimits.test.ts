@@ -1,6 +1,6 @@
+import { describe, expect, it } from "@effect/vitest";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { collectLimitPools, displayLimitWindows } from "@t3tools/shared/usageLimits";
-import { describe, expect, it } from "vitest";
 
 import { parseAntigravityUsageLimits } from "./antigravityUsageLimits.ts";
 

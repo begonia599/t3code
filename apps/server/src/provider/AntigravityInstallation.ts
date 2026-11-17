@@ -153,7 +153,9 @@ export class AntigravityInstallation extends Context.Service<
 export interface AntigravityInstallationOptions {
   readonly baseDir: string;
   readonly canPrune?: Effect.Effect<boolean>;
-  readonly availableBytes?: (directory: string) => Effect.Effect<bigint, unknown>;
+  readonly availableBytes?: (
+    directory: string,
+  ) => Effect.Effect<bigint, AntigravityInstallationError>;
   readonly releaseAsset?: AntigravityReleaseAsset | null;
   readonly validate?: (
     executable: AntigravityExecutable,
@@ -328,9 +330,12 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   const availableBytes =
     options.availableBytes ??
     ((directory: string) =>
-      Effect.tryPromise(async () => {
-        const { bavail, bsize } = await NodeFSP.statfs(directory, { bigint: true });
-        return bavail * bsize;
+      Effect.tryPromise({
+        try: async () => {
+          const { bavail, bsize } = await NodeFSP.statfs(directory, { bigint: true });
+          return bavail * bsize;
+        },
+        catch: wrapFailure("download", "Could not check free space for the Antigravity runtime."),
       }));
   // Serializes activation and startup pruning across servers sharing a tools directory.
   const acquireMaintenanceLock = Effect.gen(function* () {
@@ -1108,7 +1113,8 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   ]);
   const canPrune = options.canPrune ?? Effect.succeed(true);
   const pruneVersions = Effect.gen(function* () {
-    yield* acquireMaintenanceLock;
+    // The sweep holds the lock until its scope closes.
+    yield* Effect.asVoid(acquireMaintenanceLock);
     const active = yield* readRecord(activePath, ActiveRelease);
     if (!active.previousReleaseId || !(yield* canPrune)) return;
     yield* completedRelease(active.previousReleaseId);

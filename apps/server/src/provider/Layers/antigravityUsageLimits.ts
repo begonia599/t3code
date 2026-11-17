@@ -1,6 +1,8 @@
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import type { AcpError } from "effect-acp/errors";
 
@@ -26,8 +28,11 @@ function windowPeriod(name: string) {
 
 function resetTime(date: string | undefined) {
   if (!date || !/^[A-Z][a-z]{2} \d{2}, \d{4}, \d{2}:\d{2} UTC$/.test(date)) return undefined;
-  const time = Date.parse(date);
-  return Number.isFinite(time) ? new Date(time).toISOString() : undefined;
+  // DateTime recognizes GMT as an explicit zone in agy's English month format.
+  return DateTime.make(date.replace(/ UTC$/, " GMT")).pipe(
+    Option.map(DateTime.formatIso),
+    Option.getOrUndefined,
+  );
 }
 
 /** Reads only the Quota Limits section emitted by the native slash command. */

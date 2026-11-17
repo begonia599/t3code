@@ -335,10 +335,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         generation !== accountGeneration ||
         (state.draft.auth.status === "authenticated" && state.draft.auth.label === label)
           ? state
-          : {
+          : ({
               ...state,
               draft: { ...state.draft, auth: { status: "authenticated", ...defaultAuth, label } },
-            },
+            } satisfies AntigravityProviderState),
       );
     };
   };
@@ -515,7 +515,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
               : { status: "unauthenticated" },
           usageLimits: undefined,
         },
-      };
+      } satisfies AntigravityProviderState;
     }),
     onSessionStarted,
     onConfigOptionsUpdated,

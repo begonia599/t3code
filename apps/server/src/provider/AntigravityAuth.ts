@@ -67,7 +67,7 @@ export interface AntigravityAuth {
 
 export type AntigravityAuthRuntime = Pick<
   AcpSessionRuntime["Service"],
-  "initialize" | "start" | "request"
+  "initialize" | "start" | "request" | "getEvents" | "drainEvents"
 >;
 
 export interface AntigravityAuthOptions<
