@@ -20,7 +20,7 @@ export const withDesktopChannelBackpressure = Effect.fnUntraced(function* (
     send: (
       clientId: number,
       request: Parameters<typeof protocol.send>[1],
-      transferables?: ReadonlyArray<globalThis.Transferable>,
+      transferables?: Parameters<typeof protocol.send>[2],
     ) => {
       if (
         request._tag !== "Request" ||

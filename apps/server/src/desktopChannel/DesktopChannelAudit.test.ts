@@ -1,5 +1,6 @@
 import * as NodePerfHooks from "node:perf_hooks";
 import { it, expect } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -68,7 +69,7 @@ it.effect("begins once, truncates summary, and allows a real result to overwrite
 it.effect("startup sweeps only running rows strictly before process start, once per layer", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const origin = new Date(NodePerfHooks.performance.timeOrigin).toISOString();
+    const origin = DateTime.formatIso(DateTime.makeUnsafe(NodePerfHooks.performance.timeOrigin));
     for (const [id, startedAt, outcome] of [
       ["old", "2000-01-01T00:00:00.000Z", "running"],
       ["equal", origin, "running"],

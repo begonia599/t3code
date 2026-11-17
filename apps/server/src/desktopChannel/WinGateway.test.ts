@@ -59,7 +59,7 @@ const host: DesktopChannelHost = {
   capabilities: { enabled: true, exec: { version: "1", shells: ["pwsh"] } },
 };
 const exec = {
-  mode: "argv",
+  mode: "argv" as const,
   argv: ["echo", "hello world"],
   serverCwd: "/project",
   env: {},

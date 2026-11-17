@@ -4,6 +4,7 @@ import { expect } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Broker from "./DesktopChannelBroker.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -11,6 +12,8 @@ import * as Deferred from "effect/Deferred";
 import * as TestClock from "effect/testing/TestClock";
 import * as Relay from "./WinMcpRelay.ts";
 import { host, scope, startHost, testLayer, toolResult } from "./winMcpTestHelpers.ts";
+
+const encodeJson = Schema.encodeSync(Schema.UnknownFromJsonString);
 
 it.effect(
   "aggregates definitions, truncates names, deterministically resolves natural/hash collisions",
@@ -382,7 +385,7 @@ it.effect.each([
           win_cwd: null,
         },
       ]);
-      expect(JSON.stringify(rows)).not.toContain("not-recorded");
+      expect(encodeJson(rows)).not.toContain("not-recorded");
     }),
   ).pipe(Effect.provide(testLayer())),
 );
