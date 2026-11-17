@@ -138,6 +138,42 @@ it.effect("maps calls, forwards progress, preserves tool errors, and cancels the
   ).pipe(Effect.provide(testLayer())),
 );
 
+it.effect(
+  "keeps each session's audit label in broker context, including absent and empty labels",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* startHost();
+        const relay = yield* Relay.WinMcpRelay;
+        const first = yield* relay.open(scope, "task-a");
+        const second = yield* relay.open(scope, "task-b");
+        const unlabeled = yield* relay.open(scope);
+        const empty = yield* relay.open(scope, "");
+        for (const [session, label] of [
+          [first, "task-a"],
+          [second, "task-b"],
+          [unlabeled, undefined],
+          [empty, ""],
+          [first, "task-a"],
+          [second, "task-b"],
+        ] as const) {
+          const call = yield* relay.call(session, "unity__inspect", {}).pipe(Effect.forkScoped);
+          const request = yield* h.next;
+          if (request.type !== "request") throw new Error("Expected request");
+          expect(request.context).toEqual({
+            threadId: scope.threadId,
+            provider: scope.providerInstanceId,
+            projectId: "project",
+            workspaceRoot: "/project",
+            ...(label === undefined ? {} : { label }),
+          });
+          yield* h.respond(request.requestId, toolResult);
+          expect(yield* Fiber.join(call)).toEqual(toolResult);
+        }
+      }),
+    ).pipe(Effect.provide(testLayer())),
+);
+
 it.effect.each([
   "BAD_REQUEST",
   "REMOTE_DISABLED",

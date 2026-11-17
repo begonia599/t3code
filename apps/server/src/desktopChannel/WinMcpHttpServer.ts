@@ -1,4 +1,5 @@
 import * as NodeCrypto from "node:crypto";
+import { normalizeWinLabel, WIN_GATEWAY_LABEL_HEADER } from "@t3tools/contracts";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
@@ -23,7 +24,7 @@ export class WinMcpHttpOptions extends Context.Reference<{
   readonly sweepIntervalMs: number;
 }>("t3/desktopChannel/WinMcpHttpOptions", {
   defaultValue: () => ({
-    maxSessionsPerScope: 4,
+    maxSessionsPerScope: 8,
     // Clients re-initialize on a -32001 404, but an open GET stream is not "activity";
     // keep idle sessions long enough that a paused conversation does not churn them.
     idleTimeoutMs: 6 * 60 * 60_000,
@@ -111,7 +112,8 @@ export const routes = HttpRouter.use((router) =>
       }
       if (!session) {
         if (request.method !== "POST") return HttpServerResponse.empty({ status: 400 });
-        const relaySession = yield* relay.open(scope);
+        const label = normalizeWinLabel(request.headers.get(WIN_GATEWAY_LABEL_HEADER));
+        const relaySession = yield* relay.open(scope, label);
         const catalog = yield* relay.list(relaySession);
         const server = new Server(
           { name: "t3-win", version: "1.0.0" },
@@ -178,13 +180,14 @@ export const routes = HttpRouter.use((router) =>
       if ((request.method === "DELETE" && response.ok) || !current.transport.sessionId)
         yield* close(current);
       else if (!id) {
-        const siblings = [...sessions.values()].filter(
-          (candidate) => candidate.owner === scope.providerSessionId,
-        );
-        // Map insertion order is creation order, including simultaneous reconnects.
+        const siblings = [...sessions.values()]
+          .filter(
+            (candidate) => candidate.owner === scope.providerSessionId && candidate !== current,
+          )
+          .sort((a, b) => a.lastSeen - b.lastSeen);
         for (const oldest of siblings.slice(
           0,
-          Math.max(0, siblings.length - options.maxSessionsPerScope),
+          Math.max(0, siblings.length + 1 - options.maxSessionsPerScope),
         ))
           yield* close(oldest);
       }

@@ -128,7 +128,7 @@ const decodeProgress = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopM
 export class WinMcpRelay extends Context.Service<
   WinMcpRelay,
   {
-    readonly open: (scope: McpInvocationScope) => Effect.Effect<WinMcpSession>;
+    readonly open: (scope: McpInvocationScope, label?: string) => Effect.Effect<WinMcpSession>;
     readonly list: (session: WinMcpSession) => Effect.Effect<Catalog>;
     readonly changes: Stream.Stream<DesktopChannelHost>;
     readonly call: (
@@ -194,8 +194,8 @@ const make = Effect.gen(function* () {
     session.hostName = host.hostName;
     return refresh(host);
   });
-  const open = Effect.fn("WinMcpRelay.open")(function* (scope: McpInvocationScope) {
-    const { context, link } = yield* resolveWindowsContext(scope).pipe(
+  const open = Effect.fn("WinMcpRelay.open")(function* (scope: McpInvocationScope, label?: string) {
+    const { context, link } = yield* resolveWindowsContext(scope, label).pipe(
       Effect.provide(services),
       Effect.orDie,
     );

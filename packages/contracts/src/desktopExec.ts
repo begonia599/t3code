@@ -195,6 +195,9 @@ export const WIN_GATEWAY_PATH_PREFIX = "/agent-win/v1";
 /** Header carrying T3_WIN_LABEL (codex-delegate --label). */
 export const WIN_GATEWAY_LABEL_HEADER = "x-t3-win-label";
 
+/** Bound audit labels consistently across Windows HTTP entry points. */
+export const normalizeWinLabel = (label: string | null | undefined) => label?.slice(0, 200);
+
 /** POST /agent-win/v1/exec body. `host` selects by hostId or hostName when several are online. */
 export const WinGatewayExecRequest = Schema.Struct({
   exec: DesktopExecInput,

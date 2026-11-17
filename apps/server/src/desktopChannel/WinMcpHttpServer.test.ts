@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off preferSchemaOverJson:off - drives the real MCP HTTP route with raw requests to check protocol status codes and SSE bodies.
 import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { WIN_GATEWAY_LABEL_HEADER } from "@t3tools/contracts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
@@ -51,14 +52,16 @@ const fixture = Effect.gen(function* () {
   if (typeof server.address === "string" || !("port" in server.address))
     throw new Error("Expected TCP");
   const url = new URL(`http://127.0.0.1:${server.address.port}/mcp-win`);
-  const connect = Effect.fn(function* (token = "owner") {
+  const connect = Effect.fn(function* (token = "owner", label?: string) {
     const client = new Client({ name: "test", version: "1" });
+    const headers = new Headers({ Authorization: `Bearer ${token}` });
+    if (label !== undefined) headers.set(WIN_GATEWAY_LABEL_HEADER, label);
     const transport = new StreamableHTTPClientTransport(url, {
-      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+      requestInit: { headers },
     });
     yield* Effect.addFinalizer(() => Effect.promise(() => client.close()));
     yield* Effect.promise(() => client.connect(transport as Parameters<Client["connect"]>[0]));
-    return { client, transport };
+    return { client, transport, headers };
   });
   const request = (token?: string, id?: string, method = "GET") =>
     Effect.promise(() =>
@@ -143,7 +146,7 @@ it.effect(
 );
 
 it.effect(
-  "requires win bearer, isolates sessions, recycles DELETE and caps each scope at four sessions",
+  "requires win bearer, isolates sessions, recycles DELETE and caps each scope at eight sessions",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -156,7 +159,7 @@ it.effect(
         expect((yield* f.request("invalid", firstId)).status).toBe(401);
         expect((yield* Effect.promise(() => first.client.listTools())).tools).toEqual([]);
         const other = yield* f.connect("other");
-        for (let i = 0; i < 4; i++) yield* f.connect();
+        for (let i = 0; i < 8; i++) yield* f.connect();
         expect((yield* f.request("owner", firstId)).status).toBe(404);
         expect((yield* Effect.promise(() => other.client.listTools())).tools).toEqual([]);
         const last = yield* f.connect();
@@ -165,6 +168,71 @@ it.effect(
         expect((yield* f.request("owner", lastId)).status).toBe(404);
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "binds normalized initialize labels to each session and ignores later header changes",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const h = yield* startHost();
+        const first = yield* f.connect("owner", "a".repeat(210));
+        const second = yield* f.connect("owner", "task-b");
+        const unlabeled = yield* f.connect();
+        first.headers.set(WIN_GATEWAY_LABEL_HEADER, "task-b");
+        second.headers.delete(WIN_GATEWAY_LABEL_HEADER);
+        unlabeled.headers.set(WIN_GATEWAY_LABEL_HEADER, "added-later");
+        for (const [session, label] of [
+          [first, "a".repeat(200)],
+          [second, "task-b"],
+          [unlabeled, undefined],
+          [first, "a".repeat(200)],
+        ] as const) {
+          const call = yield* Effect.promise(() =>
+            session.client.callTool({ name: "unity__inspect" }),
+          ).pipe(Effect.forkScoped);
+          const request = yield* h.next;
+          if (request.type !== "request") throw new Error("Expected request");
+          expect(request.context).toEqual({
+            threadId: scope.threadId,
+            provider: scope.providerInstanceId,
+            projectId: "project",
+            workspaceRoot: "/project",
+            ...(label === undefined ? {} : { label }),
+          });
+          yield* h.respond(request.requestId, toolResult);
+          expect(yield* Fiber.join(call)).toMatchObject({
+            isError: true,
+            content: [{ type: "text", text: "done" }],
+          });
+        }
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.effect("evicts the least recently used session instead of the earliest created session", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const first = yield* f.connect();
+      yield* TestClock.adjust(1);
+      const second = yield* f.connect();
+      yield* TestClock.adjust(1);
+      yield* Effect.promise(() => first.client.listTools());
+      const third = yield* f.connect();
+      expect((yield* f.request("owner", second.transport.sessionId!)).status).toBe(404);
+      expect((yield* Effect.promise(() => first.client.listTools())).tools).toEqual([]);
+      expect((yield* Effect.promise(() => third.client.listTools())).tools).toEqual([]);
+    }),
+  ).pipe(
+    Effect.provide(layer),
+    Effect.provideService(WinHttp.WinMcpHttpOptions, {
+      maxSessionsPerScope: 2,
+      idleTimeoutMs: 6 * 60 * 60_000,
+      sweepIntervalMs: 30_000,
+    }),
+  ),
 );
 
 it.effect("cancels an in-flight desktop call on SDK cancellation and DELETE", () =>

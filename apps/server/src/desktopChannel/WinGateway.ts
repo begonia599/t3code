@@ -17,6 +17,7 @@ import {
   WinGatewayExecRequest,
   WIN_GATEWAY_PATH_PREFIX,
   WIN_GATEWAY_LABEL_HEADER,
+  normalizeWinLabel,
   type WinGatewayExecLine,
   type WinGatewayStatusResponse,
   type WinGatewayLogResponse,
@@ -464,7 +465,7 @@ const handler = Effect.gen(function* () {
       401,
     );
   const gateway = yield* WinGateway;
-  const label = request.headers[WIN_GATEWAY_LABEL_HEADER]?.slice(0, 200);
+  const label = normalizeWinLabel(request.headers[WIN_GATEWAY_LABEL_HEADER]);
   const invocation = { scope, ...(label === undefined ? {} : { label }) };
   const url = new URL(request.url, "http://localhost");
   const host = url.searchParams.get("host") ?? undefined;
