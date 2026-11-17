@@ -13,7 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Relay from "./WinMcpRelay.ts";
 import { host, scope, startHost, testLayer, toolResult } from "./winMcpTestHelpers.ts";
 
-const encodeJson = Schema.encodeSync(Schema.UnknownFromJsonString);
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 it.effect(
   "aggregates definitions, truncates names, deterministically resolves natural/hash collisions",
