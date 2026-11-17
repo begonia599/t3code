@@ -7,6 +7,8 @@ import {
   ListToolsRequestSchema,
   McpError,
   ErrorCode,
+  JSONRPCRequestSchema,
+  type RequestId,
 } from "@modelcontextprotocol/sdk/types.js";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -39,7 +41,12 @@ interface Session {
   readonly transport: WebStandardStreamableHTTPServerTransport;
   readonly relaySession: WinMcpRelay.WinMcpSession;
   readonly abort: AbortController;
+  readonly requests: Map<RequestId, AbortController>;
   fingerprint: string;
+  catalogChanged: boolean;
+  notificationStream: object | undefined;
+  // Last enqueued version on this GET connection, not a client acknowledgement.
+  notifiedFingerprint: string | undefined;
   lastSeen: number;
 }
 const tokenHash = (token: string) => NodeCrypto.createHash("sha256").update(token).digest("hex");
@@ -49,6 +56,55 @@ const sessionNotFound = () =>
     { jsonrpc: "2.0", error: { code: -32001, message: "Session not found" }, id: null },
     { status: 404 },
   );
+
+// SDK 1.29.0 only removes the stream on body.cancel(); a late response then
+// retains its request/response entries. Keep this version-sensitive cleanup here.
+function releaseCancelledRequests(
+  transport: WebStandardStreamableHTTPServerTransport,
+  ids: readonly RequestId[],
+) {
+  const fields = transport as unknown as Record<string, unknown>;
+  for (const id of ids) {
+    if (fields._requestToStreamMapping instanceof Map) {
+      // Future SDKs may rename either map; cancellation must still reach the relay.
+      if (fields._streamMapping instanceof Map) transport.closeSSEStream(id);
+      fields._requestToStreamMapping.delete(id);
+    }
+    if (fields._requestResponseMap instanceof Map) fields._requestResponseMap.delete(id);
+  }
+}
+
+function observeResponse(response: Response, finish: (cancelled: boolean) => void) {
+  if (!response.body) {
+    finish(false);
+    return response;
+  }
+  const reader = response.body.getReader();
+  return new Response(
+    new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          try {
+            const chunk = await reader.read();
+            if (chunk.done) {
+              finish(false);
+              controller.close();
+            } else controller.enqueue(chunk.value);
+          } catch (error) {
+            finish(true);
+            controller.error(error);
+          }
+        },
+        cancel(reason) {
+          finish(true);
+          return reader.cancel(reason);
+        },
+      },
+      { highWaterMark: 0 },
+    ),
+    response,
+  );
+}
 
 export const routes = HttpRouter.use((router) =>
   Effect.gen(function* () {
@@ -78,6 +134,20 @@ export const routes = HttpRouter.use((router) =>
         }
       }
     }).pipe(Effect.repeat(Schedule.spaced(options.sweepIntervalMs)), Effect.forkScoped);
+    const notifyCatalog = (session: Session) =>
+      Effect.gen(function* () {
+        const stream = session.notificationStream;
+        const fingerprint = session.fingerprint;
+        if (!stream || session.notifiedFingerprint === fingerprint) return;
+        yield* Effect.tryPromise(() => session.server.sendToolListChanged()).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if (session.notificationStream === stream) session.notifiedFingerprint = fingerprint;
+            }),
+          ),
+          Effect.ignore,
+        );
+      });
     yield* Stream.runForEach(relay.changes, (host) =>
       Effect.gen(function* () {
         for (const session of sessions.values()) {
@@ -85,7 +155,8 @@ export const routes = HttpRouter.use((router) =>
           const catalog = yield* relay.list(session.relaySession);
           if (catalog.fingerprint === session.fingerprint) continue;
           session.fingerprint = catalog.fingerprint;
-          yield* Effect.tryPromise(() => session.server.sendToolListChanged()).pipe(Effect.ignore);
+          session.catalogChanged = true;
+          yield* notifyCatalog(session);
         }
       }),
     ).pipe(Effect.forkScoped);
@@ -132,7 +203,11 @@ export const routes = HttpRouter.use((router) =>
           transport,
           relaySession,
           abort,
+          requests: new Map(),
           fingerprint: catalog.fingerprint,
+          catalogChanged: false,
+          notificationStream: undefined,
+          notifiedFingerprint: undefined,
           lastSeen: yield* Clock.currentTimeMillis,
         };
         server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -149,6 +224,7 @@ export const routes = HttpRouter.use((router) =>
             throw new McpError(ErrorCode.InvalidParams, "Invalid tools/call request");
           const call = decoded.data;
           const progressToken = call.params._meta?.progressToken;
+          const responseSignal = created.requests.get(extra.requestId)?.signal;
           return run(
             relay.call(
               relaySession,
@@ -162,7 +238,13 @@ export const routes = HttpRouter.use((router) =>
                       params: { ...progress, progressToken },
                     }),
             ),
-            { signal: AbortSignal.any([abort.signal, extra.signal]) },
+            {
+              signal: AbortSignal.any([
+                abort.signal,
+                extra.signal,
+                ...(responseSignal ? [responseSignal] : []),
+              ]),
+            },
           );
         };
         yield* Effect.promise(() => server.connect(transport));
@@ -171,11 +253,60 @@ export const routes = HttpRouter.use((router) =>
       }
       const current = session;
       current.lastSeen = yield* Clock.currentTimeMillis;
-      const response = yield* Effect.tryPromise(() =>
-        current.transport.handleRequest(request),
+      // Parse once, and let the SDK retain responsibility for protocol validation.
+      const parsedBody: unknown =
+        request.method === "POST"
+          ? yield* Effect.promise(() => request.json().catch(() => undefined))
+          : undefined;
+      const ids = (Array.isArray(parsedBody) ? parsedBody : [parsedBody]).flatMap((message) => {
+        const decoded = JSONRPCRequestSchema.safeParse(message);
+        return decoded.success ? [decoded.data.id] : [];
+      });
+      if (new Set(ids).size !== ids.length || ids.some((id) => current.requests.has(id))) {
+        return HttpServerResponse.jsonUnsafe(
+          {
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: ErrorCode.InvalidRequest, message: "Request id already in use" },
+          },
+          { status: 400 },
+        );
+      }
+      const postAbort = new AbortController();
+      for (const id of ids) current.requests.set(id, postAbort);
+      let finished = false;
+      const finishPost = (cancelled: boolean) => {
+        if (finished) return;
+        finished = true;
+        // Delete before aborting: the handler's rejection must not recreate SDK state.
+        if (cancelled) releaseCancelledRequests(current.transport, ids);
+        for (const id of ids) current.requests.delete(id);
+        if (cancelled) postAbort.abort();
+      };
+      if (ids.length > 0) yield* Effect.addFinalizer(() => Effect.sync(() => finishPost(true)));
+      let response = yield* Effect.tryPromise(() =>
+        current.transport.handleRequest(request, { parsedBody }),
       ).pipe(
         Effect.catch(() => close(current).pipe(Effect.as(new Response(null, { status: 400 })))),
       );
+      if (ids.length > 0) response = observeResponse(response, finishPost);
+      if (request.method === "GET" && response.ok && response.body) {
+        const stream = {};
+        current.notificationStream = stream;
+        current.notifiedFingerprint = undefined;
+        const finishGet = (cancelled: boolean) => {
+          if (current.notificationStream !== stream) return;
+          current.notificationStream = undefined;
+          current.notifiedFingerprint = undefined;
+          if (cancelled) current.transport.closeStandaloneSSEStream();
+        };
+        // Also release a GET disconnected before the HTTP server starts reading its body.
+        yield* Effect.addFinalizer(() => Effect.sync(() => finishGet(true)));
+        response = observeResponse(response, finishGet);
+        // Enqueuing is not a client acknowledgement. After any catalog change,
+        // replay on every GET reconnect, even if the previous send resolved.
+        if (current.catalogChanged) yield* notifyCatalog(current);
+      }
       // A rejected DELETE (e.g. unsupported protocol version) leaves the SDK session alive.
       if ((request.method === "DELETE" && response.ok) || !current.transport.sessionId)
         yield* close(current);

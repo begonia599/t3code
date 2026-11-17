@@ -14,6 +14,7 @@ import type {
   LocalMcpServerConfig,
   LocalMcpServerStatus,
   LocalMcpServerView,
+  LocalMcpTransport,
 } from "@t3tools/contracts";
 
 const ID_PATTERN = /^[a-z][a-z0-9_-]{0,23}$/;
@@ -357,23 +358,88 @@ export function toolCountText(view: LocalMcpServerView): { text: string; count: 
 }
 
 /**
- * What went wrong, in plain words (English source text for `t()`). The raw
- * detail from the desktop stays available underneath for troubleshooting.
+ * An MCP address as shown in error text: scheme, host, port and path only.
+ * Query strings and user info can carry tokens, so they never reach the screen.
  */
-export function localMcpErrorExplanation(kind: LocalMcpErrorKind): string {
+export function displayMcpAddress(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname === "/" ? "" : parsed.pathname;
+    return `${parsed.protocol}//${parsed.host}${path}`;
+  } catch {
+    return url;
+  }
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "[::1]" ||
+    /^127(?:\.\d{1,3}){3}$/.test(host)
+  );
+}
+
+/** English source text for `t()`, plus the address that fills `{address}`. */
+export interface LocalMcpErrorText {
+  readonly source: string;
+  readonly address?: string;
+}
+
+/**
+ * What went wrong, in plain words. The raw detail from the desktop stays
+ * available underneath for troubleshooting. Pass the server's transport so an
+ * unreachable address can be named — and so the Unity hint only shows for
+ * addresses on this PC, where Unity MCP actually listens.
+ */
+export function localMcpErrorExplanation(
+  kind: LocalMcpErrorKind,
+  transport?: LocalMcpTransport,
+): LocalMcpErrorText {
   switch (kind) {
-    case "unreachable":
-      return "Nothing is answering at this address. Open the program that provides it first — Unity MCP only runs while the Unity editor is open.";
+    case "unreachable": {
+      if (transport?.type !== "http") {
+        return {
+          source: "Nothing is answering. Open the program that provides this server first.",
+        };
+      }
+      const address = displayMcpAddress(transport.url);
+      let local = false;
+      try {
+        local = isLoopbackHost(new URL(transport.url).hostname);
+      } catch {
+        local = false;
+      }
+      return local
+        ? {
+            source:
+              "Can't reach {address} — nothing is running at this address. If it's Unity MCP, open Unity and start its MCP server first.",
+            address,
+          }
+        : {
+            source: "Can't reach {address}. Check the address and this PC's network connection.",
+            address,
+          };
+    }
     case "http":
-      return "The address answered with an error. Check the URL and any token in the headers.";
+      return {
+        source: "The address answered with an error. Check the URL and any token in the headers.",
+      };
     case "spawn":
-      return "The command couldn't start. Check that the program is installed and the command is spelled right.";
+      return {
+        source:
+          "The command couldn't start. Check that the program is installed and the command is spelled right.",
+      };
     case "closed":
-      return "The connection dropped. The server may be restarting or may have quit.";
+      return { source: "The connection dropped. The server may be restarting or may have quit." };
     case "timeout":
-      return "The server didn't respond in time.";
+      return { source: "The server didn't respond in time." };
     case "protocol":
-      return "Something answered, but not as an MCP server. Check the address path (often /mcp) or the command.";
+      return {
+        source:
+          "Something answered, but not as an MCP server. Check the address path (often /mcp) or the command.",
+      };
   }
 }
 

@@ -3,13 +3,18 @@ import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { WIN_GATEWAY_LABEL_HEADER } from "@t3tools/contracts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   ToolListChangedNotificationSchema,
   ProgressNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { it } from "@effect/vitest";
-import { expect } from "vite-plus/test";
+import { expect, vi } from "vite-plus/test";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import * as Relay from "./WinMcpRelay.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Fiber from "effect/Fiber";
@@ -372,4 +377,223 @@ it.effect("preserves local annotations and result extensions on the HTTP wire", 
       expect(yield* Fiber.join(call)).toMatchObject({ result: toolResult });
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+// Keep the real route, SDK and relay list/call behavior, while controlling GET
+// connections and catalog announcements. The receipt waits for the route to consume
+// each announcement, so opening GET cannot race ahead of the catalog change.
+const rawFixture = Effect.gen(function* () {
+  const relay = yield* Relay.WinMcpRelay;
+  const processed = yield* Queue.unbounded<void>();
+  const changes = yield* Queue.unbounded<typeof host>();
+  const { handler, dispose } = HttpRouter.toWebHandler(
+    WinHttp.routes.pipe(
+      Layer.provide(registryLayer()),
+      Layer.provide(
+        Layer.succeed(Relay.WinMcpRelay, {
+          ...relay,
+          changes: Stream.fromQueue(changes).pipe(
+            Stream.flatMap((change) =>
+              Stream.make(change).pipe(
+                Stream.concat(
+                  Stream.fromEffect(Queue.offer(processed, undefined)).pipe(Stream.drain),
+                ),
+              ),
+            ),
+          ),
+        }),
+      ),
+    ),
+    { disableLogger: true },
+  );
+  yield* Effect.addFinalizer(() => Effect.promise(dispose));
+  let sessionId: string | undefined;
+  const request = (method: string, body?: unknown) =>
+    Effect.promise(() =>
+      handler(
+        new Request("http://localhost/mcp-win", {
+          method,
+          headers: {
+            authorization: "Bearer owner",
+            accept: "application/json, text/event-stream",
+            "content-type": "application/json",
+            ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        }),
+      ),
+    );
+  const rpc = (id: string | number, method: string, params = {}) =>
+    request("POST", { jsonrpc: "2.0", id, method, params });
+  const initialized = yield* rpc(0, "initialize", {
+    protocolVersion: "2025-03-26",
+    capabilities: {},
+    clientInfo: { name: "raw", version: "1" },
+  });
+  sessionId = initialized.headers.get("mcp-session-id")!;
+  yield* Effect.promise(() => initialized.text());
+  yield* request("POST", { jsonrpc: "2.0", method: "notifications/initialized" });
+  return {
+    request,
+    rpc,
+    changed: Queue.offer(changes, host).pipe(Effect.andThen(Queue.take(processed))),
+  };
+});
+
+const readSse = (response: Response) =>
+  Effect.promise(async () => {
+    const reader = response.body!.getReader();
+    try {
+      let text = "";
+      while (!text.includes("\n\n")) {
+        const chunk = await reader.read();
+        if (chunk.done) throw new Error("SSE ended before a message");
+        text += new TextDecoder().decode(chunk.value);
+      }
+      const data = text.split("\n").find((line) => line.startsWith("data: "));
+      if (!data) throw new Error("Expected SSE data");
+      return JSON.parse(data.slice(6));
+    } finally {
+      reader.releaseLock();
+    }
+  });
+
+it.effect("cancels only the disconnected POST and releases SDK request mappings", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const handled = vi.spyOn(WebStandardStreamableHTTPServerTransport.prototype, "handleRequest");
+      yield* Effect.addFinalizer(() => Effect.sync(() => handled.mockRestore()));
+      const h = yield* startHost();
+      const f = yield* rawFixture;
+      const get = yield* f.request("GET");
+      expect((yield* f.request("GET")).status).toBe(409);
+      const first = yield* f.rpc("cancel-me", "tools/call", { name: "unity__inspect" });
+      const firstCall = yield* h.next;
+      const second = yield* f.rpc(2, "tools/call", { name: "unity__inspect" });
+      const secondCall = yield* h.next;
+      const transport = handled.mock.contexts[0] as unknown as {
+        _requestToStreamMapping: Map<string | number, string>;
+        _requestResponseMap: Map<string | number, unknown>;
+        _streamMapping: Map<string, unknown>;
+      };
+      const streamId = transport._requestToStreamMapping.get("cancel-me")!;
+      expect(streamId).toBeDefined();
+      yield* Effect.promise(() => first.body!.cancel());
+      expect(transport._requestToStreamMapping.has("cancel-me")).toBe(false);
+      expect(transport._requestResponseMap.has("cancel-me")).toBe(false);
+      expect(transport._streamMapping.has(streamId)).toBe(false);
+      expect(yield* h.next).toEqual({ type: "cancel", requestId: firstCall.requestId });
+      yield* h.respond(secondCall.requestId, toolResult);
+      expect(yield* readSse(second)).toMatchObject({ id: 2, result: toolResult });
+      const third = yield* f.rpc(3, "tools/call", { name: "unity__inspect" });
+      const thirdCall = yield* h.next;
+      yield* h.respond(thirdCall.requestId, toolResult);
+      expect(yield* readSse(third)).toMatchObject({ id: 3, result: toolResult });
+      // The POST disconnect must leave the standalone GET stream usable.
+      yield* h.update({ enabled: true, mcp: { version: "2", servers: [] } });
+      yield* f.changed;
+      expect(yield* readSse(get)).toMatchObject({ method: "notifications/tools/list_changed" });
+      yield* Effect.promise(() => get.body!.cancel());
+      expect(transport._requestToStreamMapping.size).toBe(0);
+      expect(transport._requestResponseMap.size).toBe(0);
+    }),
+  ).pipe(Effect.provide(testLayer())),
+);
+
+for (const reconnect of [false, true]) {
+  it.effect(
+    reconnect
+      ? "replays catalog changes after the GET stream disconnects"
+      : "notifies a later GET stream when Unity recovers from an empty catalog",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* startHost({
+            ...host,
+            capabilities: { enabled: true, mcp: { version: "empty", servers: [] } },
+          });
+          const f = yield* rawFixture;
+          expect(yield* readSse(yield* f.rpc(1, "tools/list"))).toMatchObject({
+            result: { tools: [] },
+          });
+          if (reconnect) {
+            const get = yield* f.request("GET");
+            expect(get.status).toBe(200);
+            yield* Effect.promise(() => get.body!.cancel());
+          }
+          yield* h.update(host.capabilities);
+          yield* f.changed;
+          const get = yield* f.request("GET");
+          expect(get.status).toBe(200);
+          expect(yield* readSse(get)).toMatchObject({ method: "notifications/tools/list_changed" });
+          expect(yield* readSse(yield* f.rpc(2, "tools/list"))).toMatchObject({
+            result: { tools: [{ name: "unity__inspect" }] },
+          });
+          yield* Effect.promise(() => get.body!.cancel());
+          // A resolved send is not an acknowledgement: replay even without another change.
+          const again = yield* f.request("GET");
+          expect(yield* readSse(again)).toMatchObject({
+            method: "notifications/tools/list_changed",
+          });
+          yield* Effect.promise(() => again.body!.cancel());
+        }),
+      ).pipe(Effect.provide(testLayer())),
+  );
+}
+
+it.effect("retries a failed catalog notification when GET reconnects", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const h = yield* startHost();
+      const f = yield* rawFixture;
+      const get = yield* f.request("GET");
+      const send = vi
+        .spyOn(Server.prototype, "sendToolListChanged")
+        .mockRejectedValueOnce(new Error("disconnected"));
+      yield* Effect.addFinalizer(() => Effect.sync(() => send.mockRestore()));
+      yield* h.update({ enabled: true, mcp: { version: "empty", servers: [] } });
+      yield* f.changed;
+      expect(send).toHaveBeenCalledTimes(1);
+      yield* Effect.promise(() => get.body!.cancel());
+      const again = yield* f.request("GET");
+      expect(yield* readSse(again)).toMatchObject({ method: "notifications/tools/list_changed" });
+      expect(send).toHaveBeenCalledTimes(2);
+      yield* Effect.promise(() => again.body!.cancel());
+    }),
+  ).pipe(Effect.provide(testLayer())),
+);
+
+it.effect("cleans completed and pending request mappings when a batch POST disconnects", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const handled = vi.spyOn(WebStandardStreamableHTTPServerTransport.prototype, "handleRequest");
+      yield* Effect.addFinalizer(() => Effect.sync(() => handled.mockRestore()));
+      const h = yield* startHost();
+      const f = yield* rawFixture;
+      const response = yield* f.request(
+        "POST",
+        [1, "1"].map((id) => ({
+          jsonrpc: "2.0",
+          id,
+          method: "tools/call",
+          params: { name: "unity__inspect" },
+        })),
+      );
+      const first = yield* h.next;
+      const second = yield* h.next;
+      yield* h.respond(first.requestId, toolResult);
+      expect(yield* readSse(response)).toMatchObject({ id: 1, result: toolResult });
+      const transport = handled.mock.contexts[0] as unknown as {
+        _requestToStreamMapping: Map<string | number, string>;
+        _requestResponseMap: Map<string | number, unknown>;
+      };
+      expect(transport._requestResponseMap.has(1)).toBe(true);
+      // A second POST cannot overwrite the live batch's cancellation controller.
+      expect((yield* f.rpc("1", "tools/call", { name: "unity__inspect" })).status).toBe(400);
+      yield* Effect.promise(() => response.body!.cancel());
+      expect(transport._requestResponseMap.size).toBe(0);
+      expect(transport._requestToStreamMapping.size).toBe(0);
+      expect(yield* h.next).toEqual({ type: "cancel", requestId: second.requestId });
+    }),
+  ).pipe(Effect.provide(testLayer())),
 );

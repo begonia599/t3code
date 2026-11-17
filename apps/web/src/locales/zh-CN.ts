@@ -1115,8 +1115,12 @@ export const zhCN: Readonly<Record<string, string>> = {
   "Line {line}: use NAME=value.": "第 {line} 行：请用 NAME=value 格式。",
   "Enter an http:// or https:// address.": "请输入 http:// 或 https:// 开头的地址。",
   "Line {line}: use Name: value.": "第 {line} 行：请用 Name: value 格式。",
-  "Nothing is answering at this address. Open the program that provides it first — Unity MCP only runs while the Unity editor is open.":
-    "这个地址没有响应。请先打开提供它的程序——Unity MCP 只在 Unity 编辑器打开时运行。",
+  "Nothing is answering. Open the program that provides this server first.":
+    "没有响应。请先打开提供这个服务的程序。",
+  "Can't reach {address} — nothing is running at this address. If it's Unity MCP, open Unity and start its MCP server first.":
+    "连不上 {address}，这个地址上没有服务在运行。如果是 Unity MCP，要先打开 Unity 并启动它的 MCP 服务。",
+  "Can't reach {address}. Check the address and this PC's network connection.":
+    "连不上 {address}，请检查地址和这台电脑的网络。",
   "The address answered with an error. Check the URL and any token in the headers.":
     "地址返回了错误。请检查地址，以及请求头里的令牌。",
   "The command couldn't start. Check that the program is installed and the command is spelled right.":

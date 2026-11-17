@@ -15,6 +15,7 @@ import type {
   LocalMcpProbeResult,
   LocalMcpServerConfig,
   LocalMcpServerView,
+  LocalMcpTransport,
 } from "@t3tools/contracts";
 import {
   CheckIcon,
@@ -480,10 +481,13 @@ function DiscoveredRow({
 function LocalMcpFailure({
   kind,
   detail,
+  transport,
   retrying = false,
 }: {
   kind: LocalMcpErrorKind | undefined;
   detail: string | undefined;
+  /** The server's transport, so the explanation can name the address. */
+  transport?: LocalMcpTransport;
   retrying?: boolean;
 }) {
   const t = useT();
@@ -495,10 +499,11 @@ function LocalMcpFailure({
       </pre>
     ) : null;
   }
+  const explanation = localMcpErrorExplanation(kind, transport);
   return (
     <div className="min-w-0">
       <p className="text-xs leading-relaxed text-destructive-foreground">
-        {t(localMcpErrorExplanation(kind))}
+        {t(explanation.source).replace("{address}", explanation.address ?? "")}
         {retrying ? (
           <span className="ms-1.5 text-muted-foreground">{t("Retrying automatically")}</span>
         ) : null}
@@ -673,7 +678,12 @@ function LocalMcpRow({
 
       {config.enabled && view.status === "failed" && (view.error || view.errorKind) ? (
         <div className="ms-5 mt-1">
-          <LocalMcpFailure kind={view.errorKind} detail={view.error} retrying />
+          <LocalMcpFailure
+            kind={view.errorKind}
+            detail={view.error}
+            transport={config.transport}
+            retrying
+          />
         </div>
       ) : null}
 
@@ -737,7 +747,11 @@ function LocalMcpRow({
 type ProbeState =
   | { readonly kind: "idle" }
   | { readonly kind: "running" }
-  | { readonly kind: "done"; readonly result: LocalMcpProbeResult };
+  | {
+      readonly kind: "done";
+      readonly result: LocalMcpProbeResult;
+      readonly transport?: LocalMcpTransport;
+    };
 
 function LocalMcpEditor({
   bridge,
@@ -805,9 +819,13 @@ function LocalMcpEditor({
     if (!config) return;
     setProbe({ kind: "running" });
     try {
-      setProbe({ kind: "done", result: await bridge.probe(config) });
+      setProbe({ kind: "done", result: await bridge.probe(config), transport: config.transport });
     } catch (cause) {
-      setProbe({ kind: "done", result: { ok: false, error: bridgeErrorMessage(cause) } });
+      setProbe({
+        kind: "done",
+        result: { ok: false, error: bridgeErrorMessage(cause) },
+        transport: config.transport,
+      });
     }
   };
 
@@ -1037,7 +1055,11 @@ function ProbeStatus({ probe }: { probe: ProbeState }) {
   if (!result.ok) {
     return (
       <div className="min-w-0 flex-1 basis-56 wrap-anywhere">
-        <LocalMcpFailure kind={result.errorKind} detail={result.error} />
+        <LocalMcpFailure
+          kind={result.errorKind}
+          detail={result.error}
+          transport={probe.transport}
+        />
       </div>
     );
   }

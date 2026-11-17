@@ -12,6 +12,7 @@ import {
   draftFromConfig,
   draftToConfig,
   emptyLocalMcpDraft,
+  displayMcpAddress,
   localMcpErrorExplanation,
   localMcpStatusPresentation,
   parsePairsText,
@@ -301,8 +302,42 @@ describe("local MCP discovery presentation", () => {
 
   it("explains every error kind", () => {
     for (const kind of ["unreachable", "http", "spawn", "closed", "timeout", "protocol"] as const) {
-      expect(localMcpErrorExplanation(kind)).toMatch(/\w/);
+      expect(localMcpErrorExplanation(kind).source).toMatch(/\w/);
     }
-    expect(localMcpErrorExplanation("unreachable")).toContain("Unity");
+  });
+
+  it("names an unreachable address and only mentions Unity for this PC", () => {
+    const http = (url: string) => ({ type: "http" as const, url, headers: {} });
+    const local = localMcpErrorExplanation("unreachable", http("http://127.0.0.1:8080/mcp"));
+    expect(local.address).toBe("http://127.0.0.1:8080/mcp");
+    expect(local.source).toContain("{address}");
+    expect(local.source).toContain("Unity");
+    expect(
+      localMcpErrorExplanation("unreachable", http("http://localhost:6500/mcp")).source,
+    ).toContain("Unity");
+    expect(localMcpErrorExplanation("unreachable", http("http://[::1]:8080/mcp")).source).toContain(
+      "Unity",
+    );
+
+    const remote = localMcpErrorExplanation("unreachable", http("https://mcp.example.com/api"));
+    expect(remote.address).toBe("https://mcp.example.com/api");
+    expect(remote.source).not.toContain("Unity");
+
+    const stdio = localMcpErrorExplanation("unreachable", {
+      type: "stdio",
+      command: "uvx",
+      args: [],
+      env: {},
+    });
+    expect(stdio.address).toBeUndefined();
+    expect(stdio.source).not.toContain("Unity");
+  });
+
+  it("keeps tokens in the query or user info off the screen", () => {
+    expect(displayMcpAddress("http://user:secret@127.0.0.1:8080/mcp?token=abc#x")).toBe(
+      "http://127.0.0.1:8080/mcp",
+    );
+    expect(displayMcpAddress("http://127.0.0.1:8080/")).toBe("http://127.0.0.1:8080");
+    expect(displayMcpAddress("not a url")).toBe("not a url");
   });
 });
