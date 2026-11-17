@@ -1,14 +1,20 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real SDK transports against isolated local test fixtures.
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  JSONRPCRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import type {
   DesktopMcpProgress,
   LocalMcpServerConfig,
   LocalMcpServerView,
 } from "@t3tools/contracts";
+import { DESKTOP_MCP_MAX_RESULT_BYTES } from "@t3tools/contracts";
 import * as NodeHttp from "node:http";
 import * as NodeURL from "node:url";
 import { createLocalMcpManager } from "./LocalMcpManager.ts";
@@ -59,6 +65,54 @@ async function setup(options: Partial<Parameters<typeof createLocalMcpManager>[0
 }
 const signal = () => new AbortController().signal;
 
+async function setupHttp() {
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    if (init?.method === "GET") return new Response(null, { status: 405 });
+    if (init?.method === "DELETE") return new Response(null, { status: 200 });
+    const request = JSONRPCRequestSchema.safeParse(JSON.parse(String(init?.body)));
+    if (!request.success) return new Response(null, { status: 202 });
+    const { id, method } = request.data;
+    let result: unknown;
+    if (method === "initialize") {
+      result = {
+        protocolVersion: "2025-03-26",
+        serverInfo: { name: "fixture", version: "1" },
+        capabilities: { tools: {} },
+      };
+    } else if (method === "tools/list") {
+      result = {
+        tools: ["echo", "large"].map((name) => ({ name, inputSchema: { type: "object" } })),
+      };
+    } else {
+      const { arguments: args } = CallToolRequestSchema.parse(request.data).params;
+      const character = typeof args?.character === "string" ? args.character : "x";
+      const count = typeof args?.count === "number" ? args.count : 1;
+      result = { content: [{ type: "text", text: character.repeat(count) }] };
+    }
+    return Response.json(
+      { jsonrpc: "2.0", id, result },
+      { headers: { "mcp-session-id": "fixture" } },
+    );
+  });
+  const manager = createLocalMcpManager({ save: async () => {} });
+  const dispose = async () => {
+    await manager.dispose();
+    fetch.mockRestore();
+  };
+  try {
+    const ready = waitFor(manager, (view) => view.status === "running" || view.status === "failed");
+    await manager.initialize([
+      { ...config, transport: { type: "http", url: "http://localhost/mcp", headers: {} } },
+    ]);
+    await ready;
+    expect(manager.views()[0]?.status).toBe("running");
+    return { manager, dispose };
+  } catch (cause) {
+    await dispose();
+    throw cause;
+  }
+}
+
 async function listen(http: NodeHttp.Server) {
   await new Promise<void>((resolve, reject) => {
     http.once("error", reject);
@@ -75,6 +129,91 @@ async function closeHttp(http: NodeHttp.Server) {
   http.closeAllConnections();
   await new Promise<void>((resolve) => http.close(() => resolve()));
 }
+
+it.each([undefined, DESKTOP_MCP_MAX_RESULT_BYTES, DESKTOP_MCP_MAX_RESULT_BYTES + 1])(
+  "checks HTTP Content-Length %s before reading the response body",
+  async (length) => {
+    let reads = 0;
+    let cancelled = false;
+    let calls = 0;
+    const oversized = length !== undefined && length > DESKTOP_MCP_MAX_RESULT_BYTES;
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      if (init?.method === "GET") return new Response(null, { status: 405 });
+      if (init?.method === "DELETE") return new Response(null, { status: 200 });
+      const request = JSONRPCRequestSchema.safeParse(JSON.parse(String(init?.body)));
+      if (!request.success) return new Response(null, { status: 202 });
+      const { id, method } = request.data;
+      if (method === "tools/call" && ++calls === 1 && oversized) {
+        return new Response(
+          new ReadableStream(
+            {
+              pull: () => {
+                reads++;
+              },
+              cancel: () => {
+                cancelled = true;
+              },
+            },
+            { highWaterMark: 0 },
+          ),
+          {
+            headers: { "content-type": "application/json", "content-length": String(length) },
+          },
+        );
+      }
+      const result =
+        method === "initialize"
+          ? {
+              protocolVersion: "2025-03-26",
+              serverInfo: { name: "fixture", version: "1" },
+              capabilities: { tools: {} },
+            }
+          : method === "tools/list"
+            ? { tools: [{ name: "echo", inputSchema: { type: "object" } }] }
+            : { content: [{ type: "text", text: "ok" }] };
+      return Response.json(
+        { jsonrpc: "2.0", id, result },
+        {
+          headers: {
+            "mcp-session-id": "fixture",
+            ...(method === "tools/call" && length !== undefined && !oversized
+              ? { "content-length": String(length) }
+              : {}),
+          },
+        },
+      );
+    });
+    const manager = createLocalMcpManager({ save: async () => {} });
+    try {
+      const ready = waitFor(
+        manager,
+        (view) => view.status === "running" || view.status === "failed",
+      );
+      await manager.initialize([
+        { ...config, transport: { type: "http", url: "http://localhost/mcp", headers: {} } },
+      ]);
+      await ready;
+      const call = manager.call("unity", "echo", {}, signal());
+      if (oversized) {
+        await expect(call).rejects.toMatchObject({
+          code: "MCP_RESULT_TOO_LARGE",
+          message: "MCP_RESULT_TOO_LARGE",
+        });
+        expect(cancelled).toBe(true);
+        expect(reads).toBe(0);
+      } else {
+        expect(await call).toEqual({ content: [{ type: "text", text: "ok" }] });
+      }
+      expect(manager.views()[0]?.status).toBe("running");
+      expect(await manager.call("unity", "echo", {}, signal())).toEqual({
+        content: [{ type: "text", text: "ok" }],
+      });
+    } finally {
+      await manager.dispose();
+      fetch.mockRestore();
+    }
+  },
+);
 
 it.each([
   ["stdio", undefined, 60_000],
@@ -230,6 +369,74 @@ it("reports an HTTP MCP disconnect during a call as unavailable and closed witho
     await server.close();
     await closeHttp(http);
   }
+});
+
+describe("LocalMcpManager output limits", () => {
+  it.each(["result", "error"])(
+    "coalesces SDK bursts and finishes progress before the call %s",
+    async (ending) => {
+      const { manager, dispose } = await setupHttp();
+      const started = deferred<void>();
+      const release = deferred<void>();
+      const delivered: number[] = [];
+      const tool = vi
+        .spyOn(Client.prototype, "callTool")
+        .mockImplementation(async (_input, _schema, options) => {
+          for (let progress = 1; progress <= 1000; progress++) options?.onprogress?.({ progress });
+          if (ending === "error") throw new Error("tool failed");
+          return { content: [] };
+        });
+      try {
+        let completed = false;
+        const work = manager
+          .call("unity", "echo", {}, signal(), async (value) => {
+            started.resolve();
+            await release.promise;
+            delivered.push(value.progress);
+          })
+          .then(
+            (result) => {
+              completed = true;
+              return result;
+            },
+            (cause: unknown) => {
+              completed = true;
+              return cause;
+            },
+          );
+        await started.promise;
+        expect(completed).toBe(false);
+        release.resolve();
+        const result = await work;
+        expect(delivered).toEqual([1]);
+        expect(result).toMatchObject(
+          ending === "result" ? { content: [] } : { code: "MCP_PROTOCOL_ERROR" },
+        );
+      } finally {
+        release.resolve();
+        tool.mockRestore();
+        await dispose();
+      }
+    },
+  );
+
+  it("limits serialized result bytes rather than characters and accepts large results below the limit", async () => {
+    const { manager, dispose } = await setupHttp();
+    try {
+      const count = 3 * 1024 * 1024;
+      const result = await manager.call("unity", "large", { character: "x", count }, signal());
+      expect(result.content).toEqual([{ type: "text", text: "x".repeat(count) }]);
+      await expect(
+        manager.call("unity", "large", { character: "汉", count }, signal()),
+      ).rejects.toMatchObject({ code: "MCP_RESULT_TOO_LARGE", message: "MCP_RESULT_TOO_LARGE" });
+      // JSON escaping also counts toward the serialized size.
+      await expect(
+        manager.call("unity", "large", { character: "\u0000", count }, signal()),
+      ).rejects.toMatchObject({ code: "MCP_RESULT_TOO_LARGE" });
+    } finally {
+      await dispose();
+    }
+  });
 });
 
 describe("LocalMcpManager SDK stdio", () => {

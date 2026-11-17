@@ -61,7 +61,7 @@ const electronPowerMonitorLayer = Layer.succeed(ElectronPowerMonitor.ElectronPow
   isOnBatteryPower: Effect.succeed(false),
   getSystemIdleTime: Effect.succeed(0),
   getSystemIdleState: () => Effect.succeed("active"),
-  getCurrentThermalState: Effect.succeed("nominal"),
+  getCurrentThermalState: Effect.succeed("nominal" as const),
   onSimpleEvent: (name, listener) =>
     Effect.acquireRelease(
       Effect.sync(() => {

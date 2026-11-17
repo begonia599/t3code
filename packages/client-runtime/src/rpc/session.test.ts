@@ -56,6 +56,7 @@ class TestWebSocket {
   static readonly CLOSED = 3;
 
   readyState = TestWebSocket.CONNECTING;
+  bufferedAmount = 0;
   readonly sent: string[] = [];
   readonly url: string;
   private readonly listeners = new Map<SocketEventType, Set<SocketListener>>();
@@ -288,6 +289,34 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it.effect("uses the live socket backlog to gate channel RPCs while probes can pass", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* session.ready;
+      socket.bufferedAmount = 256 * 1024;
+      const output = yield* session.client[WS_METHODS.desktopChannelEmit]({
+        hostId: "91d581f4-d87a-4efe-967c-2b60314575bb",
+        connectionId: "c",
+        requestId: "r",
+        seq: 0,
+        events: [{ kind: "stdout", data: "output" }],
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("20 millis");
+      expect(socket.sent.map((value) => decodeJson(value)).filter(isRpcRequest)).toHaveLength(1);
+      const probe = yield* Effect.forkChild(session.probe);
+      expect((yield* awaitRequest(socket, 1)).tag).toBe(WS_METHODS.serverProbe);
+      socket.bufferedAmount = 0;
+      yield* TestClock.adjust("20 millis");
+      expect((yield* awaitRequest(socket, 2)).tag).toBe(WS_METHODS.desktopChannelEmit);
+      yield* Fiber.interrupt(output);
+      yield* Fiber.interrupt(probe);
+    }),
+  );
+
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();

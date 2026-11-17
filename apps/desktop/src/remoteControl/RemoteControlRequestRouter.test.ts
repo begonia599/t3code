@@ -101,6 +101,40 @@ describe("remote control request router", () => {
     await aborted.promise;
     expect(await router.next("r", 1)).toMatchObject({ ok: false, error: { code: "CANCELLED" } });
   });
+  it.each(["result", "timeout"])(
+    "rejects blocked and late progress after a handler %s",
+    async (ending) => {
+      let blocked: Promise<unknown> | undefined;
+      let late: (() => Promise<void>) | undefined;
+      const finishing = deferred<void>();
+      const router = createRemoteControlRequestRouter({
+        identity: async () => identity,
+        now: () => 0,
+        capacity: 1,
+        handlers: {
+          "mcp.call": async ({ emit }) => {
+            await emit({ kind: "progress", data: "first" });
+            blocked = emit({ kind: "progress", data: "pending" }).catch((cause: unknown) => cause);
+            late = () => emit({ kind: "progress", data: "late" });
+            finishing.resolve();
+            if (ending === "timeout") throw { code: "TIMEOUT" };
+            return "done";
+          },
+        },
+      });
+      router.start(input("mcp.call"), owner);
+      // Let the handler finish without pulling, as when the RPC send queue is backed up.
+      await finishing.promise;
+      expect(await blocked).toMatchObject({ code: "CANCELLED" });
+      expect(await router.next("r", 1)).toEqual({
+        type: "events",
+        events: [{ kind: "progress", data: "first" }],
+      });
+      expect(await router.next("r", 1)).toMatchObject({ type: "result", ok: ending === "result" });
+      await expect(late!()).rejects.toMatchObject({ code: "CANCELLED" });
+      router.dispose();
+    },
+  );
   it("aborts all requests when the owner is destroyed or navigates", async () => {
     let gone = () => {};
     const cleanup = vi.fn();
@@ -133,8 +167,9 @@ describe("remote control request router", () => {
 
 it.each([
   { count: 65, text: "x", expected: 64 },
-  { count: 17, text: "x".repeat(16 * 1024), expected: 16 },
-  { count: 20, text: "汉".repeat(8192), expected: 10 },
+  { count: 17, text: "x".repeat(16 * 1024), expected: 3 },
+  { count: 20, text: "汉".repeat(8192), expected: 2 },
+  { count: 20, text: "\u0000".repeat(8192), expected: 1 },
 ])(
   "batches buffered events by count and UTF-8 byte size: $expected",
   async ({ count, text, expected }) => {
@@ -157,11 +192,19 @@ it.each([
     expect(first.type).toBe("events");
     if (first.type !== "events") throw new Error("expected events");
     expect(first.events).toHaveLength(expected);
-    const second = await router.next("r", 1);
-    expect(second.type).toBe("events");
-    if (second.type !== "events") throw new Error("expected events");
-    expect(second.events).toHaveLength(count - expected);
-    expect(await router.next("r", 1)).toMatchObject({ ok: true });
+    const received = [...first.events];
+    while (true) {
+      const batch = await router.next("r", 1);
+      if (batch.type === "result") {
+        expect(batch).toMatchObject({ ok: true });
+        break;
+      }
+      expect(Buffer.byteLength(JSON.stringify(batch.events), "utf8")).toBeLessThanOrEqual(
+        64 * 1024,
+      );
+      received.push(...batch.events);
+    }
+    expect(received).toEqual(Array.from({ length: count }, () => ({ kind: "stdout", data: text })));
   },
 );
 

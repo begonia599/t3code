@@ -17,6 +17,8 @@ export function createLocalMcpRequestHandler(options: {
   readonly manager: Pick<LocalMcpManager["Service"], "call">;
   readonly enabledEnvironmentIds: () => Promise<readonly string[]>;
   readonly store: Pick<RemoteControlStore["Service"], "appendAudit">;
+  /** Audit writes are best effort; failures are reported here instead of failing the call. */
+  readonly onAuditWriteFailed?: (cause: unknown) => void;
 }): RequestHandler {
   return async ({ request, environmentId, signal, emit }) => {
     const started = Date.now();
@@ -94,7 +96,7 @@ export function createLocalMcpRequestHandler(options: {
           durationMs: Date.now() - started,
         });
       } catch (cause) {
-        console.warn("Local MCP audit write failed", cause);
+        options.onAuditWriteFailed?.(cause);
       }
     }
   };

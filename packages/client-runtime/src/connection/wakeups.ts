@@ -29,12 +29,22 @@ export class ConnectionWakeups extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/wakeups/ConnectionWakeups") {}
 
+/** The slice of a DOM window used here; this package is built without DOM types. */
+interface WakeupEventTarget {
+  addEventListener(type: string, listener: () => void): void;
+  removeEventListener(type: string, listener: () => void): void;
+}
+
 const desktopWakeups = Stream.unwrap(
   Effect.sync(() => {
     // React Native also has a window global, but has no DOM event bridge.
-    if (typeof window === "undefined" || typeof window.addEventListener !== "function")
+    const candidate = (globalThis as { readonly window?: Partial<WakeupEventTarget> }).window;
+    if (
+      typeof candidate?.addEventListener !== "function" ||
+      typeof candidate.removeEventListener !== "function"
+    )
       return Stream.empty;
-    const target = window;
+    const target = candidate as WakeupEventTarget;
     return Stream.callback<ConnectionWakeup>((queue) =>
       Effect.acquireRelease(
         Effect.sync(() => {

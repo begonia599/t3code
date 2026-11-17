@@ -1,3 +1,4 @@
+import { ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { createLocalMcpRequestHandler } from "./LocalMcpRequestHandler.ts";
 import { LocalMcpError } from "./LocalMcpManager.ts";
@@ -8,7 +9,7 @@ const input = (): Parameters<RequestHandler>[0] => ({
     requestId: "r",
     kind: "mcp.call",
     input: { serverId: "unity", toolName: "inspect", arguments: { secret: true } },
-    context: { threadId: "t", provider: "codex", label: "label" },
+    context: { threadId: ThreadId.make("t"), provider: "codex", label: "label" },
     timeoutMs: 1000,
   },
   environmentId: "env",
@@ -69,38 +70,39 @@ it.each(["HOST_DISCONNECTED", "HOST_REPLACED", "CLEANUP_FAILED"])(
   },
 );
 
-it("warns on audit failure while preserving tool results and errors", async () => {
-  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
-  try {
-    const store = {
-      appendAudit: async () => {
-        throw new Error("disk full");
-      },
-    };
-    const enabledEnvironmentIds = async () => ["env"];
-    const result = { content: [] };
-    expect(
-      await createLocalMcpRequestHandler({
-        manager: { call: async () => result },
-        store,
-        enabledEnvironmentIds,
-      })(input()),
-    ).toBe(result);
-    await expect(
-      createLocalMcpRequestHandler({
-        manager: {
-          call: async () => {
-            throw new LocalMcpError("MCP_PROTOCOL_ERROR");
-          },
+it("reports audit failures while preserving tool results and errors", async () => {
+  const onAuditWriteFailed = vi.fn();
+  const store = {
+    appendAudit: async () => {
+      throw new Error("disk full");
+    },
+  };
+  const enabledEnvironmentIds = async () => ["env"];
+  const result = { content: [] };
+  expect(
+    await createLocalMcpRequestHandler({
+      manager: { call: async () => result },
+      store,
+      enabledEnvironmentIds,
+      onAuditWriteFailed,
+    })(input()),
+  ).toBe(result);
+  await expect(
+    createLocalMcpRequestHandler({
+      manager: {
+        call: async () => {
+          throw new LocalMcpError("MCP_PROTOCOL_ERROR");
         },
-        store,
-        enabledEnvironmentIds,
-      })(input()),
-    ).rejects.toMatchObject({ code: "MCP_PROTOCOL_ERROR" });
-    expect(warning).toHaveBeenCalledTimes(2);
-  } finally {
-    warning.mockRestore();
-  }
+      },
+      store,
+      enabledEnvironmentIds,
+      onAuditWriteFailed,
+    })(input()),
+  ).rejects.toMatchObject({ code: "MCP_PROTOCOL_ERROR" });
+  expect(onAuditWriteFailed).toHaveBeenCalledTimes(2);
+  expect(onAuditWriteFailed).toHaveBeenCalledWith(
+    expect.objectContaining({ message: "disk full" }),
+  );
 });
 
 it.each([

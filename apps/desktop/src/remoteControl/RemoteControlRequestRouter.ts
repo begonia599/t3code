@@ -24,6 +24,7 @@ import { DesktopAppSettings } from "../settings/DesktopAppSettings.ts";
 import { DesktopEnvironment } from "../app/DesktopEnvironment.ts";
 
 type Events = DesktopChannelEmit["events"];
+const OUTPUT_BATCH_BYTES = 64 * 1024;
 export interface RequestOwner {
   readonly id: number;
   readonly onGone: (cancel: () => void) => () => void;
@@ -133,10 +134,15 @@ export function createRemoteControlRequestRouter(options: {
             emit: async (event) => {
               if (Buffer.byteLength(event.data, "utf8") > 256 * 1024)
                 throw new Error("Remote control event exceeds the 256KB batch limit");
-              while (!state.controller.signal.aborted && state.events.length >= capacity) {
+              while (
+                !state.controller.signal.aborted &&
+                !state.result &&
+                state.events.length >= capacity
+              ) {
                 await new Promise<void>((resolve) => state.wake.add(resolve));
               }
-              if (state.controller.signal.aborted) throw { code: "CANCELLED" };
+              // A timed-out MCP call can finish while its last progress emit is blocked here.
+              if (state.controller.signal.aborted || state.result) throw { code: "CANCELLED" };
               state.events.push(event);
               notify(state);
             },
@@ -177,8 +183,9 @@ export function createRemoteControlRequestRouter(options: {
         let bytes = 0;
         while (state.events.length && events.length < 64) {
           const event = state.events[0]!;
-          const size = Buffer.byteLength(event.data, "utf8");
-          if (events.length && bytes + size > 256 * 1024) break;
+          // Count JSON escaping as well as UTF-8; control-heavy process output can expand sixfold.
+          const size = Buffer.byteLength(JSON.stringify(event), "utf8") + 1;
+          if (events.length && bytes + size > OUTPUT_BATCH_BYTES) break;
           events.push(state.events.shift()!);
           bytes += size;
         }
@@ -254,6 +261,11 @@ export const layer = Layer.effect(
           manager,
           store,
           enabledEnvironmentIds,
+          onAuditWriteFailed: (cause) => {
+            void Effect.runPromiseWith(runIdentity)(
+              Effect.logWarning("Local MCP audit write failed", cause),
+            ).catch(() => {});
+          },
         }),
       },
     });

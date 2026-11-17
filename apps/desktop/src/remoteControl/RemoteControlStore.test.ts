@@ -253,20 +253,18 @@ it("linked authorization does not create a grant and never bypasses denial or st
   expect(store.listGrants()).toEqual([]);
 });
 
-it("warns when audit persistence fails and recovers for the next write", async () => {
-  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
-  try {
-    await NodeFSP.rm(dir, { recursive: true, force: true });
-    await NodeFSP.writeFile(dir, "not a directory");
-    await expect(store.appendAudit(audit(1))).resolves.toBeUndefined();
-    expect(warning).toHaveBeenCalledOnce();
-    await NodeFSP.rm(dir);
-    await NodeFSP.mkdir(dir);
-    await store.appendAudit({ ...audit(2), outcome: "unknown", errorCode: "CLEANUP_FAILED" });
-    expect(await store.readAudit({ limit: 10 })).toMatchObject([
-      { requestId: "r2", outcome: "unknown", errorCode: "CLEANUP_FAILED" },
-    ]);
-  } finally {
-    warning.mockRestore();
-  }
+it("reports audit persistence failures and recovers for the next write", async () => {
+  const onAuditWriteFailed = vi.fn();
+  store = await createRemoteControlStore({ stateDir: dir, onAuditWriteFailed });
+  await NodeFSP.rm(dir, { recursive: true, force: true });
+  await NodeFSP.writeFile(dir, "not a directory");
+  await expect(store.appendAudit(audit(1))).resolves.toBeUndefined();
+  expect(onAuditWriteFailed).toHaveBeenCalledOnce();
+  await NodeFSP.rm(dir);
+  await NodeFSP.mkdir(dir);
+  await store.appendAudit({ ...audit(2), outcome: "unknown", errorCode: "CLEANUP_FAILED" });
+  expect(onAuditWriteFailed).toHaveBeenCalledOnce();
+  expect(await store.readAudit({ limit: 10 })).toMatchObject([
+    { requestId: "r2", outcome: "unknown", errorCode: "CLEANUP_FAILED" },
+  ]);
 });

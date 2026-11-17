@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Native SDK process cleanup at the desktop adapter boundary.
 // @effect-diagnostics globalTimers:off -- AbortSignal deadlines also cover queued native SDK calls.
 // @effect-diagnostics globalDate:off -- Native manager publishes durable wall-clock catalog timestamps.
+// @effect-diagnostics globalFetch:off -- The MCP SDK accepts a fetch hook to reject bodies before its parser reads them.
 import {
   DESKTOP_MCP_CALL_TIMEOUT_MS,
   DESKTOP_MCP_MAX_CONCURRENT_CALLS,
@@ -31,6 +32,7 @@ import * as NodeUtil from "node:util";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { classifyLocalMcpError } from "./localMcpErrors.ts";
+import { createLatestMcpProgress } from "./LatestMcpProgress.ts";
 import { DesktopAppSettings } from "../settings/DesktopAppSettings.ts";
 import { mergedEnvironment, killWindowsProcessTree } from "./nativeProcesses.ts";
 
@@ -103,6 +105,16 @@ function createSession(config: LocalMcpServerConfig, platform: NodeJS.Platform) 
         })
       : new StreamableHTTPClientTransport(new URL(config.transport.url), {
           requestInit: { headers: { ...config.transport.headers } },
+          fetch: async (url, init) => {
+            const response = await fetch(url, init);
+            const length = response.headers.get("content-length");
+            if (length !== null && Number(length) > DESKTOP_MCP_MAX_RESULT_BYTES) {
+              // Cancel the body before the SDK can read or parse it. Do not await network cleanup.
+              void response.body?.cancel().catch(() => {});
+              throw new LocalMcpError("MCP_RESULT_TOO_LARGE");
+            }
+            return response;
+          },
         });
   let stderr = Buffer.alloc(0);
   if (transport instanceof StdioClientTransport) {
@@ -278,6 +290,8 @@ export function createLocalMcpManager(options: {
         track(failed(new Error("MCP transport closed")));
       };
       session.transport.onerror = (cause) => {
+        // A rejected HTTP body is a call error, not a broken session. Preserve its error code.
+        if (cause instanceof LocalMcpError) return;
         track(failed(cause));
       };
       session.client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
@@ -437,6 +451,8 @@ export function createLocalMcpManager(options: {
       );
       let acquired = false;
       let calling: { entry: Entry; session: Session } | undefined;
+      const progress = createLatestMcpProgress(onProgress);
+      limit.signal.addEventListener("abort", progress.stop, { once: true });
       try {
         await acquire(limit.signal);
         acquired = true;
@@ -448,7 +464,6 @@ export function createLocalMcpManager(options: {
         if (!entry.tools.some((tool) => tool.name === toolName))
           throw new LocalMcpError("MCP_TOOL_NOT_FOUND");
         calling = { entry, session: entry.session };
-        let progress = Promise.resolve();
         const timeout = options.callTimeoutMs ?? DESKTOP_MCP_CALL_TIMEOUT_MS;
         const result = await abortable(
           entry.session.client.callTool(
@@ -459,15 +474,11 @@ export function createLocalMcpManager(options: {
               timeout,
               maxTotalTimeout: timeout,
               resetTimeoutOnProgress: false,
-              onprogress: (value) => {
-                progress = progress.then(() => onProgress(value));
-                void progress.catch(() => {});
-              },
+              onprogress: progress.push,
             },
           ),
           limit.signal,
-        );
-        await abortable(progress, limit.signal);
+        ).finally(() => abortable(progress.finish(), limit.signal));
         if (Buffer.byteLength(JSON.stringify(result), "utf8") > DESKTOP_MCP_MAX_RESULT_BYTES)
           throw new LocalMcpError("MCP_RESULT_TOO_LARGE");
         return decodeResult(result);
@@ -490,6 +501,8 @@ export function createLocalMcpManager(options: {
         }
         throw new LocalMcpError("MCP_PROTOCOL_ERROR", error.detail);
       } finally {
+        progress.stop();
+        limit.signal.removeEventListener("abort", progress.stop);
         if (acquired) release();
         limit.dispose();
       }

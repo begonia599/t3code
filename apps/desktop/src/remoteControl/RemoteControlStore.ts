@@ -40,6 +40,8 @@ export async function createRemoteControlStore(options: {
   onGrantsChanged?: (grants: readonly RemoteControlGrant[]) => void;
   onPendingChanged?: (pending: readonly RemoteControlGrantRequest[]) => void;
   onAttention?: () => void;
+  /** Audit writes are best effort; failures are reported here and the next write retries. */
+  onAuditWriteFailed?: (cause: unknown) => void;
 }) {
   const now = options.now ?? Date.now;
   const grantsPath = NodePath.join(options.stateDir, "remote-control-grants.json");
@@ -319,7 +321,7 @@ export async function createRemoteControlStore(options: {
             );
         })
         .catch((cause) => {
-          console.warn("Remote control audit write failed", cause);
+          options.onAuditWriteFailed?.(cause);
         });
       return auditWrites;
     },
@@ -349,6 +351,9 @@ export const layer = Layer.effect(
     const store = yield* Effect.promise(() =>
       createRemoteControlStore({
         stateDir: environment.stateDir,
+        onAuditWriteFailed: (cause) => {
+          void run(Effect.logWarning("Remote control audit write failed", cause)).catch(() => {});
+        },
         onGrantsChanged: (grants) =>
           publish(Channels.REMOTE_CONTROL_GRANTS_CHANGED_CHANNEL, grants),
         onPendingChanged: (pending) =>

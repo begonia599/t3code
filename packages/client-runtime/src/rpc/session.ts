@@ -41,6 +41,7 @@ import {
   withoutEnvironmentThemes,
 } from "../state/serverConfigProjection.ts";
 import { environmentMismatchError } from "../connection/errors.ts";
+import { withDesktopChannelBackpressure } from "../connection/desktopChannelBackpressure.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
@@ -189,15 +190,25 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.asVoid,
       ),
     });
+    let webSocket: Socket.WebSocketLike | undefined;
     const socketLayer = Socket.layerWebSocket(connection.socketUrl, {
       openTimeout: SOCKET_OPEN_TIMEOUT,
-    }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)));
+    }).pipe(
+      Layer.provide(
+        Layer.succeed(Socket.WebSocketConstructor, (url, options) => {
+          webSocket = webSocketConstructor(url, options);
+          return webSocket;
+        }),
+      ),
+    );
     const protocolLayer = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
         retryTransientErrors: false,
         retryPolicy: Schedule.recurs(0),
-      }),
+      }).pipe(
+        Effect.flatMap((protocol) => withDesktopChannelBackpressure(protocol, () => webSocket)),
+      ),
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
