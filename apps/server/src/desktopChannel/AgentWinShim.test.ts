@@ -344,7 +344,13 @@ describe("win launcher", () => {
     const status = {
       hosts: [{ hostId: "h", hostName: "Work", execEnabled: true }],
       selectedHostId: "h",
-      hostStatus: { grant: "granted", running: 1, shells: ["pwsh"] },
+      hostStatus: {
+        grant: "granted",
+        running: 1,
+        shells: ["pwsh"],
+        allowlist: ["D:\\t3-test", "E:\\T3codeTest"],
+        mappings: [{ serverPath: "/server/path", winPath: "E:\\win\\path" }],
+      },
       hostStatusError: null,
     };
     for (const json of [false, true]) {
@@ -356,7 +362,12 @@ describe("win launcher", () => {
         return new Response(text);
       };
       expect(await f.run()).toBe(0);
-      expect(f.output.stdout).toContain(json ? text : "Grant: granted");
+      if (json) expect(f.output.stdout).toBe(`${text}\n`);
+      else {
+        expect(f.output.stdout).toContain("Grant: granted");
+        expect(f.output.stdout).toContain("Allowed --cwd folders: D:\\t3-test, E:\\T3codeTest\n");
+        expect(f.output.stdout).toContain("Mapped: /server/path -> E:\\win\\path\n");
+      }
       const log = fixture(["log", "-n", "5", ...(json ? ["--json"] : [])]);
       log.io.fetch = async (url) => {
         expect(String(url)).toContain("n=5");
@@ -365,6 +376,91 @@ describe("win launcher", () => {
       expect(await log.run()).toBe(0);
       expect(log.output.stdout).toContain(json ? '"source":"server"' : "Execution log (server)");
     }
+  });
+
+  it("prints none when no working directories are allowed", async () => {
+    const f = fixture(["status"]);
+    f.io.fetch = async () =>
+      Response.json({
+        hosts: [],
+        hostStatus: {
+          grant: "none",
+          running: 0,
+          shells: [],
+          allowlist: [],
+          mappings: [],
+        },
+      });
+    expect(await f.run()).toBe(0);
+    expect(f.output.stdout).toContain("Allowed --cwd folders: none\n");
+    expect(f.output.stdout).not.toContain("Mapped:");
+  });
+
+  it.each(["CWD_NOT_MAPPED", "CWD_NOT_ALLOWED"])(
+    "adds allowed folders to %s for exec and ps",
+    async (code) => {
+      for (const args of [
+        ["--", "echo"],
+        ["ps", "pwd"],
+      ]) {
+        const f = fixture(["--host", "Work", ...args]);
+        f.io.fetch = async (url, init) => {
+          if (String(url).endsWith("/exec"))
+            return new Response(ndjson([{ type: "error", code, message: "bad cwd" }]));
+          expect(String(url)).toBe("http://localhost/agent-win/v1/status?host=Work");
+          expect(init?.headers).toMatchObject({ authorization: "Bearer credential" });
+          return Response.json({ hostStatus: { allowlist: ["D:\\t3-test", "E:\\T3codeTest"] } });
+        };
+        expect(await f.run()).toBe(launcherConstants.errorCodes[code]);
+        expect(f.output.stderr).toBe(
+          `[win] ${code}: bad cwd\n[win] Use --cwd with an allowed folder: D:\\t3-test, E:\\T3codeTest\n`,
+        );
+      }
+    },
+  );
+
+  it.each(["unreachable", "http", "offline", "invalid"])(
+    "preserves CWD failure when status is %s",
+    async (failure) => {
+      const f = fixture();
+      f.io.fetch = async (url) => {
+        if (String(url).endsWith("/exec"))
+          return new Response(
+            ndjson([{ type: "error", code: "CWD_NOT_ALLOWED", message: "bad cwd" }]),
+          );
+        if (failure === "unreachable") throw new Error("disconnected");
+        if (failure === "http") return new Response("failed", { status: 500 });
+        if (failure === "invalid") return new Response("invalid");
+        return Response.json({ hostStatus: null, hostStatusError: "HOST_OFFLINE" });
+      };
+      expect(await f.run()).toBe(launcherConstants.errorCodes.CWD_NOT_ALLOWED);
+      expect(f.output.stderr).toBe("[win] CWD_NOT_ALLOWED: bad cwd\n");
+    },
+  );
+
+  it.each([
+    ["failed", "timeout", true],
+    ["starting", undefined, true],
+    ["failed", "spawn", false],
+    ["running", "timeout", false],
+  ] as const)("prints startup guidance for MCP add %s/%s", async (status, errorKind, hint) => {
+    const f = fixture(["mcp", "add", "context7"]);
+    f.io.fetch = async () =>
+      Response.json({
+        id: "context7",
+        name: "context7",
+        status,
+        toolCount: 0,
+        errorKind,
+        toolPrefix: "mcp__t3-win__context7__",
+      });
+    expect(await f.run()).toBe(0);
+    expect(f.output.stdout.split("\n")[0]).toBe(
+      `context7  context7  ${status}  0 tools${errorKind ? ` (${errorKind})` : ""}`,
+    );
+    const guidance =
+      "It may still be starting (first launch can download packages). It retries automatically; run `win mcp list` again shortly.";
+    expect(f.output.stdout.includes(guidance)).toBe(hint);
   });
 
   it.effect("runs generated JavaScript and shell launchers with real Node", () =>

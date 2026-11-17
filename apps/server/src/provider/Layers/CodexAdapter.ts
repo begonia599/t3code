@@ -2353,6 +2353,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                         `mcp_servers.t3-win.url=${mcpSession.winMcpEndpoint ?? new URL("/mcp-win", mcpSession.endpoint).href}`,
                         "-c",
                         'mcp_servers.t3-win.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                        ...(input.runtimeMode === "full-access"
+                          ? ["-c", 'mcp_servers.t3-win.default_tools_approval_mode="approve"']
+                          : []),
                       ]
                     : []),
                 ],

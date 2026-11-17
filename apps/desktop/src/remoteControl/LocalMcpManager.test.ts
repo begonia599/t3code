@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real SDK transports against isolated local test fixtures.
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -74,6 +75,67 @@ async function closeHttp(http: NodeHttp.Server) {
   http.closeAllConnections();
   await new Promise<void>((resolve) => http.close(() => resolve()));
 }
+
+it.each([
+  ["stdio", undefined, 60_000],
+  ["http", undefined, 20_000],
+  ["stdio", 500, 500],
+  ["http", 500, 500],
+] as const)(
+  "bounds %s startup and probe at %s (deadline %s)",
+  async (transport, override, timeout) => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (_input, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          const abort = () => reject(signal?.reason);
+          if (signal?.aborted) abort();
+          else signal?.addEventListener("abort", abort, { once: true });
+        }),
+    );
+    const stalled: LocalMcpServerConfig = {
+      ...config,
+      transport:
+        transport === "http"
+          ? { type: "http", url: "http://localhost/mcp", headers: {} }
+          : {
+              type: "stdio",
+              command: process.execPath,
+              args: [
+                "-e",
+                'require("node:fs").createReadStream("", { fd: 0, autoClose: false }).resume()',
+              ],
+              env: {},
+            },
+    };
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const manager = createLocalMcpManager({
+      save: async () => {},
+      ...(override === undefined ? {} : { probeTimeoutMs: override }),
+      retryDelaysMs: [300_000],
+    });
+    try {
+      let probed = false;
+      const probe = manager.probe(stalled).then((result) => {
+        probed = true;
+        return result;
+      });
+      await manager.initialize([stalled]);
+      await vi.advanceTimersByTimeAsync(timeout - 1);
+      expect(probed).toBe(false);
+      expect(manager.views()[0]?.status).toBe("starting");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(manager.views()[0]).toMatchObject({ status: "failed", errorKind: "timeout" });
+      // Let the SDK's child-process cleanup grace periods drain too.
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await probe).toMatchObject({ ok: false, errorKind: "timeout" });
+    } finally {
+      vi.useRealTimers();
+      await manager.dispose();
+      fetch.mockRestore();
+    }
+  },
+);
 
 it("classifies a refused loopback connection and a live HTTP 404 in probes and views", async () => {
   const http = NodeHttp.createServer((_request, response) => {

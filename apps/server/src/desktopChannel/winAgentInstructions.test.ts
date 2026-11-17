@@ -22,6 +22,12 @@ describe("Windows project instructions", () => {
     expect(text).toContain("`win -- rg ...`, `win -- es ...` or `win ps '...'` for pipelines");
   });
 
+  it("explains how to discover allowed working directories", () => {
+    expect(WIN_AGENT_INSTRUCTIONS).toContain(
+      "a Windows folder the user allowed (listed by `win status`)",
+    );
+  });
+
   it("sanitizes inserted values and limits host names and Windows paths", () => {
     const text = buildWindowsProjectInstructions({
       hostName: `\n"${"h".repeat(70)}\u0000`,

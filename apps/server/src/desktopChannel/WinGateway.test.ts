@@ -768,7 +768,7 @@ describe("Windows MCP gateway", () => {
       const adding = f.request("mcp/add", { body });
       const add = await desktop.next();
       if (add.type !== "request") throw new Error("Expected add request");
-      expect(add).toMatchObject({ kind: "mcp.add", input: body, timeoutMs: 170_000 });
+      expect(add).toMatchObject({ kind: "mcp.add", input: body, timeoutMs: 215_000 });
       const result = {
         id: "unity",
         name: "Unity",

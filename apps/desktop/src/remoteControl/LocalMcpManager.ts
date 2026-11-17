@@ -283,7 +283,10 @@ export function createLocalMcpManager(options: {
       session.client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
         track(refreshTools().catch(failed));
       });
-      const startup = deadline(sessionSignal, options.probeTimeoutMs ?? 20000);
+      const startup = deadline(
+        sessionSignal,
+        options.probeTimeoutMs ?? (entry.config.transport.type === "stdio" ? 60_000 : 20_000),
+      );
       try {
         await abortable(session.connect(startup.signal), startup.signal);
         const tools = await abortable(listTools(session.client, startup.signal), startup.signal);
@@ -494,7 +497,10 @@ export function createLocalMcpManager(options: {
     probe: (config: LocalMcpServerConfig): Promise<LocalMcpProbeResult> =>
       track(
         (async (): Promise<LocalMcpProbeResult> => {
-          const limit = deadline(shutdown.signal, options.probeTimeoutMs ?? 20000);
+          const limit = deadline(
+            shutdown.signal,
+            options.probeTimeoutMs ?? (config.transport.type === "stdio" ? 60_000 : 20_000),
+          );
           let session: Session | undefined;
           try {
             session = createSession(decodeConfig(config), platform);

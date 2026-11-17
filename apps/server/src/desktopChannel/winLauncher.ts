@@ -196,6 +196,13 @@ export async function runWinLauncher(io: WinLauncherRuntime): Promise<number> {
         await io.stdout(
           `${added.id}  ${added.name}  ${added.status}  ${added.toolCount} tools${added.errorKind ? ` (${added.errorKind})` : ""}\nIts tools are named ${added.toolPrefix}<tool> and may need to be loaded with ToolSearch.\n`,
         );
+        if (
+          added.status === "starting" ||
+          (added.status !== "running" && added.errorKind === "timeout")
+        )
+          await io.stdout(
+            "It may still be starting (first launch can download packages). It retries automatically; run `win mcp list` again shortly.\n",
+          );
       } else if (command === "mcp" && !json) {
         const catalog: DesktopMcpListResult = body;
         await io.stdout("Added MCP servers:\n");
@@ -219,10 +226,16 @@ export async function runWinLauncher(io: WinLauncherRuntime): Promise<number> {
           await io.stdout(
             `${h.hostName} (${h.hostId}): ${h.execEnabled ? "enabled" : "disabled"}${h.hostId === body.selectedHostId ? " [selected]" : ""}\n`,
           );
-        if (body.hostStatus)
+        if (body.hostStatus) {
           await io.stdout(
             `Grant: ${body.hostStatus.grant}; running: ${body.hostStatus.running}; shells: ${body.hostStatus.shells.join(", ")}\n`,
           );
+          await io.stdout(
+            `Allowed --cwd folders: ${body.hostStatus.allowlist.join(", ") || "none"}\n`,
+          );
+          for (const mapping of body.hostStatus.mappings)
+            await io.stdout(`Mapped: ${mapping.serverPath} -> ${mapping.winPath}\n`);
+        }
         if (body.hostStatusError) await io.stdout(`Status: ${body.hostStatusError}\n`);
       } else {
         await io.stdout(`Execution log (${body.source})\n`);
@@ -247,11 +260,32 @@ export async function runWinLauncher(io: WinLauncherRuntime): Promise<number> {
         await io.stderr("[win] waiting for Windows session approval\n");
       if (event.type === "progress" && event.progress.type === "truncated")
         await io.stderr("[win] output truncated\n");
-      if (event.type === "error")
-        return report(
+      if (event.type === "error") {
+        const code = await report(
           `${event.code}: ${event.message}`,
           io.constants.errorCodes[event.code] ?? 123,
         );
+        if (event.code === "CWD_NOT_MAPPED" || event.code === "CWD_NOT_ALLOWED") {
+          try {
+            const statusUrl = new URL(`${io.env.T3_WIN_ENDPOINT!.replace(/\/$/, "")}/status`);
+            if (host) statusUrl.searchParams.set("host", host);
+            const statusResponse = await io.fetch(statusUrl, {
+              signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+              headers: { authorization: `Bearer ${token}` },
+            });
+            if (statusResponse.ok) {
+              const status = JSON.parse(await statusResponse.text());
+              if (status.hostStatus)
+                await io.stderr(
+                  `[win] Use --cwd with an allowed folder: ${status.hostStatus.allowlist.join(", ") || "none"}\n`,
+                );
+            }
+          } catch {
+            // Directory guidance is best effort; preserve the execution failure.
+          }
+        }
+        return code;
+      }
       if (event.type === "result") {
         const result: DesktopExecResult = event.result;
         const code =

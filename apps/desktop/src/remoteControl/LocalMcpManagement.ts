@@ -5,6 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   DESKTOP_EXEC_GRANT_WAIT_MS,
   DESKTOP_MCP_ADD_KIND,
+  DESKTOP_MCP_ADD_STARTUP_WAIT_MS,
   DESKTOP_MCP_LIST_KIND,
   DesktopMcpAddInput,
   DesktopMcpListInput,
@@ -275,7 +276,7 @@ export function createLocalMcpManagement(options: {
           reject(
             new LocalMcpError("MCP_SERVER_NOT_FOUND", "MCP server was removed during startup"),
           );
-      }, 20_000);
+      }, DESKTOP_MCP_ADD_STARTUP_WAIT_MS[state.config.transport.type]);
       const done = () => {
         clearTimeout(timer);
         off();

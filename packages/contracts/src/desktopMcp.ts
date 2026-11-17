@@ -10,6 +10,11 @@ export const DESKTOP_MCP_LIST_KIND = "mcp.list";
 export const DESKTOP_MCP_ADD_KIND = "mcp.add";
 /** Hard deadline for one forwarded tool call, including progress time. */
 export const DESKTOP_MCP_CALL_TIMEOUT_MS = 120_000;
+/**
+ * How long `mcp.add` waits for a newly added server to start after the user confirms.
+ * Stdio servers launched through npx/uvx may download packages on first start.
+ */
+export const DESKTOP_MCP_ADD_STARTUP_WAIT_MS = { stdio: 65_000, http: 20_000 } as const;
 /** Max concurrent forwarded calls per Windows host (all environments together). */
 export const DESKTOP_MCP_MAX_CONCURRENT_CALLS = 8;
 /** Name of the session-level aggregate MCP server injected into providers. */

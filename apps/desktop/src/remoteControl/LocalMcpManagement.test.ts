@@ -445,23 +445,35 @@ describe("MCP list and add proposals", () => {
     await rejected;
     expect(f.upsert).toHaveBeenCalledTimes(1);
   });
-  it("bounds startup waiting at 20 seconds and does not replace an id taken during confirmation", async () => {
-    vi.useFakeTimers();
-    const f = fixture();
-    f.setStatus("starting");
-    const proposed = f.nextProposal();
-    const result = f.invoke("mcp.add", { key: "key0" });
-    const proposal = await proposed;
-    await f.service.resolveAddProposal({ proposalId: proposal.proposalId, decision: "add" });
-    await vi.advanceTimersByTimeAsync(20_000);
-    expect(await result).toMatchObject({ status: "starting" });
-    const next = f.nextProposal();
-    const collision = f.invoke("mcp.add", { key: "key1" });
-    const rejected = expect(collision).rejects.toMatchObject({ code: "HOST_BUSY" });
-    const second = await next;
-    f.setViews([{ config: { ...http, id: second.id }, status: "running", tools: [] }]);
-    await f.service.resolveAddProposal({ proposalId: second.proposalId, decision: "add" });
-    await rejected;
-    expect(f.upsert).toHaveBeenCalledTimes(1);
-  });
+  it.each([
+    ["key0", 65_000],
+    ["key1", 20_000],
+  ] as const)(
+    "bounds startup waiting for %s and does not replace an id taken during confirmation",
+    async (key, deadline) => {
+      vi.useFakeTimers();
+      const f = fixture();
+      f.setStatus("starting");
+      const proposed = f.nextProposal();
+      const result = f.invoke("mcp.add", { key });
+      const proposal = await proposed;
+      await f.service.resolveAddProposal({ proposalId: proposal.proposalId, decision: "add" });
+      let settled = false;
+      void result.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(deadline - 1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await result).toMatchObject({ status: "starting" });
+      const next = f.nextProposal();
+      const collision = f.invoke("mcp.add", { key: "key1" });
+      const rejected = expect(collision).rejects.toMatchObject({ code: "HOST_BUSY" });
+      const second = await next;
+      f.setViews([{ config: { ...http, id: second.id }, status: "running", tools: [] }]);
+      await f.service.resolveAddProposal({ proposalId: second.proposalId, decision: "add" });
+      await rejected;
+      expect(f.upsert).toHaveBeenCalledTimes(1);
+    },
+  );
 });

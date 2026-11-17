@@ -3259,9 +3259,14 @@ it.effect("managed turn failures preserve the sharing-limit code for client noti
 });
 
 for (const linked of [false, true]) {
-  for (const enabled of [false, true]) {
+  for (const [enabled, runtimeMode] of [
+    [false, "full-access"],
+    [true, "full-access"],
+    [false, "approval-required"],
+    [true, "approval-required"],
+  ] as const) {
     it.effect(
-      `injects win environment and instructions only when prepared (${enabled}, linked=${linked})`,
+      `injects win environment and instructions only when prepared (${enabled}, linked=${linked}, mode=${runtimeMode})`,
       () => {
         const factory = makeRuntimeFactory();
         const layer = Layer.effect(
@@ -3314,7 +3319,7 @@ for (const linked of [false, true]) {
             yield* adapter.startSession({
               threadId,
               provider: ProviderDriverKind.make("codex"),
-              runtimeMode: "full-access",
+              runtimeMode,
             });
             const options = factory.lastRuntime!.options;
             NodeAssert.deepEqual(options.appServerArgs, [
@@ -3328,6 +3333,9 @@ for (const linked of [false, true]) {
                     "mcp_servers.t3-win.url=http://127.0.0.1/mcp-win",
                     "-c",
                     'mcp_servers.t3-win.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                    ...(runtimeMode === "full-access"
+                      ? ["-c", 'mcp_servers.t3-win.default_tools_approval_mode="approve"']
+                      : []),
                   ]
                 : []),
             ]);
@@ -3345,7 +3353,7 @@ for (const linked of [false, true]) {
             );
             const params = yield* buildTurnStartParams({
               threadId: "win-provider-thread",
-              runtimeMode: "full-access",
+              runtimeMode,
               interactionMode: "default",
               browserToolsAvailable: {
                 ...configuredMcpToolAvailability(options.appServerArgs, options.mcpCapabilities),

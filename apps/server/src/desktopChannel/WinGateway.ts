@@ -2,6 +2,7 @@
 import {
   DESKTOP_MCP_LIST_KIND,
   DESKTOP_MCP_ADD_KIND,
+  DESKTOP_MCP_ADD_STARTUP_WAIT_MS,
   DesktopMcpListResult,
   DesktopMcpAddInput,
   DesktopMcpAddResult,
@@ -408,7 +409,9 @@ const make = Effect.gen(function* () {
       return yield* invokeMcp(
         DESKTOP_MCP_ADD_KIND,
         input,
-        DESKTOP_EXEC_GRANT_WAIT_MS + 20_000 + DESKTOP_EXEC_TIMEOUT_GRACE_MS,
+        DESKTOP_EXEC_GRANT_WAIT_MS +
+          DESKTOP_MCP_ADD_STARTUP_WAIT_MS.stdio +
+          DESKTOP_EXEC_TIMEOUT_GRACE_MS,
         host,
         invocation,
       ).pipe(
