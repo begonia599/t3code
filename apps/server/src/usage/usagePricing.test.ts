@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import { antigravityRateModel } from "./antigravityUsageReader.ts";
 import { cursorRateModel } from "./cursorUsageReader.ts";
 import {
   cacheSavingsUsd,
@@ -67,6 +68,37 @@ describe("usage pricing", () => {
     expect(priceUsage(table, cursorRecord("grok-4.7-xhigh-fast"))).toEqual({
       costUsd: 0.25,
       costSource: "providerReported",
+    });
+  });
+
+  it("prices Antigravity Gemini models at Google's first-party rate", () => {
+    const table = parseRateTable({
+      "gemini/gemini-4-carbon": rate(2e-6, 0.1e-6),
+      "vertex_ai/gemini-4-carbon": rate(2e-6, 0.1e-6),
+      "replicate/google/gemini-4-carbon": rate(2e-6),
+      "claude-sonnet-5-5": rate(3e-6, 0.3e-6),
+    });
+    const antigravityRecord = (model: string) => {
+      const rateModel = antigravityRateModel(model);
+      return { ...record(model), ...(rateModel === undefined ? {} : { rateModel }) };
+    };
+
+    // Resellers disagree on the bare name's cache rate, so it has no alias.
+    expect(lookupRate(table, "gemini-4-carbon")).toBeNull();
+    for (const model of ["gemini-4-carbon", "gemini-4-carbon-high"]) {
+      expect(priceUsage(table, antigravityRecord(model))).toEqual({
+        costUsd: priceUsage(table, record("gemini/gemini-4-carbon")).costUsd,
+        costSource: "modelPriced",
+      });
+      expect(cacheSavingsUsd(table, antigravityRecord(model))).toBeCloseTo(1.9);
+    }
+    expect(antigravityRateModel("claude-sonnet-5-5")).toBeUndefined();
+    expect(priceUsage(table, antigravityRecord("claude-sonnet-5-5")).costSource).toBe(
+      "modelPriced",
+    );
+    expect(priceUsage(table, antigravityRecord("antigravity-unknown"))).toEqual({
+      costUsd: 0,
+      costSource: "unpriced",
     });
   });
 

@@ -99,6 +99,17 @@ const MODEL_IDS: Record<number, string> = {
   1047: "gemini-3-flash-preview",
 };
 
+/**
+ * Maps an Antigravity model ID to its rate-table key. Gemini IDs carry a
+ * thinking-level suffix (`gemini-4-carbon-high`), and resellers claim the bare
+ * names at conflicting rates, so the table keeps no bare alias for them.
+ * Price them at Google's first-party `gemini/` entry instead.
+ */
+export function antigravityRateModel(model: string): string | undefined {
+  if (!model.startsWith("gemini-")) return undefined;
+  return `gemini/${model.replace(/-(?:minimal|low|medium|high|xhigh|max)$/, "")}`;
+}
+
 function modelName(name: string, id: number): string {
   if (name) {
     const normalized = name
@@ -367,7 +378,10 @@ export async function readAntigravityUsage(
   for (const root of roots) await walk(root, root);
   for (const [index, group] of groups.entries()) {
     if (group.parent === index && group.record.timestampMs >= sinceMs) {
-      files[group.fileIndex]!.records.push(group.record);
+      const rateModel = antigravityRateModel(group.record.model);
+      files[group.fileIndex]!.records.push(
+        rateModel === undefined ? group.record : { ...group.record, rateModel },
+      );
     }
   }
   return { files, errors };
