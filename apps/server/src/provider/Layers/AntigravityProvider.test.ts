@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
+  ServerProviders,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -327,7 +328,11 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(probe);
         expect(calls).toBe(1);
-        expect((yield* h.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+        const snapshot = yield* h.provider.snapshot.getSnapshot;
+        expect(snapshot.usageLimits).toBeUndefined();
+        expect(() =>
+          Schema.encodeSync(Schema.toCodecJson(ServerProviders))([snapshot]),
+        ).not.toThrow();
         yield* h.provider.refreshQuota("turn");
         yield* TestClock.adjust("59 seconds");
         yield* h.provider.refreshQuota("manual");

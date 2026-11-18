@@ -219,6 +219,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
+      const { usageLimits: _previousUsageLimits, ...draftWithoutUsageLimits } = draft;
       const authenticated = draft.auth.status === "authenticated";
       const message =
         errorMessage ??
@@ -230,7 +231,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       return {
         ...state,
         draft: {
-          ...draft,
+          ...(missingInstallation ? draftWithoutUsageLimits : draft),
           installed: !missingInstallation,
           version: installedVersion || draft.version,
           ...(legacyAuthLabel && draft.auth.status !== "unauthenticated"
@@ -240,7 +241,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           checkedAt: updatedAt,
           ...(missingInstallation
             ? {
-                usageLimits: undefined,
                 models: [],
                 slashCommands: [],
                 skills: [],
@@ -441,12 +441,12 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     yield* SubscriptionRef.update(metadata, (state) => {
       resetQuotaAccount();
+      const { usageLimits: _previousUsageLimits, ...draft } = state.draft;
       return {
         authRevision: state.authRevision + 1,
         draft: {
-          ...state.draft,
+          ...draft,
           auth: { status: "unauthenticated" },
-          usageLimits: undefined,
           status: settings.enabled ? "warning" : "disabled",
           message: SIGN_IN_MESSAGE,
           checkedAt: updatedAt,
@@ -505,15 +505,15 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     makeTierObserver,
     onSignInStarted: SubscriptionRef.update(metadata, (state) => {
       resetQuotaAccount();
+      const { usageLimits: _previousUsageLimits, ...draft } = state.draft;
       return {
         ...state,
         draft: {
-          ...state.draft,
+          ...draft,
           auth:
             state.draft.auth.status === "authenticated"
               ? { status: "authenticated", ...defaultAuth }
               : { status: "unauthenticated" },
-          usageLimits: undefined,
         },
       } satisfies AntigravityProviderState;
     }),
