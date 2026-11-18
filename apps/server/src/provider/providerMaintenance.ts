@@ -21,6 +21,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { resolveProviderLauncherTarget } from "./providerLauncherManifest.ts";
 
 const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
@@ -553,9 +554,9 @@ function makeManualProviderMaintenanceCapabilities(
 }
 
 /**
- * Locate the configured provider executable, follow symlinks, and hand the
- * result to the resolver. A binary that cannot be found yields the resolver's
- * no-context answer.
+ * For ownership checks, provider-launchers.json maps the resolved launcher path to
+ * its install target before symlinks are followed. Providers still run and report
+ * their version through the configured launcher.
  */
 export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   "resolveProviderMaintenanceCapabilitiesEffect",
@@ -575,12 +576,17 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   // resolveCommandPath checks explicit paths for existence too, so a missing
   // binary always lands in the no-context branch and never gets an update
   // command it cannot run.
-  const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env }).pipe(
-    Effect.catchTags({ CommandResolutionError: () => Effect.succeed(null) }),
-  );
-  if (!resolvedCommandPath) {
+  const locate = (command: string) =>
+    resolveCommandPath(command, { env }).pipe(
+      Effect.catchTags({ CommandResolutionError: () => Effect.succeed(null) }),
+    );
+  const launcherPath = yield* locate(binaryPath);
+  if (!launcherPath) {
     return yield* resolver.resolve(null);
   }
+  const target = yield* resolveProviderLauncherTarget(launcherPath);
+  const resolvedCommandPath = target === null ? launcherPath : yield* locate(target);
+  if (!resolvedCommandPath) return yield* resolver.resolve(null);
 
   const fileSystem = yield* FileSystem.FileSystem;
   const realCommandPath = yield* fileSystem

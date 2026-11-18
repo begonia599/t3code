@@ -3,12 +3,16 @@ import { expect, it } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import * as Crypto from "effect/Crypto";
+import {
+  HostProcessEnvironment,
+  HostProcessPlatform,
+  HostProcessUserId,
+} from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Logger from "effect/Logger";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
@@ -37,10 +41,7 @@ const driver = (value: string) => ProviderDriverKind.make(value);
 // semantics; a Windows temp path cannot be split on `:`.
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 const makeTempDir = (name: string) =>
-  Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.randomUUIDv4),
-    Effect.map((id) => NodePath.join(NodeOS.tmpdir(), `${name}-${id}`)),
-  );
+  FileSystem.FileSystem.use((fs) => fs.makeTempDirectoryScoped({ prefix: `${name}-` }));
 const isNativeTestCommandPath =
   (expectedPathSegment: string) =>
   (commandPath: string): boolean =>
@@ -122,6 +123,188 @@ function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) =
 }
 
 it.layer(NodeServices.layer)("providerMaintenance", (it) => {
+  it.effect("checks the mapped Windows shim beside the npm package when no uid is available", () =>
+    Effect.gen(function* () {
+      const dir = yield* makeTempDir("t3-launcher-manifest");
+      const launcher = NodePath.join(dir, "launcher.cmd");
+      const prefix = NodePath.join(dir, "npm");
+      const target = NodePath.join(prefix, "package-tool.cmd");
+      writeExecutable(launcher);
+      writeExecutable(target);
+      const pkg = NodePath.join(prefix, "node_modules", "@example", "package-tool");
+      NodeFS.mkdirSync(pkg, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(pkg, "package.json"), "{}");
+      const manifestPath = NodePath.join(dir, "launchers.json");
+      NodeFS.writeFileSync(
+        manifestPath,
+        JSON.stringify({ version: 1, launchers: [{ launcher, target }] }),
+      );
+      NodeFS.chmodSync(manifestPath, 0o444);
+      const resolve = resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: launcher,
+        env: { PATH: "", PATHEXT: ".CMD" },
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcessEnvironment, {
+          T3CODE_PROVIDER_LAUNCHERS_FILE: manifestPath,
+        }),
+      );
+      const capabilities = yield* resolve.pipe(Effect.provideService(HostProcessUserId, undefined));
+      expect(capabilities.update?.args).toContain(prefix);
+      const owner = NodeFS.statSync(manifestPath).uid;
+      if (owner !== 0) {
+        const foreign = yield* resolve.pipe(Effect.provideService(HostProcessUserId, owner + 1));
+        expect(foreign).toEqual(manualPackageTool);
+      }
+    }),
+  );
+
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "maps two launcher aliases of the same script to their respective npm installs",
+    () =>
+      Effect.gen(function* () {
+        const dir = yield* makeTempDir("t3-launcher-manifest");
+        const script = NodePath.join(dir, "session-launch");
+        const manifestPath = NodePath.join(dir, "launchers.json");
+        writeExecutable(script);
+        const installs = [
+          { name: "claude", pkg: "@anthropic-ai/claude-code" },
+          { name: "codex", pkg: "@openai/codex" },
+        ].map(({ name, pkg }) => {
+          const launcher = NodePath.join(dir, `session-${name}`);
+          const prefix = NodePath.join(dir, name);
+          NodeFS.symlinkSync(script, launcher);
+          const target = linkIntoPackage(prefix, name, ["lib", "node_modules", pkg]);
+          return { name, pkg, launcher, prefix, target };
+        });
+        NodeFS.writeFileSync(
+          manifestPath,
+          JSON.stringify({
+            version: 1,
+            launchers: installs.map(({ launcher, target }) => ({
+              launcher: `${dir}//./unused/../${NodePath.basename(launcher)}`,
+              target: `${NodePath.dirname(target)}/unused/../${NodePath.basename(target)}`,
+            })),
+          }),
+          { mode: 0o600 },
+        );
+
+        for (const { name, pkg, launcher, prefix } of installs) {
+          const resolver = makePackageManagedProviderMaintenanceResolver({
+            provider: driver(name),
+            npmPackageName: pkg,
+            nativeUpdate: null,
+          });
+          const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(resolver, {
+            binaryPath: NodePath.basename(launcher),
+            env: { PATH: dir },
+          }).pipe(
+            Effect.provideService(HostProcessEnvironment, {
+              T3CODE_PROVIDER_LAUNCHERS_FILE: manifestPath,
+            }),
+          );
+          expect(capabilities.update?.command).toBe(
+            `npm install -g --prefix ${NodeFS.realpathSync(prefix)} --allow-scripts=${pkg} ${pkg}@latest`,
+          );
+        }
+      }),
+  );
+
+  it.effect.each([
+    "missing manifest",
+    "group writable",
+    "others writable",
+    "bad JSON",
+    "wrong version",
+    "relative launcher",
+    "relative target",
+    "duplicate launcher",
+    "extra command",
+    "directory",
+  ] as const)(
+    "ignores a launcher manifest with %s",
+    (scenario) =>
+      Effect.gen(function* () {
+        const dir = yield* makeTempDir("t3-launcher-manifest");
+        const launcher = NodePath.join(dir, "launcher");
+        const target = NodePath.join(dir, "lib", "node_modules", "@example", "package-tool", "cli");
+        const manifestPath = NodePath.join(dir, "launchers.json");
+        writeExecutable(launcher);
+        writeExecutable(target);
+        const entry = { launcher, target };
+        const launchers = [entry];
+        if (scenario === "relative launcher") launchers.push({ launcher: "other", target });
+        if (scenario === "relative target")
+          launchers.push({ launcher: target, target: "relative" });
+        if (scenario === "duplicate launcher")
+          launchers.push({ launcher: `${dir}/./launcher`, target });
+        const manifest = {
+          version: scenario === "wrong version" ? 2 : 1,
+          launchers,
+          ...(scenario === "extra command" ? { command: "update" } : {}),
+        };
+        if (scenario === "directory") {
+          NodeFS.mkdirSync(manifestPath);
+        } else if (scenario !== "missing manifest") {
+          NodeFS.writeFileSync(
+            manifestPath,
+            scenario === "bad JSON" ? "{" : JSON.stringify(manifest),
+          );
+          NodeFS.chmodSync(
+            manifestPath,
+            scenario === "group writable" ? 0o620 : scenario === "others writable" ? 0o602 : 0o600,
+          );
+        }
+        const levels: string[] = [];
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          {
+            binaryPath: launcher,
+            env: { PATH: "" },
+          },
+        ).pipe(
+          Effect.provideService(HostProcessEnvironment, {
+            T3CODE_PROVIDER_LAUNCHERS_FILE: manifestPath,
+          }),
+          Effect.provide(Logger.layer([Logger.make(({ logLevel }) => levels.push(logLevel))])),
+        );
+        expect(capabilities).toEqual(manualPackageTool);
+        expect(levels).toEqual(scenario === "missing manifest" ? [] : ["Warn"]);
+      }),
+    { skip: windowsHost },
+  );
+
+  it.effect.each(["missing", "unowned"] as const)(
+    "stays manual when a mapped target is %s even if the launcher looks package-managed",
+    (scenario) =>
+      Effect.gen(function* () {
+        const dir = yield* makeTempDir("t3-launcher-manifest");
+        const launcher = NodePath.join(dir, ".bun", "bin", "launcher");
+        const target = NodePath.join(dir, "custom", "tool");
+        writeExecutable(launcher);
+        if (scenario === "unowned") writeExecutable(target);
+        const manifestPath = NodePath.join(dir, "launchers.json");
+        NodeFS.writeFileSync(
+          manifestPath,
+          JSON.stringify({ version: 1, launchers: [{ launcher, target }] }),
+          { mode: 0o600 },
+        );
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          {
+            binaryPath: launcher,
+            env: { PATH: "" },
+          },
+        ).pipe(
+          Effect.provideService(HostProcessEnvironment, {
+            T3CODE_PROVIDER_LAUNCHERS_FILE: manifestPath,
+          }),
+        );
+        expect(capabilities).toEqual(manualPackageTool);
+      }),
+    { skip: windowsHost },
+  );
+
   it.effect("reads cached versions through the injectable cache reference", () =>
     resolveLatestProviderVersion(manualPackageTool).pipe(
       Effect.provideService(
